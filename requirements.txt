@@ -1,0 +1,14 @@
+# Tamil Spell Checker – Python dependencies
+# Install with:  pip install -r requirements.txt
+
+# Tamil language processing (spell checker + UTF-8 utilities)
+open-tamil>=0.9
+
+# DOCX support
+python-docx>=0.8.11
+
+# PDF reading (used indirectly; pdfplumber gives clean text for diagnostics)
+pdfplumber>=0.9.0
+
+# PDF editing – redact and rewrite text spans in-place
+PyMuPDF>=1.23.0
