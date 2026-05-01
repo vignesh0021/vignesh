@@ -4,8 +4,8 @@
 //   ────────────────────────────────────────────────────────────────────────────────
 //   Combines: Market Structure (BOS/CHoCH) · Liquidity Sweeps (BSL/SSL)
 //             · Order Blocks (graded) · Fair Value Gaps · Premium/Discount
-//             · OTE (0.62 / 0.705 / 0.79) · Power-of-3 (Asia/London/NY analogue)
-//             · Weekly Profile bias · ICT Macro Session Boxes · Volume confirmation
+//             · OTE (0.62 / 0.705 / 0.79) · Weekly Profile bias
+//             · ICT Macro Session Boxes · Volume confirmation · HTF bias filter
 //             · Confluence-scored BUY / SELL signals with SL + TP1 / TP2 / TP3
 //
 //   Built for NSE (NIFTY / BANKNIFTY / FINNIFTY) intraday in IST, but works on any
@@ -15,13 +15,7 @@
 //               No noise. Pure price + time + volume + structure.
 // ════════════════════════════════════════════════════════════════════════════════════
 
-indicator("ICT Master Pro",
-     shorttitle = "ICT-MP",
-     overlay    = true,
-     max_lines_count   = 500,
-     max_labels_count  = 500,
-     max_boxes_count   = 500,
-     max_bars_back     = 5000)
+indicator("ICT Master Pro", shorttitle = "ICT-MP", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500, max_bars_back = 5000)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   1. INPUTS
@@ -39,92 +33,86 @@ grpRisk   = "═══ Risk: SL / TP ═══"
 grpDash   = "═══ Dashboard ═══"
 
 // ── Core ────────────────────────────────────────────────────────────────────────────
-i_pivotLen      = input.int(5,    "Pivot Length",         minval = 2, maxval = 30, group = grpCore,
-     tooltip = "Bars on each side for swing detection. 5 = scalp, 10 = swing.")
-i_useVolume     = input.bool(true,"Require Volume Confirmation", group = grpCore,
-     tooltip = "Signals only fire when volume >= average. Crucial for high-probability setups.")
-i_volLen        = input.int(20,   "Volume MA Length",     minval = 5, maxval = 200, group = grpCore)
+i_pivotLen      = input.int(5,    "Pivot Length", minval = 2, maxval = 30, group = grpCore, tooltip = "Bars on each side for swing detection. 5 = scalp, 10 = swing.")
+i_useVolume     = input.bool(true, "Require Volume Confirmation", group = grpCore, tooltip = "Signals only fire when volume >= average. Crucial for high-probability setups.")
+i_volLen        = input.int(20,   "Volume MA Length", minval = 5, maxval = 200, group = grpCore)
 
 // ── Structure ───────────────────────────────────────────────────────────────────────
-i_showBOS       = input.bool(true,"Show BOS / CHoCH",                 group = grpStruct)
-i_showSwings    = input.bool(true,"Show Swing High / Low markers",    group = grpStruct)
+i_showBOS       = input.bool(true, "Show BOS / CHoCH",              group = grpStruct)
+i_showSwings    = input.bool(true, "Show Swing High / Low markers", group = grpStruct)
 
 // ── Order Blocks ────────────────────────────────────────────────────────────────────
-i_showOB        = input.bool(true,"Show Order Blocks",                group = grpOB)
-i_obMaxBoxes    = input.int(8,    "Max OB Boxes Kept",   minval = 1, maxval = 20, group = grpOB)
-i_obMitigate    = input.bool(true,"Remove OBs after Mitigation",      group = grpOB)
-i_obGrade       = input.string("A+B", "Min Grade to Show", options = ["A only","A+B","A+B+C"], group = grpOB,
-     tooltip = "A = swept liquidity + displacement, B = displacement only, C = simple.")
+i_showOB        = input.bool(true, "Show Order Blocks",             group = grpOB)
+i_obMaxBoxes    = input.int(8,    "Max OB Boxes Kept", minval = 1, maxval = 20, group = grpOB)
+i_obMitigate    = input.bool(true, "Remove OBs after Mitigation",   group = grpOB)
+i_obGrade       = input.string("A+B", "Min Grade to Show", options = ["A only", "A+B", "A+B+C"], group = grpOB, tooltip = "A = swept liquidity + displacement, B = displacement only, C = simple.")
 
 // ── FVG ─────────────────────────────────────────────────────────────────────────────
-i_showFVG       = input.bool(true,"Show Fair Value Gaps",              group = grpFVG)
-i_fvgMaxBoxes   = input.int(6,    "Max FVG Boxes Kept",  minval = 1, maxval = 20, group = grpFVG)
-i_fvgMitigate   = input.bool(true,"Remove FVGs after Fill",            group = grpFVG)
+i_showFVG       = input.bool(true, "Show Fair Value Gaps",          group = grpFVG)
+i_fvgMaxBoxes   = input.int(6,    "Max FVG Boxes Kept", minval = 1, maxval = 20, group = grpFVG)
+i_fvgMitigate   = input.bool(true, "Remove FVGs after Fill",        group = grpFVG)
 
 // ── Liquidity ───────────────────────────────────────────────────────────────────────
-i_showLiq       = input.bool(true,"Show BSL / SSL Liquidity Lines",    group = grpLiq)
-i_showSweep     = input.bool(true,"Mark Liquidity Sweeps",             group = grpLiq)
+i_showLiq       = input.bool(true, "Show BSL / SSL Liquidity Lines", group = grpLiq)
+i_showSweep     = input.bool(true, "Mark Liquidity Sweeps",          group = grpLiq)
 i_liqMax        = input.int(6,    "Max Liquidity Lines per side", minval = 1, maxval = 15, group = grpLiq)
 
 // ── Premium / Discount ──────────────────────────────────────────────────────────────
-i_showPD        = input.bool(true,"Show Premium / Discount Zones",     group = grpPD)
-i_pdSource      = input.string("Daily","Range Source", options = ["Daily","Weekly","Session"], group = grpPD)
+i_showPD        = input.bool(true, "Show Premium / Discount Zones", group = grpPD)
+i_pdSource      = input.string("Daily", "Range Source", options = ["Daily", "Weekly", "Session"], group = grpPD)
 
 // ── HTF Bias ────────────────────────────────────────────────────────────────────────
-i_useHTFBias    = input.bool(true,"Filter Signals by HTF Bias",        group = grpHTF)
-i_htfTF         = input.timeframe("60","HTF Timeframe",                group = grpHTF,
-     tooltip = "60 = 1H, 240 = 4H, D = Daily, W = Weekly. 1H is good for 5m charts.")
+i_useHTFBias    = input.bool(true, "Filter Signals by HTF Bias", group = grpHTF)
+i_htfTF         = input.timeframe("60", "HTF Timeframe", group = grpHTF, tooltip = "60 = 1H, 240 = 4H, D = Daily, W = Weekly. 1H is good for 5m charts.")
 
 // ── Sessions ────────────────────────────────────────────────────────────────────────
-i_useSessions   = input.bool(true,"Show NSE ICT Macro Boxes",          group = grpSess)
-i_sessAM        = input.session("0915-1045","AM Macro (Open Drive)",   group = grpSess)
-i_sessMid       = input.session("1045-1200","Mid Morning",             group = grpSess)
-i_sessLunch     = input.session("1200-1330","Lunch (Avoid)",           group = grpSess)
-i_sessPM        = input.session("1330-1500","PM Macro",                group = grpSess)
-i_sessExpiry    = input.session("1430-1530","Expiry / Close Window",   group = grpSess)
-i_avoidLunch    = input.bool(true,"Block Signals during Lunch",        group = grpSess)
-i_tz            = input.string("Asia/Kolkata","Timezone", options = ["Asia/Kolkata","America/New_York","Europe/London","UTC"], group = grpSess)
+i_useSessions   = input.bool(true, "Show NSE ICT Macro Boxes",        group = grpSess)
+i_sessAM        = input.session("0915-1045", "AM Macro (Open Drive)", group = grpSess)
+i_sessMid       = input.session("1045-1200", "Mid Morning",           group = grpSess)
+i_sessLunch     = input.session("1200-1330", "Lunch (Avoid)",         group = grpSess)
+i_sessPM        = input.session("1330-1500", "PM Macro",              group = grpSess)
+i_sessExpiry    = input.session("1430-1530", "Expiry / Close Window", group = grpSess)
+i_avoidLunch    = input.bool(true, "Block Signals during Lunch",      group = grpSess)
+i_tz            = input.string("Asia/Kolkata", "Timezone", options = ["Asia/Kolkata", "America/New_York", "Europe/London", "UTC"], group = grpSess)
 
 // ── Signal Engine ───────────────────────────────────────────────────────────────────
-i_minScore      = input.int(4, "Min Confluence Score (0-7)", minval = 1, maxval = 7, group = grpSig,
-     tooltip = "Higher = fewer but stronger signals. 4-5 recommended.")
-i_oneSigPerBar  = input.bool(true,"One Signal Per Setup (no repeats)", group = grpSig)
-i_useOTE        = input.bool(true,"Require OTE Zone (0.62-0.79)",      group = grpSig)
+i_minScore      = input.int(4, "Min Confluence Score (0-7)", minval = 1, maxval = 7, group = grpSig, tooltip = "Higher = fewer but stronger signals. 4-5 recommended.")
+i_oneSigPerBar  = input.bool(true, "One Signal Per Setup (no repeats)", group = grpSig)
+i_useOTE        = input.bool(true, "Require OTE Zone (0.62-0.79)",      group = grpSig)
 
 // ── Risk ────────────────────────────────────────────────────────────────────────────
-i_slMode        = input.string("Structure", "SL Mode", options = ["Structure","ATR","Fixed%"], group = grpRisk,
-     tooltip = "Structure = beyond swept liquidity / OB. ATR = ATR multiple. Fixed% = % of price.")
-i_slATR         = input.float(1.5,"SL ATR Multiple", minval = 0.5, maxval = 5.0, step = 0.1, group = grpRisk)
-i_slFixedPct    = input.float(0.3,"SL Fixed %",      minval = 0.05, maxval = 5.0, step = 0.05, group = grpRisk)
-i_slBuffer      = input.float(0.05,"SL Buffer %",   minval = 0.0,  maxval = 1.0, step = 0.01, group = grpRisk)
-i_tp1R          = input.float(1.0,"TP1 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
-i_tp2R          = input.float(2.0,"TP2 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
-i_tp3R          = input.float(3.0,"TP3 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+i_slMode        = input.string("Structure", "SL Mode", options = ["Structure", "ATR", "Fixed%"], group = grpRisk, tooltip = "Structure = beyond swept liquidity / OB. ATR = ATR multiple. Fixed% = % of price.")
+i_slATR         = input.float(1.5,  "SL ATR Multiple", minval = 0.5,  maxval = 5.0,  step = 0.1,  group = grpRisk)
+i_slFixedPct    = input.float(0.3,  "SL Fixed %",      minval = 0.05, maxval = 5.0,  step = 0.05, group = grpRisk)
+i_slBuffer      = input.float(0.05, "SL Buffer %",     minval = 0.0,  maxval = 1.0,  step = 0.01, group = grpRisk)
+i_tp1R          = input.float(1.0, "TP1 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+i_tp2R          = input.float(2.0, "TP2 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+i_tp3R          = input.float(3.0, "TP3 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
 
 // ── Dashboard ───────────────────────────────────────────────────────────────────────
-i_showDash      = input.bool(true,"Show Dashboard",                    group = grpDash)
-i_dashPos       = input.string("Top Right","Dashboard Position",
-     options = ["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right"], group = grpDash)
-i_dashSize      = input.string("Small","Dashboard Size", options = ["Tiny","Small","Normal","Large"], group = grpDash)
+i_showDash      = input.bool(true, "Show Dashboard", group = grpDash)
+i_dashPos       = input.string("Top Right", "Dashboard Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group = grpDash)
+i_dashSize      = input.string("Small", "Dashboard Size", options = ["Tiny", "Small", "Normal", "Large"], group = grpDash)
 
 // ── Colors ──────────────────────────────────────────────────────────────────────────
-c_bull        = color.new(#26a69a, 0)
-c_bear        = color.new(#ef5350, 0)
-c_bullDim     = color.new(#26a69a, 80)
-c_bearDim     = color.new(#ef5350, 80)
-c_obBull      = color.new(#1976d2, 80)
-c_obBear      = color.new(#f57c00, 80)
-c_fvgBull     = color.new(#00bcd4, 85)
-c_fvgBear     = color.new(#ff9800, 85)
-c_liqBuy      = color.new(#ff5252, 0)
-c_liqSell     = color.new(#69f0ae, 0)
-c_premium     = color.new(#ef5350, 92)
-c_discount    = color.new(#26a69a, 92)
-c_sessAM      = color.new(#2962ff, 88)
-c_sessMid     = color.new(#43a047, 90)
-c_sessLunch   = color.new(#9e9e9e, 92)
-c_sessPM      = color.new(#8e24aa, 88)
-c_sessExpiry  = color.new(#d50000, 88)
+c_bull       = color.new(#26a69a, 0)
+c_bear       = color.new(#ef5350, 0)
+c_obBull     = color.new(#1976d2, 80)
+c_obBear     = color.new(#f57c00, 80)
+c_fvgBull    = color.new(#00bcd4, 85)
+c_fvgBear    = color.new(#ff9800, 85)
+c_liqBuy     = color.new(#ff5252, 0)
+c_liqSell    = color.new(#69f0ae, 0)
+c_premium    = color.new(#ef5350, 92)
+c_discount   = color.new(#26a69a, 92)
+c_sessAM     = color.new(#2962ff, 88)
+c_sessMid    = color.new(#43a047, 90)
+c_sessLunch  = color.new(#9e9e9e, 92)
+c_sessPM     = color.new(#8e24aa, 88)
+c_sessExpiry = color.new(#d50000, 88)
+c_slLine     = color.new(#b00020, 0)
+c_tpBuy      = color.new(#00c853, 0)
+c_tpSell     = color.new(#ff6f00, 0)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   2. UTILITY HELPERS
@@ -133,15 +121,10 @@ f_inSession(_sess) =>
     not na(time(timeframe.period, _sess, i_tz))
 
 f_dashPos() =>
-    i_dashPos == "Top Right"     ? position.top_right    :
-     i_dashPos == "Top Left"     ? position.top_left     :
-     i_dashPos == "Bottom Right" ? position.bottom_right :
-     i_dashPos == "Bottom Left"  ? position.bottom_left  : position.middle_right
+    i_dashPos == "Top Right" ? position.top_right : i_dashPos == "Top Left" ? position.top_left : i_dashPos == "Bottom Right" ? position.bottom_right : i_dashPos == "Bottom Left" ? position.bottom_left : position.middle_right
 
 f_dashSize() =>
-    i_dashSize == "Tiny"    ? size.tiny   :
-     i_dashSize == "Small"  ? size.small  :
-     i_dashSize == "Normal" ? size.normal : size.large
+    i_dashSize == "Tiny" ? size.tiny : i_dashSize == "Small" ? size.small : i_dashSize == "Normal" ? size.normal : size.large
 
 atr14 = ta.atr(14)
 volMA = ta.sma(volume, i_volLen)
@@ -149,28 +132,22 @@ volOK = i_useVolume ? (volume >= volMA) : true
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   3. HIGHER TIMEFRAME BIAS
-//   Uses HTF EMA + structure to determine directional bias.
 // ════════════════════════════════════════════════════════════════════════════════════
 htfClose = request.security(syminfo.tickerid, i_htfTF, close, lookahead = barmerge.lookahead_off)
 htfEma50 = request.security(syminfo.tickerid, i_htfTF, ta.ema(close, 50), lookahead = barmerge.lookahead_off)
 htfEma20 = request.security(syminfo.tickerid, i_htfTF, ta.ema(close, 20), lookahead = barmerge.lookahead_off)
 
-htfBull = htfClose > htfEma50 and htfEma20 > htfEma50
-htfBear = htfClose < htfEma50 and htfEma20 < htfEma50
-htfBiasStr = htfBull ? "BULLISH ▲" : htfBear ? "BEARISH ▼" : "NEUTRAL ◆"
+htfBull = not na(htfEma50) and htfClose > htfEma50 and htfEma20 > htfEma50
+htfBear = not na(htfEma50) and htfClose < htfEma50 and htfEma20 < htfEma50
+htfBiasStr = htfBull ? "BULLISH UP" : htfBear ? "BEARISH DN" : "NEUTRAL"
 htfBiasCol = htfBull ? c_bull : htfBear ? c_bear : color.gray
 
 // Daily / Weekly OHLC for premium-discount and weekly profile
-dHigh  = request.security(syminfo.tickerid, "D", high,  lookahead = barmerge.lookahead_on)
-dLow   = request.security(syminfo.tickerid, "D", low,   lookahead = barmerge.lookahead_on)
-dOpen  = request.security(syminfo.tickerid, "D", open,  lookahead = barmerge.lookahead_on)
-dMid   = (dHigh + dLow) / 2
-
-wHigh  = request.security(syminfo.tickerid, "W", high,  lookahead = barmerge.lookahead_on)
-wLow   = request.security(syminfo.tickerid, "W", low,   lookahead = barmerge.lookahead_on)
-wOpen  = request.security(syminfo.tickerid, "W", open,  lookahead = barmerge.lookahead_on)
-wMid   = (wHigh + wLow) / 2
-
+dHigh = request.security(syminfo.tickerid, "D", high, lookahead = barmerge.lookahead_on)
+dLow  = request.security(syminfo.tickerid, "D", low,  lookahead = barmerge.lookahead_on)
+wHigh = request.security(syminfo.tickerid, "W", high, lookahead = barmerge.lookahead_on)
+wLow  = request.security(syminfo.tickerid, "W", low,  lookahead = barmerge.lookahead_on)
+wOpen = request.security(syminfo.tickerid, "W", open, lookahead = barmerge.lookahead_on)
 pwHigh = request.security(syminfo.tickerid, "W", high[1], lookahead = barmerge.lookahead_on)
 pwLow  = request.security(syminfo.tickerid, "W", low[1],  lookahead = barmerge.lookahead_on)
 
@@ -178,29 +155,23 @@ pwLow  = request.security(syminfo.tickerid, "W", low[1],  lookahead = barmerge.l
 //   4. MARKET STRUCTURE — Swings, BOS, CHoCH
 // ════════════════════════════════════════════════════════════════════════════════════
 phRaw = ta.pivothigh(high, i_pivotLen, i_pivotLen)
-plRaw = ta.pivotlow (low,  i_pivotLen, i_pivotLen)
+plRaw = ta.pivotlow(low,   i_pivotLen, i_pivotLen)
 
 var float lastSH    = na
 var float lastSL    = na
 var int   lastSHBar = na
 var int   lastSLBar = na
 
-var float prevSH    = na
-var float prevSL    = na
-
 if not na(phRaw)
-    prevSH    := lastSH
     lastSH    := phRaw
     lastSHBar := bar_index - i_pivotLen
 
 if not na(plRaw)
-    prevSL    := lastSL
     lastSL    := plRaw
     lastSLBar := bar_index - i_pivotLen
 
 // Track current structural state (1 = bullish, -1 = bearish, 0 = neutral)
-var int   trend       = 0
-var float lastBosLvl  = na
+var int trend = 0
 
 bullBOS = not na(lastSH) and close > lastSH and close[1] <= lastSH
 bearBOS = not na(lastSL) and close < lastSL and close[1] >= lastSL
@@ -210,119 +181,106 @@ bullCHoCH = bullBOS and trend == -1
 bearCHoCH = bearBOS and trend ==  1
 
 if bullBOS
-    trend      := 1
-    lastBosLvl := lastSH
+    trend := 1
 if bearBOS
-    trend      := -1
-    lastBosLvl := lastSL
+    trend := -1
 
-if i_showBOS and bullBOS
+if i_showBOS and bullBOS and not na(lastSHBar)
     line.new(lastSHBar, lastSH, bar_index, lastSH, color = c_bull, width = 1, style = line.style_dashed)
-    label.new(bar_index, lastSH, bullCHoCH ? "CHoCH ▲" : "BOS ▲",
-         color = c_bull, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+    label.new(bar_index, lastSH, bullCHoCH ? "CHoCH UP" : "BOS UP", color = c_bull, textcolor = color.white, style = label.style_label_down, size = size.tiny)
 
-if i_showBOS and bearBOS
+if i_showBOS and bearBOS and not na(lastSLBar)
     line.new(lastSLBar, lastSL, bar_index, lastSL, color = c_bear, width = 1, style = line.style_dashed)
-    label.new(bar_index, lastSL, bearCHoCH ? "CHoCH ▼" : "BOS ▼",
-         color = c_bear, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+    label.new(bar_index, lastSL, bearCHoCH ? "CHoCH DN" : "BOS DN", color = c_bear, textcolor = color.white, style = label.style_label_up, size = size.tiny)
 
 // Swing markers
 if i_showSwings and not na(phRaw)
-    label.new(bar_index - i_pivotLen, phRaw, "H", color = color.new(c_bear, 70),
-         textcolor = color.white, style = label.style_label_down, size = size.tiny)
+    label.new(bar_index - i_pivotLen, phRaw, "H", color = color.new(c_bear, 70), textcolor = color.white, style = label.style_label_down, size = size.tiny)
 if i_showSwings and not na(plRaw)
-    label.new(bar_index - i_pivotLen, plRaw, "L", color = color.new(c_bull, 70),
-         textcolor = color.white, style = label.style_label_up, size = size.tiny)
+    label.new(bar_index - i_pivotLen, plRaw, "L", color = color.new(c_bull, 70), textcolor = color.white, style = label.style_label_up, size = size.tiny)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   5. ORDER BLOCKS — graded A / B / C
-//   A = OB that swept liquidity AND produced displacement (BOS)
-//   B = OB that produced displacement only
-//   C = simple last-opposite-candle OB
 // ════════════════════════════════════════════════════════════════════════════════════
 type OB
-    box   bx
-    float top
-    float bot
-    bool  bull
+    box    bx
+    float  top
+    float  bot
+    bool   bull
     string grade
-    bool  mitigated
+    bool   mitigated
 
-var OB[] obs = array.new<OB>()
+var array<OB> obs = array.new<OB>()
 
-// Displacement = strong directional bar (range > 1.5 * ATR)
 displacement = (high - low) > 1.5 * atr14
 swept_low_recently  = ta.lowest(low,  3) < ta.lowest(low,  10)[3]
 swept_high_recently = ta.highest(high, 3) > ta.highest(high, 10)[3]
 
 f_obAllowed(_grade) =>
-    i_obGrade == "A only"  ? _grade == "A" :
-     i_obGrade == "A+B"    ? (_grade == "A" or _grade == "B") : true
+    i_obGrade == "A only" ? _grade == "A" : i_obGrade == "A+B" ? (_grade == "A" or _grade == "B") : true
 
 // Bullish OB: last bearish candle before bullish displacement / BOS
 if i_showOB and bullBOS and close[1] < open[1]
     grade = (swept_low_recently and displacement) ? "A" : displacement ? "B" : "C"
     if f_obAllowed(grade)
-        bx = box.new(bar_index[1], high[1], bar_index + 5, low[1],
-             bgcolor = c_obBull, border_color = color.new(#1976d2, 30), border_width = 1,
-             text = "OB " + grade, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
+        bx = box.new(bar_index[1], high[1], bar_index + 5, low[1], bgcolor = c_obBull, border_color = color.new(#1976d2, 30), border_width = 1, text = "OB " + grade, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
         ob = OB.new(bx, high[1], low[1], true, grade, false)
         array.push(obs, ob)
         if array.size(obs) > i_obMaxBoxes
             old = array.shift(obs)
             box.delete(old.bx)
 
-// Bearish OB: last bullish candle before bearish displacement / BOS
+// Bearish OB
 if i_showOB and bearBOS and close[1] > open[1]
     grade = (swept_high_recently and displacement) ? "A" : displacement ? "B" : "C"
     if f_obAllowed(grade)
-        bx = box.new(bar_index[1], high[1], bar_index + 5, low[1],
-             bgcolor = c_obBear, border_color = color.new(#f57c00, 30), border_width = 1,
-             text = "OB " + grade, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
+        bx = box.new(bar_index[1], high[1], bar_index + 5, low[1], bgcolor = c_obBear, border_color = color.new(#f57c00, 30), border_width = 1, text = "OB " + grade, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
         ob = OB.new(bx, high[1], low[1], false, grade, false)
         array.push(obs, ob)
         if array.size(obs) > i_obMaxBoxes
             old = array.shift(obs)
             box.delete(old.bx)
 
-// Extend / mitigate OBs
+// Extend / mitigate OBs (iterate backwards via reverse index so removals are safe)
 if array.size(obs) > 0
-    for i = array.size(obs) - 1 to 0
-        ob = array.get(obs, i)
-        if not ob.mitigated
-            box.set_right(ob.bx, bar_index + 2)
-            mitigated = ob.bull ? (low <= ob.bot) : (high >= ob.top)
-            if mitigated
-                ob.mitigated := true
-                if i_obMitigate
-                    box.delete(ob.bx)
-                    array.remove(obs, i)
-                else
-                    box.set_bgcolor(ob.bx, color.new(color.gray, 90))
+    n_obs = array.size(obs)
+    for i = 0 to n_obs - 1
+        idx = n_obs - 1 - i
+        if idx < array.size(obs)
+            ob = array.get(obs, idx)
+            if not ob.mitigated
+                box.set_right(ob.bx, bar_index + 2)
+                mit = ob.bull ? (low <= ob.bot) : (high >= ob.top)
+                if mit
+                    ob.mitigated := true
+                    if i_obMitigate
+                        box.delete(ob.bx)
+                        array.remove(obs, idx)
+                    else
+                        box.set_bgcolor(ob.bx, color.new(color.gray, 90))
 
-// Helper: is price currently inside any unmitigated OB on the trade side?
 f_inBullOB() =>
     found = false
-    if array.size(obs) > 0
-        for i = 0 to array.size(obs) - 1
-            ob = array.get(obs, i)
+    n = array.size(obs)
+    if n > 0
+        for j = 0 to n - 1
+            ob = array.get(obs, j)
             if ob.bull and not ob.mitigated and low <= ob.top and low >= ob.bot
                 found := true
     found
 
 f_inBearOB() =>
     found = false
-    if array.size(obs) > 0
-        for i = 0 to array.size(obs) - 1
-            ob = array.get(obs, i)
+    n = array.size(obs)
+    if n > 0
+        for j = 0 to n - 1
+            ob = array.get(obs, j)
             if not ob.bull and not ob.mitigated and high >= ob.bot and high <= ob.top
                 found := true
     found
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   6. FAIR VALUE GAPS
-//   Bullish FVG: low[0] > high[2]   (3-candle gap up)
-//   Bearish FVG: high[0] < low[2]   (3-candle gap down)
 // ════════════════════════════════════════════════════════════════════════════════════
 type FVG
     box   bx
@@ -331,14 +289,13 @@ type FVG
     bool  bull
     bool  mitigated
 
-var FVG[] fvgs = array.new<FVG>()
+var array<FVG> fvgs = array.new<FVG>()
 
 bullFVG = low > high[2] and close[1] > open[1]
 bearFVG = high < low[2] and close[1] < open[1]
 
 if i_showFVG and bullFVG
-    bx = box.new(bar_index - 2, low, bar_index + 5, high[2],
-         bgcolor = c_fvgBull, border_color = color.new(#00bcd4, 50), border_width = 1)
+    bx = box.new(bar_index - 2, low, bar_index + 5, high[2], bgcolor = c_fvgBull, border_color = color.new(#00bcd4, 50), border_width = 1)
     f = FVG.new(bx, low, high[2], true, false)
     array.push(fvgs, f)
     if array.size(fvgs) > i_fvgMaxBoxes
@@ -346,8 +303,7 @@ if i_showFVG and bullFVG
         box.delete(old.bx)
 
 if i_showFVG and bearFVG
-    bx = box.new(bar_index - 2, low[2], bar_index + 5, high,
-         bgcolor = c_fvgBear, border_color = color.new(#ff9800, 50), border_width = 1)
+    bx = box.new(bar_index - 2, low[2], bar_index + 5, high, bgcolor = c_fvgBear, border_color = color.new(#ff9800, 50), border_width = 1)
     f = FVG.new(bx, low[2], high, false, false)
     array.push(fvgs, f)
     if array.size(fvgs) > i_fvgMaxBoxes
@@ -355,99 +311,93 @@ if i_showFVG and bearFVG
         box.delete(old.bx)
 
 if array.size(fvgs) > 0
-    for i = array.size(fvgs) - 1 to 0
-        fv = array.get(fvgs, i)
-        if not fv.mitigated
-            box.set_right(fv.bx, bar_index + 2)
-            filled = fv.bull ? (low <= fv.bot) : (high >= fv.top)
-            if filled
-                fv.mitigated := true
-                if i_fvgMitigate
-                    box.delete(fv.bx)
-                    array.remove(fvgs, i)
-                else
-                    box.set_bgcolor(fv.bx, color.new(color.gray, 92))
+    n_fvg = array.size(fvgs)
+    for i = 0 to n_fvg - 1
+        idx = n_fvg - 1 - i
+        if idx < array.size(fvgs)
+            fv = array.get(fvgs, idx)
+            if not fv.mitigated
+                box.set_right(fv.bx, bar_index + 2)
+                filled = fv.bull ? (low <= fv.bot) : (high >= fv.top)
+                if filled
+                    fv.mitigated := true
+                    if i_fvgMitigate
+                        box.delete(fv.bx)
+                        array.remove(fvgs, idx)
+                    else
+                        box.set_bgcolor(fv.bx, color.new(color.gray, 92))
 
 f_inBullFVG() =>
     found = false
-    if array.size(fvgs) > 0
-        for i = 0 to array.size(fvgs) - 1
-            fv = array.get(fvgs, i)
+    n = array.size(fvgs)
+    if n > 0
+        for j = 0 to n - 1
+            fv = array.get(fvgs, j)
             if fv.bull and not fv.mitigated and low <= fv.top and low >= fv.bot
                 found := true
     found
 
 f_inBearFVG() =>
     found = false
-    if array.size(fvgs) > 0
-        for i = 0 to array.size(fvgs) - 1
-            fv = array.get(fvgs, i)
+    n = array.size(fvgs)
+    if n > 0
+        for j = 0 to n - 1
+            fv = array.get(fvgs, j)
             if not fv.bull and not fv.mitigated and high >= fv.bot and high <= fv.top
                 found := true
     found
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   7. LIQUIDITY POOLS (BSL / SSL) + SWEEP DETECTION
-//   BSL = buy-side liquidity (above swing highs) — bears hunt these
-//   SSL = sell-side liquidity (below swing lows) — bulls hunt these
 // ════════════════════════════════════════════════════════════════════════════════════
 type Liq
-    line ln
+    line  ln
     float lvl
     int   bar
-    bool  buyside     // true = BSL (high), false = SSL (low)
+    bool  buyside
     bool  swept
 
-var Liq[] liqs = array.new<Liq>()
+var array<Liq> liqs = array.new<Liq>()
 
 if i_showLiq and not na(phRaw)
-    ln = line.new(bar_index - i_pivotLen, phRaw, bar_index + 5, phRaw,
-         color = color.new(c_liqBuy, 60), style = line.style_dotted, width = 1)
+    ln = line.new(bar_index - i_pivotLen, phRaw, bar_index + 5, phRaw, color = color.new(c_liqBuy, 60), style = line.style_dotted, width = 1)
     array.push(liqs, Liq.new(ln, phRaw, bar_index - i_pivotLen, true, false))
 
 if i_showLiq and not na(plRaw)
-    ln = line.new(bar_index - i_pivotLen, plRaw, bar_index + 5, plRaw,
-         color = color.new(c_liqSell, 60), style = line.style_dotted, width = 1)
+    ln = line.new(bar_index - i_pivotLen, plRaw, bar_index + 5, plRaw, color = color.new(c_liqSell, 60), style = line.style_dotted, width = 1)
     array.push(liqs, Liq.new(ln, plRaw, bar_index - i_pivotLen, false, false))
 
 // Sweep detection + line management
-var bool justSweptSSL = false
-var bool justSweptBSL = false
-var float lastSweepLvl = na
-justSweptSSL := false
-justSweptBSL := false
+justSweptSSL = false
+justSweptBSL = false
 
 if array.size(liqs) > 0
-    for i = array.size(liqs) - 1 to 0
-        lq = array.get(liqs, i)
-        if not lq.swept
-            line.set_x2(lq.ln, bar_index + 2)
-            // BSL sweep: wick above level + close back below (bearish reversal)
-            if lq.buyside and high > lq.lvl and close < lq.lvl
-                lq.swept := true
-                lastSweepLvl := lq.lvl
-                justSweptBSL := true
-                line.set_color(lq.ln, color.new(c_liqBuy, 30))
-                line.set_style(lq.ln, line.style_solid)
-                if i_showSweep
-                    label.new(bar_index, high, "✗ BSL", color = c_liqBuy, textcolor = color.white,
-                         style = label.style_label_down, size = size.tiny)
-            // SSL sweep: wick below level + close back above (bullish reversal)
-            else if not lq.buyside and low < lq.lvl and close > lq.lvl
-                lq.swept := true
-                lastSweepLvl := lq.lvl
-                justSweptSSL := true
-                line.set_color(lq.ln, color.new(c_liqSell, 30))
-                line.set_style(lq.ln, line.style_solid)
-                if i_showSweep
-                    label.new(bar_index, low, "✗ SSL", color = c_liqSell, textcolor = color.white,
-                         style = label.style_label_up, size = size.tiny)
+    n_liq = array.size(liqs)
+    for i = 0 to n_liq - 1
+        idx = n_liq - 1 - i
+        if idx < array.size(liqs)
+            lq = array.get(liqs, idx)
+            if not lq.swept
+                line.set_x2(lq.ln, bar_index + 2)
+                if lq.buyside and high > lq.lvl and close < lq.lvl
+                    lq.swept := true
+                    justSweptBSL := true
+                    line.set_color(lq.ln, color.new(c_liqBuy, 30))
+                    line.set_style(lq.ln, line.style_solid)
+                    if i_showSweep
+                        label.new(bar_index, high, "x BSL", color = c_liqBuy, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+                else if not lq.buyside and low < lq.lvl and close > lq.lvl
+                    lq.swept := true
+                    justSweptSSL := true
+                    line.set_color(lq.ln, color.new(c_liqSell, 30))
+                    line.set_style(lq.ln, line.style_solid)
+                    if i_showSweep
+                        label.new(bar_index, low, "x SSL", color = c_liqSell, textcolor = color.white, style = label.style_label_up, size = size.tiny)
 
-// Cap line count per side
-if array.size(liqs) > i_liqMax * 2
-    // Drop oldest swept lines first
+// Cap line count: drop oldest swept line if over cap
+if array.size(liqs) > i_liqMax * 2 and array.size(liqs) > 0
     for i = 0 to array.size(liqs) - 1
-        if array.size(liqs) <= i_liqMax * 2
+        if i >= array.size(liqs)
             break
         lq = array.get(liqs, i)
         if lq.swept
@@ -455,7 +405,7 @@ if array.size(liqs) > i_liqMax * 2
             array.remove(liqs, i)
             break
 
-// Track recent sweep memory (5-bar window for confluence)
+// Track recent sweep memory (5-bar window)
 var int lastSSLSweepBar = na
 var int lastBSLSweepBar = na
 if justSweptSSL
@@ -467,16 +417,9 @@ recentSSLSweep = not na(lastSSLSweepBar) and (bar_index - lastSSLSweepBar) <= 5
 recentBSLSweep = not na(lastBSLSweepBar) and (bar_index - lastBSLSweepBar) <= 5
 
 // ════════════════════════════════════════════════════════════════════════════════════
-//   8. PREMIUM / DISCOUNT DEALING RANGE
-//   Selectable source: Daily / Weekly / Session AM range.
-//   Discount = lower 50% (favorable for buys)
-//   Premium  = upper 50% (favorable for sells)
-//   Equilibrium = midpoint (50%)
+//   8. PREMIUM / DISCOUNT DEALING RANGE + OTE
 // ════════════════════════════════════════════════════════════════════════════════════
-pdHi = i_pdSource == "Weekly" ? wHigh : i_pdSource == "Session" ? na : dHigh
-pdLo = i_pdSource == "Weekly" ? wLow  : i_pdSource == "Session" ? na : dLow
-
-// Session-based range = AM Macro high/low so far today
+// Session-based AM range
 var float amSessHi = na
 var float amSessLo = na
 inAM = f_inSession(i_sessAM)
@@ -484,164 +427,130 @@ if inAM and not inAM[1]
     amSessHi := high
     amSessLo := low
 else if inAM
-    amSessHi := math.max(amSessHi, high)
-    amSessLo := math.min(amSessLo, low)
+    amSessHi := math.max(nz(amSessHi, high), high)
+    amSessLo := math.min(nz(amSessLo, low),  low)
 
-if i_pdSource == "Session"
+float pdHi = na
+float pdLo = na
+if i_pdSource == "Weekly"
+    pdHi := wHigh
+    pdLo := wLow
+else if i_pdSource == "Session"
     pdHi := amSessHi
     pdLo := amSessLo
+else
+    pdHi := dHigh
+    pdLo := dLow
 
-pdMid = na(pdHi) or na(pdLo) ? na : (pdHi + pdLo) / 2
+pdMid   = na(pdHi) or na(pdLo) ? na : (pdHi + pdLo) / 2
 pdRange = na(pdHi) or na(pdLo) ? na : pdHi - pdLo
 
 inDiscount = not na(pdMid) and close < pdMid
 inPremium  = not na(pdMid) and close > pdMid
 
-// OTE zone: 0.62 - 0.79 of dealing range (from swept extreme)
-oteHi62  = na(pdRange) ? na : pdLo + pdRange * 0.62
-oteHi705 = na(pdRange) ? na : pdLo + pdRange * 0.705
-oteHi79  = na(pdRange) ? na : pdLo + pdRange * 0.79
-// For shorts (mirror)
-oteLo62  = na(pdRange) ? na : pdHi - pdRange * 0.62
-oteLo705 = na(pdRange) ? na : pdHi - pdRange * 0.705
-oteLo79  = na(pdRange) ? na : pdHi - pdRange * 0.79
+// OTE zone (0.62 - 0.79) — buy zone above pdLo, sell zone below pdHi
+oteBuyLo  = na(pdRange) ? na : pdLo + pdRange * 0.62
+oteBuyHi  = na(pdRange) ? na : pdLo + pdRange * 0.79
+oteSellLo = na(pdRange) ? na : pdHi - pdRange * 0.79
+oteSellHi = na(pdRange) ? na : pdHi - pdRange * 0.62
 
-inBuyOTE  = not na(oteLo79) and close >= oteLo79 and close <= oteLo62
-inSellOTE = not na(oteHi62) and close >= oteHi62 and close <= oteHi79
+inBuyOTE  = not na(oteBuyLo)  and close >= oteBuyLo  and close <= oteBuyHi  and inDiscount
+inSellOTE = not na(oteSellLo) and close >= oteSellLo and close <= oteSellHi and inPremium
 
-// Plot premium/discount bg
-plot(i_showPD ? pdHi  : na, "Range High", color = color.new(c_bear, 40), style = plot.style_linebr)
-plot(i_showPD ? pdLo  : na, "Range Low",  color = color.new(c_bull, 40), style = plot.style_linebr)
-plot(i_showPD ? pdMid : na, "Equilibrium", color = color.new(color.gray, 30), style = plot.style_linebr)
+// Plot premium/discount lines
+plot(i_showPD ? pdHi  : na, "Range High",   color = color.new(c_bear, 40),   style = plot.style_linebr)
+plot(i_showPD ? pdLo  : na, "Range Low",    color = color.new(c_bull, 40),   style = plot.style_linebr)
+plot(i_showPD ? pdMid : na, "Equilibrium",  color = color.new(color.gray, 30), style = plot.style_linebr)
 
-// Equilibrium / OTE band fills
-p_pdHi  = plot(i_showPD ? pdHi  : na, display = display.none)
-p_pdMid = plot(i_showPD ? pdMid : na, display = display.none)
-p_pdLo  = plot(i_showPD ? pdLo  : na, display = display.none)
+p_pdHi  = plot(i_showPD ? pdHi  : na, "_pdHi",  display = display.none)
+p_pdMid = plot(i_showPD ? pdMid : na, "_pdMid", display = display.none)
+p_pdLo  = plot(i_showPD ? pdLo  : na, "_pdLo",  display = display.none)
 fill(p_pdHi,  p_pdMid, color = c_premium,  title = "Premium Zone")
 fill(p_pdMid, p_pdLo,  color = c_discount, title = "Discount Zone")
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   9. ICT MACRO SESSIONS (NSE IST)
 // ════════════════════════════════════════════════════════════════════════════════════
-type Sess
-    box  bx
-    line hi
-    line lo
-    float topV
-    float botV
-    string name
-
 f_drawSession(_inSess, _prev, _color, _name, _show) =>
     var box   sb = na
     var line  hl = na
     var line  ll = na
     var float hv = na
     var float lv = na
-    if _show and _inSess and not _prev
-        sb := box.new(bar_index, high, bar_index, low, bgcolor = _color,
-              border_color = color.new(_color, 50), border_width = 1,
-              text = _name, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
+    started = _show and _inSess and not nz(_prev, false)
+    ongoing = _show and _inSess and nz(_prev, false) and not na(sb)
+    if started
+        sb := box.new(bar_index, high, bar_index, low, bgcolor = _color, border_color = color.new(_color, 50), border_width = 1, text = _name, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
         hv := high
         lv := low
         hl := line.new(bar_index, high, bar_index, high, color = color.new(_color, 30), width = 1)
         ll := line.new(bar_index, low,  bar_index, low,  color = color.new(_color, 30), width = 1)
-    else if _show and _inSess
-        hv := math.max(hv, high)
-        lv := math.min(lv, low)
+    else if ongoing
+        hv := math.max(nz(hv, high), high)
+        lv := math.min(nz(lv, low),  low)
         box.set_top(sb, hv)
         box.set_bottom(sb, lv)
         box.set_right(sb, bar_index)
-        line.set_xy2(hl, bar_index + 5, hv)
-        line.set_xy2(ll, bar_index + 5, lv)
-    [hv, lv]
+        if not na(hl)
+            line.set_xy2(hl, bar_index + 5, hv)
+        if not na(ll)
+            line.set_xy2(ll, bar_index + 5, lv)
+    nz(hv, 0.0)
 
 inMid    = f_inSession(i_sessMid)
 inLunch  = f_inSession(i_sessLunch)
 inPM     = f_inSession(i_sessPM)
 inExpiry = f_inSession(i_sessExpiry)
 
-[amHi,    amLo]    = f_drawSession(inAM,     inAM[1],     c_sessAM,     "AM Macro",    i_useSessions)
-[midHi,   midLo]   = f_drawSession(inMid,    inMid[1],    c_sessMid,    "Mid",         i_useSessions)
-[lunchHi, lunchLo] = f_drawSession(inLunch,  inLunch[1],  c_sessLunch,  "Lunch",       i_useSessions)
-[pmHi,    pmLo]    = f_drawSession(inPM,     inPM[1],     c_sessPM,     "PM Macro",    i_useSessions)
-[expHi,   expLo]   = f_drawSession(inExpiry, inExpiry[1], c_sessExpiry, "Expiry",      i_useSessions)
+_amDrew     = f_drawSession(inAM,     inAM[1],     c_sessAM,     "AM Macro", i_useSessions)
+_midDrew    = f_drawSession(inMid,    inMid[1],    c_sessMid,    "Mid",      i_useSessions)
+_lunchDrew  = f_drawSession(inLunch,  inLunch[1],  c_sessLunch,  "Lunch",    i_useSessions)
+_pmDrew     = f_drawSession(inPM,     inPM[1],     c_sessPM,     "PM Macro", i_useSessions)
+_expiryDrew = f_drawSession(inExpiry, inExpiry[1], c_sessExpiry, "Expiry",   i_useSessions)
 
-inGoodSession = inAM or inMid or inPM or inExpiry
 sessionOK = i_avoidLunch ? not inLunch : true
 
 // ════════════════════════════════════════════════════════════════════════════════════
-//   10. WEEKLY PROFILE BIAS (from WPG concept)
-//   Simple inference: Mon close vs PW range tells likely week shape.
+//   10. WEEKLY PROFILE BIAS
 // ════════════════════════════════════════════════════════════════════════════════════
-dow = dayofweek(time, i_tz)
-isMon = dow == dayofweek.monday
-isTue = dow == dayofweek.tuesday
-isWed = dow == dayofweek.wednesday
+weeklyBullBias = not na(pwHigh) and not na(pwLow) and close > (pwHigh + pwLow) / 2
+weeklyBearBias = not na(pwHigh) and not na(pwLow) and close < (pwHigh + pwLow) / 2
 
-weeklyBullBias = not na(pwHigh) and close > (pwHigh + pwLow) / 2
-weeklyBearBias = not na(pwLow)  and close < (pwHigh + pwLow) / 2
-
-// Plot weekly OHLC for context
-plot(wHigh, "Weekly High", color = color.new(c_bear, 70), style = plot.style_linebr, linewidth = 1)
-plot(wLow,  "Weekly Low",  color = color.new(c_bull, 70), style = plot.style_linebr, linewidth = 1)
+plot(wHigh, "Weekly High", color = color.new(c_bear, 70),       style = plot.style_linebr, linewidth = 1)
+plot(wLow,  "Weekly Low",  color = color.new(c_bull, 70),       style = plot.style_linebr, linewidth = 1)
 plot(wOpen, "Weekly Open", color = color.new(color.orange, 70), style = plot.style_linebr, linewidth = 1)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   11. CONFLUENCE SCORING ENGINE
-//   For each direction, accumulate a score from independent ICT confluences.
-//   A signal fires only when score >= i_minScore AND structural trigger present.
-//
-//   Score components (max 7):
-//     +1  HTF bias aligned
-//     +1  Recent liquidity sweep on opposite side (SSL for buys / BSL for sells)
-//     +1  Bullish CHoCH / BOS (buys) or Bearish CHoCH / BOS (sells)
-//     +1  Price inside bullish OB / bearish OB
-//     +1  Price inside bullish FVG / bearish FVG
-//     +1  In Discount (buys) / Premium (sells)  — or in OTE if enabled
-//     +1  Volume confirmation
-//   Time filter: must be in good session, sessionOK (lunch block respected)
 // ════════════════════════════════════════════════════════════════════════════════════
+buy_htf    = i_useHTFBias ? htfBull : true
+buy_sweep  = recentSSLSweep
+buy_struct = bullCHoCH or bullBOS
+buy_ob     = f_inBullOB()
+buy_fvg    = f_inBullFVG()
+buy_pd     = i_useOTE ? inBuyOTE : inDiscount
+buy_vol    = volOK
 
-// Buy-side confluence
-buy_htf      = i_useHTFBias ? htfBull : true
-buy_sweep    = recentSSLSweep
-buy_struct   = bullCHoCH or bullBOS
-buy_ob       = f_inBullOB()
-buy_fvg      = f_inBullFVG()
-buy_pd       = i_useOTE ? inBuyOTE : inDiscount
-buy_vol      = volOK
+buyScore = (buy_htf ? 1 : 0) + (buy_sweep ? 1 : 0) + (buy_struct ? 1 : 0) + (buy_ob ? 1 : 0) + (buy_fvg ? 1 : 0) + (buy_pd ? 1 : 0) + (buy_vol ? 1 : 0)
 
-buyScore = (buy_htf ? 1 : 0) + (buy_sweep ? 1 : 0) + (buy_struct ? 1 : 0)
-         + (buy_ob ? 1 : 0)  + (buy_fvg ? 1 : 0)   + (buy_pd ? 1 : 0)
-         + (buy_vol ? 1 : 0)
+sell_htf    = i_useHTFBias ? htfBear : true
+sell_sweep  = recentBSLSweep
+sell_struct = bearCHoCH or bearBOS
+sell_ob     = f_inBearOB()
+sell_fvg    = f_inBearFVG()
+sell_pd     = i_useOTE ? inSellOTE : inPremium
+sell_vol    = volOK
 
-// Sell-side confluence
-sell_htf     = i_useHTFBias ? htfBear : true
-sell_sweep   = recentBSLSweep
-sell_struct  = bearCHoCH or bearBOS
-sell_ob      = f_inBearOB()
-sell_fvg     = f_inBearFVG()
-sell_pd      = i_useOTE ? inSellOTE : inPremium
-sell_vol     = volOK
+sellScore = (sell_htf ? 1 : 0) + (sell_sweep ? 1 : 0) + (sell_struct ? 1 : 0) + (sell_ob ? 1 : 0) + (sell_fvg ? 1 : 0) + (sell_pd ? 1 : 0) + (sell_vol ? 1 : 0)
 
-sellScore = (sell_htf ? 1 : 0) + (sell_sweep ? 1 : 0) + (sell_struct ? 1 : 0)
-          + (sell_ob ? 1 : 0)  + (sell_fvg ? 1 : 0)   + (sell_pd ? 1 : 0)
-          + (sell_vol ? 1 : 0)
-
-// Trigger gate: must have at least sweep+struct OR ob/fvg+struct as core
 buy_core_trigger  = (buy_sweep and buy_struct) or ((buy_ob or buy_fvg) and buy_struct)
 sell_core_trigger = (sell_sweep and sell_struct) or ((sell_ob or sell_fvg) and sell_struct)
 
-// Signal candidates
 buyCandidate  = sessionOK and buy_core_trigger  and buyScore  >= i_minScore
 sellCandidate = sessionOK and sell_core_trigger and sellScore >= i_minScore
 
-// One signal per setup: lock until trend changes / opposite signal
-var int  lastBuyBar  = na
-var int  lastSellBar = na
-var bool buyArmed    = true
-var bool sellArmed   = true
+var bool buyArmed  = true
+var bool sellArmed = true
 
 if bearCHoCH or bearBOS
     buyArmed := true
@@ -652,25 +561,17 @@ buySignal  = buyCandidate  and (i_oneSigPerBar ? buyArmed  : true)
 sellSignal = sellCandidate and (i_oneSigPerBar ? sellArmed : true)
 
 if buySignal
-    lastBuyBar := bar_index
-    buyArmed   := false
+    buyArmed := false
 if sellSignal
-    lastSellBar := bar_index
-    sellArmed   := false
+    sellArmed := false
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   12. ENTRY / SL / TP CALCULATION
-//   Entry: signal-bar close
-//   SL:    Structure → swept low minus buffer (buy) / swept high plus buffer (sell)
-//          ATR        → entry ± ATR * multiple
-//          Fixed%     → entry ± entry * %
-//   TP1/2/3: 1R / 2R / 3R (configurable)
 // ════════════════════════════════════════════════════════════════════════════════════
 f_calcSL_buy() =>
-    sl = 0.0
+    float sl = 0.0
     if i_slMode == "Structure"
-        baseLo = ta.lowest(low, 5)
-        sl := baseLo * (1 - i_slBuffer / 100)
+        sl := ta.lowest(low, 5) * (1 - i_slBuffer / 100)
     else if i_slMode == "ATR"
         sl := close - atr14 * i_slATR
     else
@@ -678,10 +579,9 @@ f_calcSL_buy() =>
     sl
 
 f_calcSL_sell() =>
-    sl = 0.0
+    float sl = 0.0
     if i_slMode == "Structure"
-        baseHi = ta.highest(high, 5)
-        sl := baseHi * (1 + i_slBuffer / 100)
+        sl := ta.highest(high, 5) * (1 + i_slBuffer / 100)
     else if i_slMode == "ATR"
         sl := close + atr14 * i_slATR
     else
@@ -721,61 +621,36 @@ if sellSignal
     sellBar   := bar_index
 
 // ════════════════════════════════════════════════════════════════════════════════════
-//   13. SIGNAL DRAWING — clean entry / SL / TP visuals
+//   13. SIGNAL DRAWING — entry / SL / TP visuals
 // ════════════════════════════════════════════════════════════════════════════════════
 f_drawTradePlan(_isBuy, _entry, _sl, _tp1, _tp2, _tp3, _startBar) =>
     col_entry = _isBuy ? c_bull : c_bear
-    col_sl    = #b00020
-    col_tp    = _isBuy ? #00c853 : #ff6f00
+    col_tp    = _isBuy ? c_tpBuy : c_tpSell
     rEnd      = _startBar + 30
     line.new(_startBar, _entry, rEnd, _entry, color = col_entry, width = 2, style = line.style_solid)
-    line.new(_startBar, _sl,    rEnd, _sl,    color = col_sl,    width = 2, style = line.style_dashed)
-    line.new(_startBar, _tp1,   rEnd, _tp1,   color = color.new(col_tp, 30), width = 1, style = line.style_dashed)
-    line.new(_startBar, _tp2,   rEnd, _tp2,   color = color.new(col_tp, 50), width = 1, style = line.style_dashed)
-    line.new(_startBar, _tp3,   rEnd, _tp3,   color = color.new(col_tp, 70), width = 1, style = line.style_dashed)
-    label.new(rEnd, _entry, "ENTRY " + str.tostring(_entry, format.mintick),
-         color = col_entry, textcolor = color.white, style = label.style_label_left, size = size.tiny)
-    label.new(rEnd, _sl, "SL " + str.tostring(_sl, format.mintick),
-         color = col_sl, textcolor = color.white, style = label.style_label_left, size = size.tiny)
-    label.new(rEnd, _tp1, "TP1 " + str.tostring(_tp1, format.mintick),
-         color = col_tp, textcolor = color.white, style = label.style_label_left, size = size.tiny)
-    label.new(rEnd, _tp2, "TP2 " + str.tostring(_tp2, format.mintick),
-         color = color.new(col_tp, 30), textcolor = color.white, style = label.style_label_left, size = size.tiny)
-    label.new(rEnd, _tp3, "TP3 " + str.tostring(_tp3, format.mintick),
-         color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.tiny)
+    line.new(_startBar, _sl,    rEnd, _sl,    color = c_slLine,  width = 2, style = line.style_dashed)
+    line.new(_startBar, _tp1,   rEnd, _tp1,   color = color.new(col_tp, 20), width = 1, style = line.style_dashed)
+    line.new(_startBar, _tp2,   rEnd, _tp2,   color = color.new(col_tp, 40), width = 1, style = line.style_dashed)
+    line.new(_startBar, _tp3,   rEnd, _tp3,   color = color.new(col_tp, 60), width = 1, style = line.style_dashed)
+    label.new(rEnd, _entry, "ENTRY " + str.tostring(_entry, format.mintick), color = col_entry, textcolor = color.white, style = label.style_label_left, size = size.tiny)
+    label.new(rEnd, _sl,    "SL "    + str.tostring(_sl,    format.mintick), color = c_slLine,  textcolor = color.white, style = label.style_label_left, size = size.tiny)
+    label.new(rEnd, _tp1,   "TP1 "   + str.tostring(_tp1,   format.mintick), color = col_tp,    textcolor = color.white, style = label.style_label_left, size = size.tiny)
+    label.new(rEnd, _tp2,   "TP2 "   + str.tostring(_tp2,   format.mintick), color = color.new(col_tp, 30), textcolor = color.white, style = label.style_label_left, size = size.tiny)
+    label.new(rEnd, _tp3,   "TP3 "   + str.tostring(_tp3,   format.mintick), color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.tiny)
 
 if buySignal
-    label.new(bar_index, low, "▲ BUY  (" + str.tostring(buyScore) + "/7)",
-         color = c_bull, textcolor = color.white, style = label.style_label_up, size = size.normal)
+    label.new(bar_index, low, "BUY (" + str.tostring(buyScore) + "/7)", color = c_bull, textcolor = color.white, style = label.style_label_up, size = size.normal)
     f_drawTradePlan(true, buyEntry, buySL, buyTP1, buyTP2, buyTP3, bar_index)
 
 if sellSignal
-    label.new(bar_index, high, "▼ SELL  (" + str.tostring(sellScore) + "/7)",
-         color = c_bear, textcolor = color.white, style = label.style_label_down, size = size.normal)
+    label.new(bar_index, high, "SELL (" + str.tostring(sellScore) + "/7)", color = c_bear, textcolor = color.white, style = label.style_label_down, size = size.normal)
     f_drawTradePlan(false, sellEntry, sellSL, sellTP1, sellTP2, sellTP3, bar_index)
 
-// Visual triggers also as plotshape (for backtesting / strategy convert)
-plotshape(buySignal,  title = "Buy Signal",  location = location.belowbar,
-     color = c_bull, style = shape.triangleup,   size = size.small, text = "BUY")
-plotshape(sellSignal, title = "Sell Signal", location = location.abovebar,
-     color = c_bear, style = shape.triangledown, size = size.small, text = "SELL")
-
-// Plot live trade plan lines for the last active signal
-plot(not na(buyEntry)  and (na(sellBar) or buyBar  > sellBar) ? buyEntry  : na, "Buy Entry",  color = color.new(c_bull, 0), style = plot.style_linebr, linewidth = 2)
-plot(not na(buySL)     and (na(sellBar) or buyBar  > sellBar) ? buySL     : na, "Buy SL",     color = color.new(#b00020, 0), style = plot.style_linebr, linewidth = 1)
-plot(not na(buyTP1)    and (na(sellBar) or buyBar  > sellBar) ? buyTP1    : na, "Buy TP1",    color = color.new(#00c853, 0), style = plot.style_linebr, linewidth = 1)
-plot(not na(buyTP2)    and (na(sellBar) or buyBar  > sellBar) ? buyTP2    : na, "Buy TP2",    color = color.new(#00c853, 30), style = plot.style_linebr, linewidth = 1)
-plot(not na(buyTP3)    and (na(sellBar) or buyBar  > sellBar) ? buyTP3    : na, "Buy TP3",    color = color.new(#00c853, 50), style = plot.style_linebr, linewidth = 1)
-
-plot(not na(sellEntry) and (na(buyBar)  or sellBar > buyBar)  ? sellEntry : na, "Sell Entry", color = color.new(c_bear, 0), style = plot.style_linebr, linewidth = 2)
-plot(not na(sellSL)    and (na(buyBar)  or sellBar > buyBar)  ? sellSL    : na, "Sell SL",    color = color.new(#b00020, 0), style = plot.style_linebr, linewidth = 1)
-plot(not na(sellTP1)   and (na(buyBar)  or sellBar > buyBar)  ? sellTP1   : na, "Sell TP1",   color = color.new(#ff6f00, 0), style = plot.style_linebr, linewidth = 1)
-plot(not na(sellTP2)   and (na(buyBar)  or sellBar > buyBar)  ? sellTP2   : na, "Sell TP2",   color = color.new(#ff6f00, 30), style = plot.style_linebr, linewidth = 1)
-plot(not na(sellTP3)   and (na(buyBar)  or sellBar > buyBar)  ? sellTP3   : na, "Sell TP3",   color = color.new(#ff6f00, 50), style = plot.style_linebr, linewidth = 1)
+plotshape(buySignal,  title = "Buy Signal",  location = location.belowbar, color = c_bull, style = shape.triangleup,   size = size.small, text = "BUY")
+plotshape(sellSignal, title = "Sell Signal", location = location.abovebar, color = c_bear, style = shape.triangledown, size = size.small, text = "SELL")
 
 // ════════════════════════════════════════════════════════════════════════════════════
-//   14. DASHBOARD — at-a-glance ICT context for the user
-//   Shows HTF bias, current zone, last sweep, signal score, active session
+//   14. DASHBOARD — at-a-glance ICT context
 // ════════════════════════════════════════════════════════════════════════════════════
 var table dash = table.new(f_dashPos(), 2, 14, border_width = 1, frame_color = color.new(color.gray, 50))
 
@@ -786,131 +661,117 @@ f_zoneCol() =>
     inDiscount ? color.new(c_bull, 70) : inPremium ? color.new(c_bear, 70) : color.new(color.gray, 70)
 
 f_oteText() =>
-    inBuyOTE ? "BUY OTE (0.62-0.79)" : inSellOTE ? "SELL OTE (0.62-0.79)" : "—"
+    inBuyOTE ? "BUY OTE (0.62-0.79)" : inSellOTE ? "SELL OTE (0.62-0.79)" : "-"
 
 f_sessName() =>
-    inAM     ? "AM Macro"  :
-     inMid   ? "Mid"        :
-     inLunch ? "Lunch (avoid)" :
-     inPM    ? "PM Macro"  :
-     inExpiry ? "Expiry"   : "Off-session"
+    inAM ? "AM Macro" : inMid ? "Mid" : inLunch ? "Lunch (avoid)" : inPM ? "PM Macro" : inExpiry ? "Expiry" : "Off-session"
 
 f_sessCol() =>
-    inAM     ? color.new(c_sessAM, 50)     :
-     inMid   ? color.new(c_sessMid, 50)    :
-     inLunch ? color.new(c_sessLunch, 50)  :
-     inPM    ? color.new(c_sessPM, 50)     :
-     inExpiry ? color.new(c_sessExpiry, 50): color.new(color.gray, 80)
+    inAM ? color.new(c_sessAM, 50) : inMid ? color.new(c_sessMid, 50) : inLunch ? color.new(c_sessLunch, 50) : inPM ? color.new(c_sessPM, 50) : inExpiry ? color.new(c_sessExpiry, 50) : color.new(color.gray, 80)
 
 f_lastSig() =>
+    string s = "- (waiting)"
     if not na(buyBar) and (na(sellBar) or buyBar > sellBar)
-        "▲ BUY @ " + str.tostring(buyEntry, format.mintick)
+        s := "BUY @ " + str.tostring(buyEntry, format.mintick)
     else if not na(sellBar) and (na(buyBar) or sellBar > buyBar)
-        "▼ SELL @ " + str.tostring(sellEntry, format.mintick)
-    else
-        "— (waiting)"
+        s := "SELL @ " + str.tostring(sellEntry, format.mintick)
+    s
 
 f_lastSigCol() =>
+    color c = color.new(color.gray, 80)
     if not na(buyBar) and (na(sellBar) or buyBar > sellBar)
-        color.new(c_bull, 70)
+        c := color.new(c_bull, 70)
     else if not na(sellBar) and (na(buyBar) or sellBar > buyBar)
-        color.new(c_bear, 70)
-    else
-        color.new(color.gray, 80)
+        c := color.new(c_bear, 70)
+    c
 
 f_weeklyText() =>
-    weeklyBullBias ? "BULLISH (above PW mid)" :
-     weeklyBearBias ? "BEARISH (below PW mid)" : "NEUTRAL"
+    weeklyBullBias ? "BULLISH (above PW mid)" : weeklyBearBias ? "BEARISH (below PW mid)" : "NEUTRAL"
 
 if i_showDash and barstate.islast
     sz = f_dashSize()
+    cellHdr = color.new(color.gray, 70)
     table.cell(dash, 0, 0, "ICT MASTER PRO", text_color = color.white, bgcolor = color.new(#1565c0, 0), text_size = sz)
     table.merge_cells(dash, 0, 0, 1, 0)
 
-    table.cell(dash, 0, 1, "HTF Bias (" + i_htfTF + ")", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = sz)
+    table.cell(dash, 0, 1, "HTF Bias (" + i_htfTF + ")", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 1, htfBiasStr, text_color = color.white, bgcolor = htfBiasCol, text_size = sz)
 
-    table.cell(dash, 0, 2, "Weekly Bias", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = sz)
-    table.cell(dash, 1, 2, f_weeklyText(),
-         text_color = color.white,
-         bgcolor = weeklyBullBias ? color.new(c_bull, 60) : weeklyBearBias ? color.new(c_bear, 60) : color.new(color.gray, 60),
-         text_size = sz)
+    table.cell(dash, 0, 2, "Weekly Bias", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    wkBg = weeklyBullBias ? color.new(c_bull, 60) : weeklyBearBias ? color.new(c_bear, 60) : color.new(color.gray, 60)
+    table.cell(dash, 1, 2, f_weeklyText(), text_color = color.white, bgcolor = wkBg, text_size = sz)
 
-    table.cell(dash, 0, 3, "Dealing Range Zone", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = sz)
+    table.cell(dash, 0, 3, "Range Zone", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 3, f_zoneText(), text_color = color.white, bgcolor = f_zoneCol(), text_size = sz)
 
-    table.cell(dash, 0, 4, "OTE", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = sz)
-    table.cell(dash, 1, 4, f_oteText(),
-         text_color = color.white,
-         bgcolor = inBuyOTE ? color.new(c_bull, 60) : inSellOTE ? color.new(c_bear, 60) : color.new(color.gray, 80),
-         text_size = sz)
+    table.cell(dash, 0, 4, "OTE", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    oteBg = inBuyOTE ? color.new(c_bull, 60) : inSellOTE ? color.new(c_bear, 60) : color.new(color.gray, 80)
+    table.cell(dash, 1, 4, f_oteText(), text_color = color.white, bgcolor = oteBg, text_size = sz)
 
-    table.cell(dash, 0, 5, "Session", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = sz)
+    table.cell(dash, 0, 5, "Session", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 5, f_sessName(), text_color = color.white, bgcolor = f_sessCol(), text_size = sz)
 
-    table.cell(dash, 0, 6, "Recent Sweep", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = sz)
-    sweepTxt = recentSSLSweep ? "SSL ✗ (bullish setup)" : recentBSLSweep ? "BSL ✗ (bearish setup)" : "—"
+    table.cell(dash, 0, 6, "Recent Sweep", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    sweepTxt = recentSSLSweep ? "SSL x (bullish setup)" : recentBSLSweep ? "BSL x (bearish setup)" : "-"
     sweepCol = recentSSLSweep ? color.new(c_bull, 60) : recentBSLSweep ? color.new(c_bear, 60) : color.new(color.gray, 80)
     table.cell(dash, 1, 6, sweepTxt, text_color = color.white, bgcolor = sweepCol, text_size = sz)
 
-    table.cell(dash, 0, 7, "Volume", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = sz)
-    table.cell(dash, 1, 7, volOK ? "ABOVE AVG ✓" : "below avg",
-         text_color = color.white,
-         bgcolor = volOK ? color.new(c_bull, 60) : color.new(color.gray, 70), text_size = sz)
+    table.cell(dash, 0, 7, "Volume", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    volBg = volOK ? color.new(c_bull, 60) : color.new(color.gray, 70)
+    table.cell(dash, 1, 7, volOK ? "ABOVE AVG" : "below avg", text_color = color.white, bgcolor = volBg, text_size = sz)
 
-    table.cell(dash, 0, 8, "Buy Score", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = sz)
-    table.cell(dash, 1, 8, str.tostring(buyScore) + " / 7",
-         text_color = color.white,
-         bgcolor = buyScore >= i_minScore ? color.new(c_bull, 40) : color.new(color.gray, 80),
-         text_size = sz)
+    table.cell(dash, 0, 8, "Buy Score", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    buyScoreBg = buyScore >= i_minScore ? color.new(c_bull, 40) : color.new(color.gray, 80)
+    table.cell(dash, 1, 8, str.tostring(buyScore) + " / 7", text_color = color.white, bgcolor = buyScoreBg, text_size = sz)
 
-    table.cell(dash, 0, 9, "Sell Score", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = sz)
-    table.cell(dash, 1, 9, str.tostring(sellScore) + " / 7",
-         text_color = color.white,
-         bgcolor = sellScore >= i_minScore ? color.new(c_bear, 40) : color.new(color.gray, 80),
-         text_size = sz)
+    table.cell(dash, 0, 9, "Sell Score", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    sellScoreBg = sellScore >= i_minScore ? color.new(c_bear, 40) : color.new(color.gray, 80)
+    table.cell(dash, 1, 9, str.tostring(sellScore) + " / 7", text_color = color.white, bgcolor = sellScoreBg, text_size = sz)
 
-    table.cell(dash, 0, 10, "Last Signal", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = sz)
+    table.cell(dash, 0, 10, "Last Signal", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 10, f_lastSig(), text_color = color.white, bgcolor = f_lastSigCol(), text_size = sz)
 
-    // Active trade plan summary
     activeBuy  = not na(buyBar)  and (na(sellBar) or buyBar  > sellBar)
     activeSell = not na(sellBar) and (na(buyBar)  or sellBar > buyBar)
-    table.cell(dash, 0, 11, "Active Plan", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = sz)
-    planTxt = activeBuy  ? "E:" + str.tostring(buyEntry,  format.mintick) + " SL:" + str.tostring(buySL,  format.mintick) :
-              activeSell ? "E:" + str.tostring(sellEntry, format.mintick) + " SL:" + str.tostring(sellSL, format.mintick) : "—"
+    table.cell(dash, 0, 11, "Active Plan", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    string planTxt = "-"
+    if activeBuy
+        planTxt := "E:" + str.tostring(buyEntry, format.mintick) + " SL:" + str.tostring(buySL, format.mintick)
+    else if activeSell
+        planTxt := "E:" + str.tostring(sellEntry, format.mintick) + " SL:" + str.tostring(sellSL, format.mintick)
     table.cell(dash, 1, 11, planTxt, text_color = color.white, bgcolor = color.new(color.gray, 80), text_size = sz)
 
-    table.cell(dash, 0, 12, "Targets (R)", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = sz)
-    tpTxt = activeBuy  ? "TP1:" + str.tostring(buyTP1,  format.mintick) + " · TP2:" + str.tostring(buyTP2,  format.mintick) + " · TP3:" + str.tostring(buyTP3,  format.mintick) :
-            activeSell ? "TP1:" + str.tostring(sellTP1, format.mintick) + " · TP2:" + str.tostring(sellTP2, format.mintick) + " · TP3:" + str.tostring(sellTP3, format.mintick) : "—"
+    table.cell(dash, 0, 12, "Targets (R)", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    string tpTxt = "-"
+    if activeBuy
+        tpTxt := "TP1:" + str.tostring(buyTP1, format.mintick) + " TP2:" + str.tostring(buyTP2, format.mintick) + " TP3:" + str.tostring(buyTP3, format.mintick)
+    else if activeSell
+        tpTxt := "TP1:" + str.tostring(sellTP1, format.mintick) + " TP2:" + str.tostring(sellTP2, format.mintick) + " TP3:" + str.tostring(sellTP3, format.mintick)
     table.cell(dash, 1, 12, tpTxt, text_color = color.white, bgcolor = color.new(color.gray, 80), text_size = sz)
 
-    // Signal-readiness status line
-    statusTxt = buyCandidate  ? "BUY READY ▲"  :
-                sellCandidate ? "SELL READY ▼" :
-                buyScore >= i_minScore  ? "Buy waiting trigger"  :
-                sellScore >= i_minScore ? "Sell waiting trigger" : "Scanning…"
-    statusCol = buyCandidate  ? color.new(c_bull, 0) :
-                sellCandidate ? color.new(c_bear, 0) :
-                color.new(#1565c0, 0)
-    table.cell(dash, 0, 13, "STATUS", text_color = color.white, bgcolor = color.new(color.gray, 70), text_size = sz)
+    string statusTxt = "Scanning..."
+    color  statusCol = color.new(#1565c0, 0)
+    if buyCandidate
+        statusTxt := "BUY READY"
+        statusCol := color.new(c_bull, 0)
+    else if sellCandidate
+        statusTxt := "SELL READY"
+        statusCol := color.new(c_bear, 0)
+    else if buyScore >= i_minScore
+        statusTxt := "Buy waiting trigger"
+    else if sellScore >= i_minScore
+        statusTxt := "Sell waiting trigger"
+    table.cell(dash, 0, 13, "STATUS", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 13, statusTxt, text_color = color.white, bgcolor = statusCol, text_size = sz)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   15. ALERTS
 // ════════════════════════════════════════════════════════════════════════════════════
-alertcondition(buySignal,  title = "ICT Buy Signal",
-     message = "ICT MASTER PRO: BUY {{ticker}} @ {{close}} — confluence-based entry. Check chart for SL/TP.")
-alertcondition(sellSignal, title = "ICT Sell Signal",
-     message = "ICT MASTER PRO: SELL {{ticker}} @ {{close}} — confluence-based entry. Check chart for SL/TP.")
-alertcondition(bullCHoCH,  title = "Bullish CHoCH",   message = "ICT: Bullish CHoCH on {{ticker}} {{interval}}")
-alertcondition(bearCHoCH,  title = "Bearish CHoCH",   message = "ICT: Bearish CHoCH on {{ticker}} {{interval}}")
-alertcondition(bullBOS,    title = "Bullish BOS",     message = "ICT: Bullish BOS on {{ticker}} {{interval}}")
-alertcondition(bearBOS,    title = "Bearish BOS",     message = "ICT: Bearish BOS on {{ticker}} {{interval}}")
+alertcondition(buySignal,    title = "ICT Buy Signal",      message = "ICT MASTER PRO: BUY {{ticker}} @ {{close}} - confluence-based entry. Check chart for SL/TP.")
+alertcondition(sellSignal,   title = "ICT Sell Signal",     message = "ICT MASTER PRO: SELL {{ticker}} @ {{close}} - confluence-based entry. Check chart for SL/TP.")
+alertcondition(bullCHoCH,    title = "Bullish CHoCH",       message = "ICT: Bullish CHoCH on {{ticker}} {{interval}}")
+alertcondition(bearCHoCH,    title = "Bearish CHoCH",       message = "ICT: Bearish CHoCH on {{ticker}} {{interval}}")
+alertcondition(bullBOS,      title = "Bullish BOS",         message = "ICT: Bullish BOS on {{ticker}} {{interval}}")
+alertcondition(bearBOS,      title = "Bearish BOS",         message = "ICT: Bearish BOS on {{ticker}} {{interval}}")
 alertcondition(justSweptSSL, title = "SSL Liquidity Sweep", message = "ICT: SSL swept on {{ticker}} {{interval}}")
 alertcondition(justSweptBSL, title = "BSL Liquidity Sweep", message = "ICT: BSL swept on {{ticker}} {{interval}}")
-
-// ════════════════════════════════════════════════════════════════════════════════════
-//   END OF SCRIPT
-// ════════════════════════════════════════════════════════════════════════════════════
