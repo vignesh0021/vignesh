@@ -471,15 +471,15 @@ fill(p_pdMid, p_pdLo,  color = c_discount, title = "Discount Zone")
 // ════════════════════════════════════════════════════════════════════════════════════
 //   9. ICT MACRO SESSIONS (NSE IST)
 // ════════════════════════════════════════════════════════════════════════════════════
-f_drawSession(_inSess, _prev, _color, _name, _show) =>
-    var box   sb = na
-    var line  hl = na
-    var line  ll = na
-    var float hv = na
-    var float lv = na
-    prevBool = na(_prev) ? false : _prev
-    started = _show and _inSess and not prevBool
-    ongoing = _show and _inSess and prevBool and not na(sb)
+f_drawSession(_inSess, _color, _name, _show) =>
+    var box   sb    = na
+    var line  hl    = na
+    var line  ll    = na
+    var float hv    = na
+    var float lv    = na
+    var bool  wasIn = false
+    started = _show and _inSess and not wasIn
+    ongoing = _show and _inSess and wasIn and not na(sb)
     if started
         sb := box.new(bar_index, high, bar_index, low, bgcolor = _color, border_color = color.new(_color, 50), border_width = 1, text = _name, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
         hv := high
@@ -496,6 +496,7 @@ f_drawSession(_inSess, _prev, _color, _name, _show) =>
             line.set_xy2(hl, bar_index + 5, hv)
         if not na(ll)
             line.set_xy2(ll, bar_index + 5, lv)
+    wasIn := _inSess
     nz(hv, 0.0)
 
 inMid    = f_inSession(i_sessMid)
@@ -503,11 +504,11 @@ inLunch  = f_inSession(i_sessLunch)
 inPM     = f_inSession(i_sessPM)
 inExpiry = f_inSession(i_sessExpiry)
 
-_amDrew     = f_drawSession(inAM,     inAM[1],     c_sessAM,     "AM Macro", i_useSessions)
-_midDrew    = f_drawSession(inMid,    inMid[1],    c_sessMid,    "Mid",      i_useSessions)
-_lunchDrew  = f_drawSession(inLunch,  inLunch[1],  c_sessLunch,  "Lunch",    i_useSessions)
-_pmDrew     = f_drawSession(inPM,     inPM[1],     c_sessPM,     "PM Macro", i_useSessions)
-_expiryDrew = f_drawSession(inExpiry, inExpiry[1], c_sessExpiry, "Expiry",   i_useSessions)
+_amDrew     = f_drawSession(inAM,     c_sessAM,     "AM Macro", i_useSessions)
+_midDrew    = f_drawSession(inMid,    c_sessMid,    "Mid",      i_useSessions)
+_lunchDrew  = f_drawSession(inLunch,  c_sessLunch,  "Lunch",    i_useSessions)
+_pmDrew     = f_drawSession(inPM,     c_sessPM,     "PM Macro", i_useSessions)
+_expiryDrew = f_drawSession(inExpiry, c_sessExpiry, "Expiry",   i_useSessions)
 
 sessionOK = i_avoidLunch ? not inLunch : true
 
