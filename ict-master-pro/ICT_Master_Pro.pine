@@ -477,8 +477,9 @@ f_drawSession(_inSess, _prev, _color, _name, _show) =>
     var line  ll = na
     var float hv = na
     var float lv = na
-    started = _show and _inSess and not nz(_prev, false)
-    ongoing = _show and _inSess and nz(_prev, false) and not na(sb)
+    prevBool = na(_prev) ? false : _prev
+    started = _show and _inSess and not prevBool
+    ongoing = _show and _inSess and prevBool and not na(sb)
     if started
         sb := box.new(bar_index, high, bar_index, low, bgcolor = _color, border_color = color.new(_color, 50), border_width = 1, text = _name, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
         hv := high
