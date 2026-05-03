@@ -79,7 +79,6 @@ i_tz            = input.string("Asia/Kolkata", "Timezone", options = ["Asia/Kolk
 
 // ── Signal Engine ───────────────────────────────────────────────────────────────────
 i_minScore      = input.int(5, "Min Confluence Score (0-7)", minval = 1, maxval = 7, group = grpSig, tooltip = "Higher = fewer but stronger signals. 5 = balanced quality, 6+ = sniper.")
-i_oneSigPerBar  = input.bool(true, "One Signal Per Setup (no repeats)", group = grpSig)
 i_useOTE        = input.bool(true, "Require OTE Zone (0.62-0.79)",      group = grpSig)
 i_requireBarConf= input.bool(true, "Require Reversal Bar Confirmation", group = grpSig, tooltip = "Buys need close > open on signal bar; sells need close < open. Filters fakeouts.")
 i_structMemBars = input.int(10, "Structure Memory (bars)", minval = 3, maxval = 30, group = grpSig, tooltip = "How many bars after BOS/CHoCH the setup stays valid. Lets the signal fire on the RETRACE bar (before the move) instead of the breakout bar.")
@@ -597,24 +596,11 @@ sell_core_trigger = sell_sweep and sell_struct and (sell_ob or sell_fvg) and sel
 buyCandidate  = sessionOK and buy_core_trigger  and buyScore  >= i_minScore
 sellCandidate = sessionOK and sell_core_trigger and sellScore >= i_minScore
 
-var bool buyArmed  = true
-var bool sellArmed = true
-
-if bearCHoCH or bearBOS
-    buyArmed := true
-if bullCHoCH or bullBOS
-    sellArmed := true
-
-buySignal  = buyCandidate  and (i_oneSigPerBar ? buyArmed  : true)
-sellSignal = sellCandidate and (i_oneSigPerBar ? sellArmed : true)
-
-if buySignal
-    buyArmed := false
-if sellSignal
-    sellArmed := false
-
 // ════════════════════════════════════════════════════════════════════════════════════
 //   12. ENTRY / SL / TP CALCULATION
+//   Calc functions are called every bar (Pine v6 best practice — silences the
+//   "should be called on each calculation for consistency" warning) and the
+//   results are only consumed inside the signal-fired branches below.
 // ════════════════════════════════════════════════════════════════════════════════════
 f_calcSL_buy() =>
     float sl = 0.0
@@ -636,66 +622,149 @@ f_calcSL_sell() =>
         sl := close * (1 + i_slFixedPct / 100)
     sl
 
-var float buyEntry = na
-var float buySL    = na
-var float buyTP1   = na
-var float buyTP2   = na
-var float buyTP3   = na
-var int   buyBar   = na
-
-var float sellEntry = na
-var float sellSL    = na
-var float sellTP1   = na
-var float sellTP2   = na
-var float sellTP3   = na
-var int   sellBar   = na
-
-if buySignal
-    buyEntry := close
-    buySL    := f_calcSL_buy()
-    risk      = buyEntry - buySL
-    buyTP1   := buyEntry + risk * i_tp1R
-    buyTP2   := buyEntry + risk * i_tp2R
-    buyTP3   := buyEntry + risk * i_tp3R
-    buyBar   := bar_index
-
-if sellSignal
-    sellEntry := close
-    sellSL    := f_calcSL_sell()
-    risk       = sellSL - sellEntry
-    sellTP1   := sellEntry - risk * i_tp1R
-    sellTP2   := sellEntry - risk * i_tp2R
-    sellTP3   := sellEntry - risk * i_tp3R
-    sellBar   := bar_index
+// Always evaluate (Pine v6 consistency requirement)
+buySLcalc  = f_calcSL_buy()
+sellSLcalc = f_calcSL_sell()
 
 // ════════════════════════════════════════════════════════════════════════════════════
-//   13. SIGNAL DRAWING — entry / SL / TP visuals
+//   13. TRADE PLAN STATE MACHINE
+//   At most ONE active trade plan at a time. New same-direction signals are
+//   suppressed while a trade is active. Opposite-direction signals replace the
+//   plan. Plan auto-clears when SL or TP3 is hit.
 // ════════════════════════════════════════════════════════════════════════════════════
-f_drawTradePlan(_isBuy, _entry, _sl, _tp1, _tp2, _tp3, _startBar) =>
-    col_entry = _isBuy ? c_bull : c_bear
-    col_tp    = _isBuy ? c_tpBuy : c_tpSell
-    rEnd      = _startBar + 30
-    line.new(_startBar, _entry, rEnd, _entry, color = col_entry, width = 2, style = line.style_solid)
-    line.new(_startBar, _sl,    rEnd, _sl,    color = c_slLine,  width = 2, style = line.style_dashed)
-    line.new(_startBar, _tp1,   rEnd, _tp1,   color = color.new(col_tp, 20), width = 1, style = line.style_dashed)
-    line.new(_startBar, _tp2,   rEnd, _tp2,   color = color.new(col_tp, 40), width = 1, style = line.style_dashed)
-    line.new(_startBar, _tp3,   rEnd, _tp3,   color = color.new(col_tp, 60), width = 1, style = line.style_dashed)
-    label.new(rEnd, _entry, "ENTRY " + str.tostring(_entry, format.mintick), color = col_entry, textcolor = color.white, style = label.style_label_left, size = size.tiny)
-    label.new(rEnd, _sl,    "SL "    + str.tostring(_sl,    format.mintick), color = c_slLine,  textcolor = color.white, style = label.style_label_left, size = size.tiny)
-    label.new(rEnd, _tp1,   "TP1 "   + str.tostring(_tp1,   format.mintick), color = col_tp,    textcolor = color.white, style = label.style_label_left, size = size.tiny)
-    label.new(rEnd, _tp2,   "TP2 "   + str.tostring(_tp2,   format.mintick), color = color.new(col_tp, 30), textcolor = color.white, style = label.style_label_left, size = size.tiny)
-    label.new(rEnd, _tp3,   "TP3 "   + str.tostring(_tp3,   format.mintick), color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.tiny)
+var line  tpLnEntry = na
+var line  tpLnSL    = na
+var line  tpLnTP1   = na
+var line  tpLnTP2   = na
+var line  tpLnTP3   = na
+var label tpLbEntry = na
+var label tpLbSL    = na
+var label tpLbTP1   = na
+var label tpLbTP2   = na
+var label tpLbTP3   = na
+var label tpLbSig   = na              // big BUY/SELL marker on signal bar
+
+var bool  tpActive  = false
+var bool  tpIsBuy   = false
+var float tpEntry   = na
+var float tpSL      = na
+var float tpTP1     = na
+var float tpTP2     = na
+var float tpTP3     = na
+var int   tpBar     = na
+var int   tpScore   = na
+
+f_clearPlan() =>
+    line.delete(tpLnEntry)
+    line.delete(tpLnSL)
+    line.delete(tpLnTP1)
+    line.delete(tpLnTP2)
+    line.delete(tpLnTP3)
+    label.delete(tpLbEntry)
+    label.delete(tpLbSL)
+    label.delete(tpLbTP1)
+    label.delete(tpLbTP2)
+    label.delete(tpLbTP3)
+    label.delete(tpLbSig)
+    tpActive := false
+
+// Signals can fire only when no same-direction trade is active.
+// Opposite-direction signal replaces the existing plan.
+buySignal  = buyCandidate  and (not tpActive or not tpIsBuy)
+sellSignal = sellCandidate and (not tpActive or tpIsBuy)
+
+// Pre-fire: clear an existing plan if new opposite signal arrives
+if (buySignal and tpActive and not tpIsBuy) or (sellSignal and tpActive and tpIsBuy)
+    f_clearPlan()
 
 if buySignal
-    label.new(bar_index, low, "BUY  " + str.tostring(buyScore) + "/7", color = c_bull, textcolor = color.white, style = label.style_label_up, size = size.large)
-    f_drawTradePlan(true, buyEntry, buySL, buyTP1, buyTP2, buyTP3, bar_index)
+    f_clearPlan()                     // wipe any stale state defensively
+    tpIsBuy := true
+    tpEntry := close
+    tpSL    := buySLcalc
+    rk       = tpEntry - tpSL
+    tpTP1   := tpEntry + rk * i_tp1R
+    tpTP2   := tpEntry + rk * i_tp2R
+    tpTP3   := tpEntry + rk * i_tp3R
+    tpBar   := bar_index
+    tpScore := buyScore
+    tpActive := true
+    col_entry = c_bull
+    col_tp    = c_tpBuy
+    tpLnEntry := line.new(tpBar, tpEntry, tpBar + 1, tpEntry, color = col_entry, width = 2, style = line.style_solid,  extend = extend.right)
+    tpLnSL    := line.new(tpBar, tpSL,    tpBar + 1, tpSL,    color = c_slLine,  width = 2, style = line.style_dashed, extend = extend.right)
+    tpLnTP1   := line.new(tpBar, tpTP1,   tpBar + 1, tpTP1,   color = color.new(col_tp, 20), width = 1, style = line.style_dashed, extend = extend.right)
+    tpLnTP2   := line.new(tpBar, tpTP2,   tpBar + 1, tpTP2,   color = color.new(col_tp, 40), width = 1, style = line.style_dashed, extend = extend.right)
+    tpLnTP3   := line.new(tpBar, tpTP3,   tpBar + 1, tpTP3,   color = color.new(col_tp, 60), width = 1, style = line.style_dashed, extend = extend.right)
+    tpLbSig   := label.new(tpBar, low, "BUY  " + str.tostring(tpScore) + "/7", color = c_bull, textcolor = color.white, style = label.style_label_up, size = size.normal)
+    tpLbEntry := label.new(bar_index + 1, tpEntry, "ENTRY " + str.tostring(tpEntry, format.mintick), color = col_entry, textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbSL    := label.new(bar_index + 1, tpSL,    "SL "    + str.tostring(tpSL,    format.mintick), color = c_slLine,  textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbTP1   := label.new(bar_index + 1, tpTP1,   "TP1 "   + str.tostring(tpTP1,   format.mintick), color = col_tp,    textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbTP2   := label.new(bar_index + 1, tpTP2,   "TP2 "   + str.tostring(tpTP2,   format.mintick), color = color.new(col_tp, 30), textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbTP3   := label.new(bar_index + 1, tpTP3,   "TP3 "   + str.tostring(tpTP3,   format.mintick), color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.small)
 
 if sellSignal
-    label.new(bar_index, high, "SELL  " + str.tostring(sellScore) + "/7", color = c_bear, textcolor = color.white, style = label.style_label_down, size = size.large)
-    f_drawTradePlan(false, sellEntry, sellSL, sellTP1, sellTP2, sellTP3, bar_index)
+    f_clearPlan()
+    tpIsBuy := false
+    tpEntry := close
+    tpSL    := sellSLcalc
+    rk       = tpSL - tpEntry
+    tpTP1   := tpEntry - rk * i_tp1R
+    tpTP2   := tpEntry - rk * i_tp2R
+    tpTP3   := tpEntry - rk * i_tp3R
+    tpBar   := bar_index
+    tpScore := sellScore
+    tpActive := true
+    col_entry = c_bear
+    col_tp    = c_tpSell
+    tpLnEntry := line.new(tpBar, tpEntry, tpBar + 1, tpEntry, color = col_entry, width = 2, style = line.style_solid,  extend = extend.right)
+    tpLnSL    := line.new(tpBar, tpSL,    tpBar + 1, tpSL,    color = c_slLine,  width = 2, style = line.style_dashed, extend = extend.right)
+    tpLnTP1   := line.new(tpBar, tpTP1,   tpBar + 1, tpTP1,   color = color.new(col_tp, 20), width = 1, style = line.style_dashed, extend = extend.right)
+    tpLnTP2   := line.new(tpBar, tpTP2,   tpBar + 1, tpTP2,   color = color.new(col_tp, 40), width = 1, style = line.style_dashed, extend = extend.right)
+    tpLnTP3   := line.new(tpBar, tpTP3,   tpBar + 1, tpTP3,   color = color.new(col_tp, 60), width = 1, style = line.style_dashed, extend = extend.right)
+    tpLbSig   := label.new(tpBar, high, "SELL  " + str.tostring(tpScore) + "/7", color = c_bear, textcolor = color.white, style = label.style_label_down, size = size.normal)
+    tpLbEntry := label.new(bar_index + 1, tpEntry, "ENTRY " + str.tostring(tpEntry, format.mintick), color = col_entry, textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbSL    := label.new(bar_index + 1, tpSL,    "SL "    + str.tostring(tpSL,    format.mintick), color = c_slLine,  textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbTP1   := label.new(bar_index + 1, tpTP1,   "TP1 "   + str.tostring(tpTP1,   format.mintick), color = col_tp,    textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbTP2   := label.new(bar_index + 1, tpTP2,   "TP2 "   + str.tostring(tpTP2,   format.mintick), color = color.new(col_tp, 30), textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbTP3   := label.new(bar_index + 1, tpTP3,   "TP3 "   + str.tostring(tpTP3,   format.mintick), color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.small)
 
-plotshape(buySignal,  title = "Buy Signal",  location = location.belowbar, color = c_bull, style = shape.triangleup,   size = size.small, text = "BUY")
-plotshape(sellSignal, title = "Sell Signal", location = location.abovebar, color = c_bear, style = shape.triangledown, size = size.small, text = "SELL")
+// Auto-clear plan when SL or final TP is hit (use bar's high/low for trigger)
+if tpActive
+    if tpIsBuy and (low <= tpSL or high >= tpTP3)
+        f_clearPlan()
+    else if not tpIsBuy and (high >= tpSL or low <= tpTP3)
+        f_clearPlan()
+
+// Slide labels to the right edge of the chart so they always stay visible
+// regardless of zoom / scroll. Runs every bar so the labels track the latest
+// bar continuously.
+if tpActive and not na(tpLbEntry)
+    rightX = bar_index + 1
+    label.set_x(tpLbEntry, rightX)
+    label.set_x(tpLbSL,    rightX)
+    label.set_x(tpLbTP1,   rightX)
+    label.set_x(tpLbTP2,   rightX)
+    label.set_x(tpLbTP3,   rightX)
+
+plotshape(buySignal,  title = "Buy Signal",  location = location.belowbar, color = c_bull, style = shape.triangleup,   size = size.tiny)
+plotshape(sellSignal, title = "Sell Signal", location = location.abovebar, color = c_bear, style = shape.triangledown, size = size.tiny)
+
+// Compatibility shims so the dashboard "Last Signal / Active Plan / Targets"
+// cells (which were written against the old buyEntry / sellEntry / etc vars)
+// keep working without a second rewrite.
+buyEntry  = tpActive and     tpIsBuy ? tpEntry : na
+buySL     = tpActive and     tpIsBuy ? tpSL    : na
+buyTP1    = tpActive and     tpIsBuy ? tpTP1   : na
+buyTP2    = tpActive and     tpIsBuy ? tpTP2   : na
+buyTP3    = tpActive and     tpIsBuy ? tpTP3   : na
+buyBar    = tpActive and     tpIsBuy ? tpBar   : na
+sellEntry = tpActive and not tpIsBuy ? tpEntry : na
+sellSL    = tpActive and not tpIsBuy ? tpSL    : na
+sellTP1   = tpActive and not tpIsBuy ? tpTP1   : na
+sellTP2   = tpActive and not tpIsBuy ? tpTP2   : na
+sellTP3   = tpActive and not tpIsBuy ? tpTP3   : na
+sellBar   = tpActive and not tpIsBuy ? tpBar   : na
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   14. DASHBOARD — at-a-glance ICT context
