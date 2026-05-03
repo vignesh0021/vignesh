@@ -110,20 +110,6 @@ i_showPD      = i_cleanMode ? false : i_showPD_raw
 i_useSessions = i_cleanMode ? false : i_useSessions_raw
 i_showWeekly  = i_cleanMode ? false : i_showWeeklyOHLC
 
-// ── Risk ────────────────────────────────────────────────────────────────────────────
-i_slMode        = input.string("Structure", "SL Mode", options = ["Structure", "ATR", "Fixed%"], group = grpRisk, tooltip = "Structure = beyond swept liquidity / OB. ATR = ATR multiple. Fixed% = % of price.")
-i_slATR         = input.float(1.5,  "SL ATR Multiple", minval = 0.5,  maxval = 5.0,  step = 0.1,  group = grpRisk)
-i_slFixedPct    = input.float(0.3,  "SL Fixed %",      minval = 0.05, maxval = 5.0,  step = 0.05, group = grpRisk)
-i_slBuffer      = input.float(0.05, "SL Buffer %",     minval = 0.0,  maxval = 1.0,  step = 0.01, group = grpRisk)
-i_tp1R          = input.float(1.0, "TP1 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
-i_tp2R          = input.float(2.0, "TP2 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
-i_tp3R          = input.float(3.0, "TP3 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
-
-// ── Dashboard ───────────────────────────────────────────────────────────────────────
-i_showDash      = input.bool(true, "Show Dashboard", group = grpDash)
-i_dashPos       = input.string("Top Right", "Dashboard Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group = grpDash)
-i_dashSize      = input.string("Small", "Dashboard Size", options = ["Tiny", "Small", "Normal", "Large"], group = grpDash)
-
 // ── Colors ──────────────────────────────────────────────────────────────────────────
 c_bull       = color.new(#26a69a, 0)
 c_bear       = color.new(#ef5350, 0)
