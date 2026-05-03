@@ -83,15 +83,32 @@ i_useOTE        = input.bool(true, "Require OTE Zone (0.62-0.79)",      group = 
 i_requireBarConf= input.bool(true, "Require Reversal Bar Confirmation", group = grpSig, tooltip = "Buys need close > open on signal bar; sells need close < open. Filters fakeouts.")
 i_structMemBars = input.int(10, "Structure Memory (bars)", minval = 3, maxval = 30, group = grpSig, tooltip = "How many bars after BOS/CHoCH the setup stays valid. Lets the signal fire on the RETRACE bar (before the move) instead of the breakout bar.")
 i_sweepMemBars  = input.int(8,  "Sweep Memory (bars)",     minval = 3, maxval = 30, group = grpSig)
+i_useInducement = input.bool(true, "Require Major Liquidity Sweep (filter inducement)", group = grpSig, tooltip = "Only fire signals when the recent sweep was on MAJOR liquidity (equal highs/lows, PDH/PDL, PWH/PWL). Filters fake sweeps that trap retail.")
+i_useRegime     = input.bool(false, "Filter by Market Regime", group = grpSig, tooltip = "When ON, blocks BUY in strong downtrends and SELL in strong uptrends. Regime is always shown on the dashboard regardless.")
 
 // ── Risk ────────────────────────────────────────────────────────────────────────────
 i_slMode        = input.string("Structure", "SL Mode", options = ["Structure", "ATR", "Fixed%"], group = grpRisk, tooltip = "Structure = beyond swept liquidity / OB. ATR = ATR multiple. Fixed% = % of price.")
 i_slATR         = input.float(1.5,  "SL ATR Multiple", minval = 0.5,  maxval = 5.0,  step = 0.1,  group = grpRisk)
 i_slFixedPct    = input.float(0.3,  "SL Fixed %",      minval = 0.05, maxval = 5.0,  step = 0.05, group = grpRisk)
 i_slBuffer      = input.float(0.05, "SL Buffer %",     minval = 0.0,  maxval = 1.0,  step = 0.01, group = grpRisk)
-i_tp1R          = input.float(1.0, "TP1 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
-i_tp2R          = input.float(2.0, "TP2 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
-i_tp3R          = input.float(3.0, "TP3 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+i_useAdaptiveTP = input.bool(true, "Adaptive Targets (price-action levels)", group = grpRisk, tooltip = "TP1/TP2/TP3 are projected to the next liquidity pool / opposing OB / HTF level above (or below) entry, instead of fixed R multiples. Falls back to R multiples when not enough structure exists.")
+i_tp1R          = input.float(1.0, "TP1 (R multiple, fallback)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+i_tp2R          = input.float(2.0, "TP2 (R multiple, fallback)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+i_tp3R          = input.float(3.0, "TP3 (R multiple, fallback)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+i_useRiskCalc   = input.bool(false, "Position-size in Alerts", group = grpRisk, tooltip = "Add suggested position size to alert messages, computed from account size and risk per trade.")
+i_account       = input.float(100000, "Account Size", minval = 1000, group = grpRisk)
+i_riskPct       = input.float(1.0, "Risk per Trade (%)", minval = 0.1, maxval = 5.0, step = 0.1, group = grpRisk)
+
+// ── Key Levels (PDH/PDL/PWH/PWL/PMH/PML) ────────────────────────────────────────────
+grpKey          = "═══ Key Levels ═══"
+i_showKeyLevels = input.bool(false, "Show Key Levels (PDH/PDL/PWH/PWL)", group = grpKey, tooltip = "Plot previous-day and previous-week high/low. These act as major liquidity targets.")
+i_useKeyAsTP    = input.bool(true,  "Use Key Levels as TP destinations", group = grpKey, tooltip = "When Adaptive Targets is ON, also project to PDH/PDL/PWH/PWL.")
+
+// ── Performance Tracker ─────────────────────────────────────────────────────────────
+grpPerf         = "═══ Performance ═══"
+i_trackPerf     = input.bool(true, "Track Signal Performance", group = grpPerf, tooltip = "Tracks each fired signal until SL/TP3 hits, then computes win rate, average R, max drawdown over the rolling window.")
+i_perfWindow    = input.int(30, "Performance Window (signals)", minval = 5, maxval = 200, group = grpPerf)
+i_showPerfLines = input.bool(false, "Mark Closed Trades on Chart", group = grpPerf, tooltip = "Drop a tiny WIN/LOSS marker on past signals once they resolve. Off by default to keep the chart clean.")
 
 // ── Dashboard ───────────────────────────────────────────────────────────────────────
 i_showDash      = input.bool(true, "Show Dashboard", group = grpDash)
@@ -108,6 +125,7 @@ i_showSweep   = i_cleanMode ? false : i_showSweep_raw
 i_showPD      = i_cleanMode ? false : i_showPD_raw
 i_useSessions = i_cleanMode ? false : i_useSessions_raw
 i_showWeekly  = i_cleanMode ? false : i_showWeeklyOHLC
+i_showKey     = i_cleanMode ? false : i_showKeyLevels
 
 // ── Colors ──────────────────────────────────────────────────────────────────────────
 c_bull       = color.new(#26a69a, 0)
@@ -157,14 +175,52 @@ htfBear = not na(htfEma50) and htfClose < htfEma50 and htfEma20 < htfEma50
 htfBiasStr = htfBull ? "BULLISH UP" : htfBear ? "BEARISH DN" : "NEUTRAL"
 htfBiasCol = htfBull ? c_bull : htfBear ? c_bear : color.gray
 
+// ── Regime detection (Trending / Ranging / Transition) ──────────────────────────────
+// ADX-style strength of directional movement. Avoids reversal signals in strong
+// trends and continuation signals in tight ranges.
+_dmPlus  = high  - high[1]
+_dmMinus = low[1] - low
+plusDM   = (_dmPlus  > _dmMinus and _dmPlus  > 0) ? _dmPlus  : 0.0
+minusDM  = (_dmMinus > _dmPlus  and _dmMinus > 0) ? _dmMinus : 0.0
+trAvg    = ta.rma(ta.tr, 14)
+plusDI   = trAvg == 0 ? 0.0 : 100 * ta.rma(plusDM, 14)  / trAvg
+minusDI  = trAvg == 0 ? 0.0 : 100 * ta.rma(minusDM, 14) / trAvg
+diSum    = plusDI + minusDI
+dx       = diSum == 0 ? 0.0 : 100 * math.abs(plusDI - minusDI) / diSum
+adx      = ta.rma(dx, 14)
+
+regimeTrending = adx >= 25
+regimeRanging  = adx <  18
+regimeStr      = regimeTrending ? "TRENDING" : regimeRanging ? "RANGING" : "TRANSITION"
+regimeCol      = regimeTrending ? color.new(#1565c0, 0) : regimeRanging ? color.new(#ef6c00, 0) : color.new(color.gray, 0)
+
+// Soft regime filter: when enabled, block buy in strong downtrends and sell in
+// strong uptrends. Range-bound regimes still allow both sides (mean reversion).
+regimeAllowsBuy  = i_useRegime ? not (regimeTrending and htfBear) : true
+regimeAllowsSell = i_useRegime ? not (regimeTrending and htfBull) : true
+
 // Daily / Weekly OHLC for premium-discount and weekly profile
 dHigh = request.security(syminfo.tickerid, "D", high, lookahead = barmerge.lookahead_on)
 dLow  = request.security(syminfo.tickerid, "D", low,  lookahead = barmerge.lookahead_on)
 wHigh = request.security(syminfo.tickerid, "W", high, lookahead = barmerge.lookahead_on)
 wLow  = request.security(syminfo.tickerid, "W", low,  lookahead = barmerge.lookahead_on)
 wOpen = request.security(syminfo.tickerid, "W", open, lookahead = barmerge.lookahead_on)
+
+// Previous-day / previous-week / previous-month highs and lows — major liquidity
+pdHigh = request.security(syminfo.tickerid, "D", high[1], lookahead = barmerge.lookahead_on)
+pdLow  = request.security(syminfo.tickerid, "D", low[1],  lookahead = barmerge.lookahead_on)
 pwHigh = request.security(syminfo.tickerid, "W", high[1], lookahead = barmerge.lookahead_on)
 pwLow  = request.security(syminfo.tickerid, "W", low[1],  lookahead = barmerge.lookahead_on)
+pmHigh = request.security(syminfo.tickerid, "M", high[1], lookahead = barmerge.lookahead_on)
+pmLow  = request.security(syminfo.tickerid, "M", low[1],  lookahead = barmerge.lookahead_on)
+
+// Plot key levels (when not in clean mode)
+plot(i_showKey ? pdHigh : na, "PDH", color = color.new(#ff5252, 30), style = plot.style_linebr, linewidth = 1)
+plot(i_showKey ? pdLow  : na, "PDL", color = color.new(#69f0ae, 30), style = plot.style_linebr, linewidth = 1)
+plot(i_showKey ? pwHigh : na, "PWH", color = color.new(#ff5252, 0),  style = plot.style_linebr, linewidth = 2)
+plot(i_showKey ? pwLow  : na, "PWL", color = color.new(#69f0ae, 0),  style = plot.style_linebr, linewidth = 2)
+plot(i_showKey ? pmHigh : na, "PMH", color = color.new(#d50000, 0),  style = plot.style_linebr, linewidth = 2)
+plot(i_showKey ? pmLow  : na, "PML", color = color.new(#00c853, 0),  style = plot.style_linebr, linewidth = 2)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   4. MARKET STRUCTURE — Swings, BOS, CHoCH
@@ -393,22 +449,57 @@ type Liq
     int   bar
     bool  buyside
     bool  swept
+    int   grade        // 1 = single pivot, 2 = equal H/L pair, 3 = 3+ equal,
+                       // 4 = matches PDH/PDL, 5 = matches PWH/PWL/PMH/PML
+
+// Grade a fresh liquidity level by checking how many existing pivots are within
+// tolerance and whether it aligns with a key HTF level.
+f_gradeLiq(_lvl, _isBuyside) =>
+    int g = 1
+    tol = atr14 * 0.25
+    cnt = 0
+    if array.size(liqs) > 0
+        for j = 0 to array.size(liqs) - 1
+            lq = array.get(liqs, j)
+            if lq.buyside == _isBuyside and math.abs(lq.lvl - _lvl) <= tol
+                cnt := cnt + 1
+    if cnt >= 1
+        g := 2
+    if cnt >= 2
+        g := 3
+    if _isBuyside
+        if (not na(pdHigh) and math.abs(_lvl - pdHigh) <= tol) or (not na(dHigh) and math.abs(_lvl - dHigh) <= tol)
+            g := math.max(g, 4)
+        if (not na(pwHigh) and math.abs(_lvl - pwHigh) <= tol) or (not na(pmHigh) and math.abs(_lvl - pmHigh) <= tol) or (not na(wHigh) and math.abs(_lvl - wHigh) <= tol)
+            g := math.max(g, 5)
+    else
+        if (not na(pdLow) and math.abs(_lvl - pdLow) <= tol) or (not na(dLow) and math.abs(_lvl - dLow) <= tol)
+            g := math.max(g, 4)
+        if (not na(pwLow) and math.abs(_lvl - pwLow) <= tol) or (not na(pmLow) and math.abs(_lvl - pmLow) <= tol) or (not na(wLow) and math.abs(_lvl - wLow) <= tol)
+            g := math.max(g, 5)
+    g
 
 var array<Liq> liqs = array.new<Liq>()
 
 if not na(phRaw)
-    lc = i_showLiq ? color.new(c_liqBuy, 60) : color(na)
-    ln = line.new(bar_index - i_pivotLen, phRaw, bar_index + 5, phRaw, color = lc, style = line.style_dotted, width = 1)
-    array.push(liqs, Liq.new(ln, phRaw, bar_index - i_pivotLen, true, false))
+    grade_ph = f_gradeLiq(phRaw, true)
+    lcol     = i_showLiq ? color.new(c_liqBuy, grade_ph >= 4 ? 20 : 60) : color(na)
+    width_ph = grade_ph >= 4 ? 2 : 1
+    ln = line.new(bar_index - i_pivotLen, phRaw, bar_index + 5, phRaw, color = lcol, style = line.style_dotted, width = width_ph)
+    array.push(liqs, Liq.new(ln, phRaw, bar_index - i_pivotLen, true, false, grade_ph))
 
 if not na(plRaw)
-    lc = i_showLiq ? color.new(c_liqSell, 60) : color(na)
-    ln = line.new(bar_index - i_pivotLen, plRaw, bar_index + 5, plRaw, color = lc, style = line.style_dotted, width = 1)
-    array.push(liqs, Liq.new(ln, plRaw, bar_index - i_pivotLen, false, false))
+    grade_pl = f_gradeLiq(plRaw, false)
+    lcol     = i_showLiq ? color.new(c_liqSell, grade_pl >= 4 ? 20 : 60) : color(na)
+    width_pl = grade_pl >= 4 ? 2 : 1
+    ln = line.new(bar_index - i_pivotLen, plRaw, bar_index + 5, plRaw, color = lcol, style = line.style_dotted, width = width_pl)
+    array.push(liqs, Liq.new(ln, plRaw, bar_index - i_pivotLen, false, false, grade_pl))
 
 // Sweep detection + line management
-justSweptSSL = false
-justSweptBSL = false
+justSweptSSL    = false
+justSweptBSL    = false
+var int   lastSSLSweepGrade = 0
+var int   lastBSLSweepGrade = 0
 
 if array.size(liqs) > 0
     n_liq = array.size(liqs)
@@ -421,17 +512,19 @@ if array.size(liqs) > 0
                 if lq.buyside and high > lq.lvl and close < lq.lvl
                     lq.swept := true
                     justSweptBSL := true
+                    lastBSLSweepGrade := lq.grade
                     line.set_color(lq.ln, color.new(c_liqBuy, 30))
                     line.set_style(lq.ln, line.style_solid)
                     if i_showSweep
-                        label.new(bar_index, high, "x BSL", color = c_liqBuy, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+                        label.new(bar_index, high, "x BSL G" + str.tostring(lq.grade), color = c_liqBuy, textcolor = color.white, style = label.style_label_down, size = size.tiny)
                 else if not lq.buyside and low < lq.lvl and close > lq.lvl
                     lq.swept := true
                     justSweptSSL := true
+                    lastSSLSweepGrade := lq.grade
                     line.set_color(lq.ln, color.new(c_liqSell, 30))
                     line.set_style(lq.ln, line.style_solid)
                     if i_showSweep
-                        label.new(bar_index, low, "x SSL", color = c_liqSell, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+                        label.new(bar_index, low, "x SSL G" + str.tostring(lq.grade), color = c_liqSell, textcolor = color.white, style = label.style_label_up, size = size.tiny)
 
 // Cap line count: drop oldest swept line if over cap
 if array.size(liqs) > i_liqMax * 2 and array.size(liqs) > 0
@@ -454,6 +547,11 @@ if justSweptBSL
 
 recentSSLSweep = not na(lastSSLSweepBar) and (bar_index - lastSSLSweepBar) <= i_sweepMemBars
 recentBSLSweep = not na(lastBSLSweepBar) and (bar_index - lastBSLSweepBar) <= i_sweepMemBars
+
+// Inducement filter: a "major" sweep is grade >= 3 (equal H/L pair, PDH/PDL, PWH/PWL).
+// Grade 1-2 sweeps (single isolated pivots) are likely inducement / fake sweeps.
+sslSweepMajor = recentSSLSweep and lastSSLSweepGrade >= 3
+bslSweepMajor = recentBSLSweep and lastBSLSweepGrade >= 3
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   8. PREMIUM / DISCOUNT DEALING RANGE + OTE
@@ -565,7 +663,7 @@ plot(i_showWeekly ? wOpen : na, "Weekly Open", color = color.new(color.orange, 7
 //   11. CONFLUENCE SCORING ENGINE
 // ════════════════════════════════════════════════════════════════════════════════════
 buy_htf    = i_useHTFBias ? htfBull : true
-buy_sweep  = recentSSLSweep
+buy_sweep  = i_useInducement ? sslSweepMajor : recentSSLSweep
 buy_struct = recentBullStruct                       // memory-based: setup stays armed for N bars after BOS/CHoCH
 buy_ob     = f_inBullOB()
 buy_fvg    = f_inBullFVG()
@@ -576,7 +674,7 @@ buy_bar    = i_requireBarConf ? close > open : true // bullish reaction bar at t
 buyScore = (buy_htf ? 1 : 0) + (buy_sweep ? 1 : 0) + (buy_struct ? 1 : 0) + (buy_ob ? 1 : 0) + (buy_fvg ? 1 : 0) + (buy_pd ? 1 : 0) + (buy_vol ? 1 : 0)
 
 sell_htf    = i_useHTFBias ? htfBear : true
-sell_sweep  = recentBSLSweep
+sell_sweep  = i_useInducement ? bslSweepMajor : recentBSLSweep
 sell_struct = recentBearStruct
 sell_ob     = f_inBearOB()
 sell_fvg    = f_inBearFVG()
@@ -593,8 +691,8 @@ sellScore = (sell_htf ? 1 : 0) + (sell_sweep ? 1 : 0) + (sell_struct ? 1 : 0) + 
 buy_core_trigger  = buy_sweep  and buy_struct  and (buy_ob  or buy_fvg)  and buy_bar
 sell_core_trigger = sell_sweep and sell_struct and (sell_ob or sell_fvg) and sell_bar
 
-buyCandidate  = sessionOK and buy_core_trigger  and buyScore  >= i_minScore
-sellCandidate = sessionOK and sell_core_trigger and sellScore >= i_minScore
+buyCandidate  = sessionOK and buy_core_trigger  and buyScore  >= i_minScore and regimeAllowsBuy
+sellCandidate = sessionOK and sell_core_trigger and sellScore >= i_minScore and regimeAllowsSell
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   12. ENTRY / SL / TP CALCULATION
@@ -625,6 +723,124 @@ f_calcSL_sell() =>
 // Always evaluate (Pine v6 consistency requirement)
 buySLcalc  = f_calcSL_buy()
 sellSLcalc = f_calcSL_sell()
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   12b. ADAPTIVE TARGETS — project TP1 / TP2 / TP3 to actual price-action levels
+//   For BUYS: scan above entry for unswept BSL pools, opposing (bear) OBs / FVGs,
+//   and HTF key levels (PDH, PWH, PMH, daily/weekly mid). Sort ascending and pick
+//   the three nearest. Falls back to R-multiples when the structure stack is short.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+f_collectBuyTargets(_entry) =>
+    arr = array.new<float>()
+    if array.size(liqs) > 0
+        for j = 0 to array.size(liqs) - 1
+            lq = array.get(liqs, j)
+            if lq.buyside and not lq.swept and lq.lvl > _entry
+                array.push(arr, lq.lvl)
+    if array.size(obs) > 0
+        for j = 0 to array.size(obs) - 1
+            ob = array.get(obs, j)
+            if not ob.bull and not ob.mitigated and ob.bot > _entry
+                array.push(arr, ob.bot)
+    if array.size(fvgs) > 0
+        for j = 0 to array.size(fvgs) - 1
+            fv = array.get(fvgs, j)
+            if not fv.bull and not fv.mitigated and fv.bot > _entry
+                array.push(arr, fv.bot)
+    if i_useKeyAsTP
+        if not na(pdHigh) and pdHigh > _entry
+            array.push(arr, pdHigh)
+        if not na(dHigh)  and dHigh  > _entry and dHigh != pdHigh
+            array.push(arr, dHigh)
+        if not na(pwHigh) and pwHigh > _entry
+            array.push(arr, pwHigh)
+        if not na(wHigh)  and wHigh  > _entry and wHigh != pwHigh
+            array.push(arr, wHigh)
+        if not na(pmHigh) and pmHigh > _entry
+            array.push(arr, pmHigh)
+    if not na(pdMid) and pdMid > _entry
+        array.push(arr, pdMid)
+    array.sort(arr, order.ascending)
+    arr
+
+f_collectSellTargets(_entry) =>
+    arr = array.new<float>()
+    if array.size(liqs) > 0
+        for j = 0 to array.size(liqs) - 1
+            lq = array.get(liqs, j)
+            if not lq.buyside and not lq.swept and lq.lvl < _entry
+                array.push(arr, lq.lvl)
+    if array.size(obs) > 0
+        for j = 0 to array.size(obs) - 1
+            ob = array.get(obs, j)
+            if ob.bull and not ob.mitigated and ob.top < _entry
+                array.push(arr, ob.top)
+    if array.size(fvgs) > 0
+        for j = 0 to array.size(fvgs) - 1
+            fv = array.get(fvgs, j)
+            if fv.bull and not fv.mitigated and fv.top < _entry
+                array.push(arr, fv.top)
+    if i_useKeyAsTP
+        if not na(pdLow) and pdLow < _entry
+            array.push(arr, pdLow)
+        if not na(dLow)  and dLow  < _entry and dLow != pdLow
+            array.push(arr, dLow)
+        if not na(pwLow) and pwLow < _entry
+            array.push(arr, pwLow)
+        if not na(wLow)  and wLow  < _entry and wLow != pwLow
+            array.push(arr, wLow)
+        if not na(pmLow) and pmLow < _entry
+            array.push(arr, pmLow)
+    if not na(pdMid) and pdMid < _entry
+        array.push(arr, pdMid)
+    array.sort(arr, order.descending)
+    arr
+
+// Pick TP1/TP2/TP3 from a sorted array, with R-multiple fallback. Also enforces a
+// minimum distance from entry so we don't put TP1 right on top of the entry bar.
+f_pickTPs(_isBuy, _entry, _sl, _arr) =>
+    rk      = _isBuy ? _entry - _sl : _sl - _entry
+    minDist = rk * 0.5                                 // TP1 must be at least 0.5R away
+    fb1     = _isBuy ? _entry + rk * i_tp1R : _entry - rk * i_tp1R
+    fb2     = _isBuy ? _entry + rk * i_tp2R : _entry - rk * i_tp2R
+    fb3     = _isBuy ? _entry + rk * i_tp3R : _entry - rk * i_tp3R
+    float t1 = na
+    float t2 = na
+    float t3 = na
+    n = array.size(_arr)
+    picked = array.new<float>()
+    for j = 0 to n - 1
+        v = array.get(_arr, j)
+        d = _isBuy ? v - _entry : _entry - v
+        if d >= minDist
+            // de-dup with tolerance
+            ok = true
+            if array.size(picked) > 0
+                for k = 0 to array.size(picked) - 1
+                    if math.abs(array.get(picked, k) - v) <= atr14 * 0.3
+                        ok := false
+                        break
+            if ok
+                array.push(picked, v)
+                if array.size(picked) >= 3
+                    break
+    p = array.size(picked)
+    t1 := p >= 1 ? array.get(picked, 0) : fb1
+    t2 := p >= 2 ? array.get(picked, 1) : fb2
+    t3 := p >= 3 ? array.get(picked, 2) : fb3
+    // Guarantee t1 < t2 < t3 for buys (and reverse for sells)
+    if _isBuy
+        if t2 <= t1
+            t2 := math.max(t2, fb2)
+        if t3 <= t2
+            t3 := math.max(t3, fb3)
+    else
+        if t2 >= t1
+            t2 := math.min(t2, fb2)
+        if t3 >= t2
+            t3 := math.min(t3, fb3)
+    [t1, t2, t3]
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   13. TRADE PLAN STATE MACHINE
@@ -683,9 +899,16 @@ if buySignal
     tpEntry := close
     tpSL    := buySLcalc
     rk       = tpEntry - tpSL
-    tpTP1   := tpEntry + rk * i_tp1R
-    tpTP2   := tpEntry + rk * i_tp2R
-    tpTP3   := tpEntry + rk * i_tp3R
+    if i_useAdaptiveTP
+        targetsBuy = f_collectBuyTargets(tpEntry)
+        [t1b, t2b, t3b] = f_pickTPs(true, tpEntry, tpSL, targetsBuy)
+        tpTP1 := t1b
+        tpTP2 := t2b
+        tpTP3 := t3b
+    else
+        tpTP1 := tpEntry + rk * i_tp1R
+        tpTP2 := tpEntry + rk * i_tp2R
+        tpTP3 := tpEntry + rk * i_tp3R
     tpBar   := bar_index
     tpScore := buyScore
     tpActive := true
@@ -702,6 +925,9 @@ if buySignal
     tpLbTP1   := label.new(bar_index + 1, tpTP1,   "TP1 "   + str.tostring(tpTP1,   format.mintick), color = col_tp,    textcolor = color.white, style = label.style_label_left, size = size.small)
     tpLbTP2   := label.new(bar_index + 1, tpTP2,   "TP2 "   + str.tostring(tpTP2,   format.mintick), color = color.new(col_tp, 30), textcolor = color.white, style = label.style_label_left, size = size.small)
     tpLbTP3   := label.new(bar_index + 1, tpTP3,   "TP3 "   + str.tostring(tpTP3,   format.mintick), color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.small)
+    // Rich dynamic alert with all levels (and position size if enabled)
+    posLineB = i_useRiskCalc ? "  Size: " + str.tostring(f_positionSize(tpEntry, tpSL), "#.##") + " (risk " + str.tostring(i_riskPct, "#.#") + "%)" : ""
+    alert("ICT MASTER PRO  BUY  " + syminfo.ticker + "  Entry " + str.tostring(tpEntry, format.mintick) + "  SL " + str.tostring(tpSL, format.mintick) + "  TP1 " + str.tostring(tpTP1, format.mintick) + "  TP2 " + str.tostring(tpTP2, format.mintick) + "  TP3 " + str.tostring(tpTP3, format.mintick) + "  Score " + str.tostring(tpScore) + "/7" + posLineB, alert.freq_once_per_bar_close)
 
 if sellSignal
     f_clearPlan()
@@ -709,9 +935,16 @@ if sellSignal
     tpEntry := close
     tpSL    := sellSLcalc
     rk       = tpSL - tpEntry
-    tpTP1   := tpEntry - rk * i_tp1R
-    tpTP2   := tpEntry - rk * i_tp2R
-    tpTP3   := tpEntry - rk * i_tp3R
+    if i_useAdaptiveTP
+        targetsSell = f_collectSellTargets(tpEntry)
+        [t1s, t2s, t3s] = f_pickTPs(false, tpEntry, tpSL, targetsSell)
+        tpTP1 := t1s
+        tpTP2 := t2s
+        tpTP3 := t3s
+    else
+        tpTP1 := tpEntry - rk * i_tp1R
+        tpTP2 := tpEntry - rk * i_tp2R
+        tpTP3 := tpEntry - rk * i_tp3R
     tpBar   := bar_index
     tpScore := sellScore
     tpActive := true
@@ -728,6 +961,8 @@ if sellSignal
     tpLbTP1   := label.new(bar_index + 1, tpTP1,   "TP1 "   + str.tostring(tpTP1,   format.mintick), color = col_tp,    textcolor = color.white, style = label.style_label_left, size = size.small)
     tpLbTP2   := label.new(bar_index + 1, tpTP2,   "TP2 "   + str.tostring(tpTP2,   format.mintick), color = color.new(col_tp, 30), textcolor = color.white, style = label.style_label_left, size = size.small)
     tpLbTP3   := label.new(bar_index + 1, tpTP3,   "TP3 "   + str.tostring(tpTP3,   format.mintick), color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.small)
+    posLineS = i_useRiskCalc ? "  Size: " + str.tostring(f_positionSize(tpEntry, tpSL), "#.##") + " (risk " + str.tostring(i_riskPct, "#.#") + "%)" : ""
+    alert("ICT MASTER PRO  SELL  " + syminfo.ticker + "  Entry " + str.tostring(tpEntry, format.mintick) + "  SL " + str.tostring(tpSL, format.mintick) + "  TP1 " + str.tostring(tpTP1, format.mintick) + "  TP2 " + str.tostring(tpTP2, format.mintick) + "  TP3 " + str.tostring(tpTP3, format.mintick) + "  Score " + str.tostring(tpScore) + "/7" + posLineS, alert.freq_once_per_bar_close)
 
 // Auto-clear plan when SL or final TP is hit (use bar's high/low for trigger)
 if tpActive
@@ -767,9 +1002,144 @@ sellTP3   = tpActive and not tpIsBuy ? tpTP3   : na
 sellBar   = tpActive and not tpIsBuy ? tpBar   : na
 
 // ════════════════════════════════════════════════════════════════════════════════════
+//   13b. PERFORMANCE TRACKER
+//   Logs every fired signal as a Trade and updates each open trade per-bar.
+//   First level hit (TP1 / TP2 / TP3 / SL) is the trade's outcome. Stats:
+//   win rate (TP1+ hit), average R achieved, max drawdown across the rolling
+//   window of the last N closed trades.
+// ════════════════════════════════════════════════════════════════════════════════════
+type Trade
+    int   bar
+    bool  isBuy
+    float entry
+    float sl
+    float tp1
+    float tp2
+    float tp3
+    int   outcome      // 0 = open, 1 = TP1, 2 = TP2, 3 = TP3, -1 = SL
+    float rResult      // realised R multiple
+
+var array<Trade> trades   = array.new<Trade>()
+var int   tradesClosed    = 0
+var int   tradesWon       = 0
+var int   tradesLost      = 0
+var float sumR            = 0.0
+var float maxDDR          = 0.0
+var float runningR        = 0.0
+var float peakR           = 0.0
+
+// Log a new signal
+if i_trackPerf and buySignal
+    array.push(trades, Trade.new(bar_index, true, tpEntry, tpSL, tpTP1, tpTP2, tpTP3, 0, 0.0))
+if i_trackPerf and sellSignal
+    array.push(trades, Trade.new(bar_index, false, tpEntry, tpSL, tpTP1, tpTP2, tpTP3, 0, 0.0))
+
+// Update each open trade. Outcome model: the FIRST level reached (TP1, TP2, TP3
+// or SL) closes the trade and finalises its R. Same-bar tie -> TP wins (price
+// printed the favorable level intra-bar before reversing).
+if i_trackPerf and array.size(trades) > 0
+    for j = 0 to array.size(trades) - 1
+        if j >= array.size(trades)
+            break
+        t = array.get(trades, j)
+        if t.outcome == 0 and bar_index > t.bar
+            risk = t.isBuy ? t.entry - t.sl : t.sl - t.entry
+            done = false
+            if t.isBuy
+                if high >= t.tp3
+                    t.outcome := 3
+                    t.rResult := (t.tp3 - t.entry) / risk
+                    done := true
+                else if high >= t.tp2
+                    t.outcome := 2
+                    t.rResult := (t.tp2 - t.entry) / risk
+                    done := true
+                else if high >= t.tp1
+                    t.outcome := 1
+                    t.rResult := (t.tp1 - t.entry) / risk
+                    done := true
+                else if low <= t.sl
+                    t.outcome := -1
+                    t.rResult := -1.0
+                    done := true
+            else
+                if low <= t.tp3
+                    t.outcome := 3
+                    t.rResult := (t.entry - t.tp3) / risk
+                    done := true
+                else if low <= t.tp2
+                    t.outcome := 2
+                    t.rResult := (t.entry - t.tp2) / risk
+                    done := true
+                else if low <= t.tp1
+                    t.outcome := 1
+                    t.rResult := (t.entry - t.tp1) / risk
+                    done := true
+                else if high >= t.sl
+                    t.outcome := -1
+                    t.rResult := -1.0
+                    done := true
+            if done
+                tradesClosed := tradesClosed + 1
+                if t.rResult > 0
+                    tradesWon  := tradesWon + 1
+                else
+                    tradesLost := tradesLost + 1
+                sumR     := sumR + t.rResult
+                runningR := runningR + t.rResult
+                peakR    := math.max(peakR, runningR)
+                dd       = peakR - runningR
+                maxDDR   := math.max(maxDDR, dd)
+                if i_showPerfLines
+                    perfTxt = t.rResult > 0 ? "+" + str.tostring(t.rResult, "#.##") + "R" : str.tostring(t.rResult, "#.##") + "R"
+                    perfBg  = t.rResult > 0 ? color.new(c_bull, 50) : color.new(c_bear, 50)
+                    perfStyle = t.isBuy ? label.style_label_down : label.style_label_up
+                    perfY   = t.isBuy ? high : low
+                    label.new(bar_index, perfY, perfTxt, color = perfBg, textcolor = color.white, style = perfStyle, size = size.tiny)
+
+// Cap trade history length
+if i_trackPerf and array.size(trades) > i_perfWindow * 3
+    array.shift(trades)
+
+// Rolling window stats — only count the last N closed trades
+f_perfStats() =>
+    int   wins   = 0
+    int   losses = 0
+    float rSum   = 0.0
+    int   counted = 0
+    n = array.size(trades)
+    if n > 0
+        for k = 0 to n - 1
+            if counted >= i_perfWindow
+                break
+            idx = n - 1 - k
+            t = array.get(trades, idx)
+            if t.outcome != 0
+                if t.rResult > 0
+                    wins := wins + 1
+                else
+                    losses := losses + 1
+                rSum := rSum + t.rResult
+                counted := counted + 1
+    [wins, losses, rSum, counted]
+
+[winsW, lossesW, rSumW, countedW] = f_perfStats()
+winRatePct = countedW > 0 ? 100.0 * winsW / countedW : 0.0
+avgRWin    = countedW > 0 ? rSumW / countedW : 0.0
+
+// Position-size suggestion (used in alert messages and shown in dashboard)
+f_positionSize(_entry, _sl) =>
+    risk    = math.abs(_entry - _sl)
+    riskAmt = i_account * (i_riskPct / 100)
+    risk == 0 ? 0.0 : riskAmt / risk
+
+posSizeBuy  = tpActive and tpIsBuy ?     f_positionSize(tpEntry, tpSL) : 0.0
+posSizeSell = tpActive and not tpIsBuy ? f_positionSize(tpEntry, tpSL) : 0.0
+
+// ════════════════════════════════════════════════════════════════════════════════════
 //   14. DASHBOARD — at-a-glance ICT context
 // ════════════════════════════════════════════════════════════════════════════════════
-var table dash = table.new(f_dashPos(), 2, 14, border_width = 1, frame_color = color.new(color.gray, 50))
+var table dash = table.new(f_dashPos(), 2, 17, border_width = 1, frame_color = color.new(color.gray, 50))
 
 f_zoneText() =>
     inDiscount ? "DISCOUNT (Buy zone)" : inPremium ? "PREMIUM (Sell zone)" : "EQUILIBRIUM"
@@ -896,6 +1266,27 @@ if i_showDash and barstate.islast
         statusTxt := "Sell score met - need sweep+struct"
     table.cell(dash, 0, 13, "STATUS", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 13, statusTxt, text_color = color.white, bgcolor = statusCol, text_size = sz)
+
+    // Row 14 — Regime
+    table.cell(dash, 0, 14, "Regime", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 14, regimeStr + "  (ADX " + str.tostring(adx, "#") + ")", text_color = color.white, bgcolor = regimeCol, text_size = sz)
+
+    // Row 15 — Last sweep quality
+    sweepQTxt = recentSSLSweep ? "SSL G" + str.tostring(lastSSLSweepGrade) + (lastSSLSweepGrade >= 3 ? " (major)" : " (minor/inducement)") :
+                recentBSLSweep ? "BSL G" + str.tostring(lastBSLSweepGrade) + (lastBSLSweepGrade >= 3 ? " (major)" : " (minor/inducement)") : "-"
+    sweepQCol = recentSSLSweep and lastSSLSweepGrade >= 3 ? color.new(c_bull, 40) :
+                recentBSLSweep and lastBSLSweepGrade >= 3 ? color.new(c_bear, 40) :
+                (recentSSLSweep or recentBSLSweep) ? color.new(#ef6c00, 50) : color.new(color.gray, 80)
+    table.cell(dash, 0, 15, "Sweep Quality", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 15, sweepQTxt, text_color = color.white, bgcolor = sweepQCol, text_size = sz)
+
+    // Row 16 — Performance stats
+    perfTxt = countedW > 0 ? "Win " + str.tostring(winRatePct, "#") + "%  Avg " + str.tostring(avgRWin, "#.##") + "R  DD " + str.tostring(maxDDR, "#.##") + "R  (" + str.tostring(countedW) + " trades)" : "no closed trades yet"
+    perfCol = countedW < 5 ? color.new(color.gray, 70) :
+              winRatePct >= 60 and avgRWin > 0 ? color.new(c_bull, 40) :
+              winRatePct >= 40 ? color.new(#1565c0, 30) : color.new(c_bear, 40)
+    table.cell(dash, 0, 16, "Performance", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 16, perfTxt, text_color = color.white, bgcolor = perfCol, text_size = sz)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   15. ALERTS
