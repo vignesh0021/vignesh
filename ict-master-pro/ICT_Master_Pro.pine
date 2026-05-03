@@ -33,40 +33,42 @@ grpRisk   = "═══ Risk: SL / TP ═══"
 grpDash   = "═══ Dashboard ═══"
 
 // ── Core ────────────────────────────────────────────────────────────────────────────
+i_cleanMode     = input.bool(true, "CLEAN MODE (only signals + dashboard on chart)", group = grpCore, tooltip = "ON = clean chart, only BUY/SELL signals with Entry/SL/TP visible. OFF = show all ICT internals (OB, FVG, liquidity lines, sessions, P/D zones).")
 i_pivotLen      = input.int(5,    "Pivot Length", minval = 2, maxval = 30, group = grpCore, tooltip = "Bars on each side for swing detection. 5 = scalp, 10 = swing.")
 i_useVolume     = input.bool(true, "Require Volume Confirmation", group = grpCore, tooltip = "Signals only fire when volume >= average. Crucial for high-probability setups.")
 i_volLen        = input.int(20,   "Volume MA Length", minval = 5, maxval = 200, group = grpCore)
 
 // ── Structure ───────────────────────────────────────────────────────────────────────
-i_showBOS       = input.bool(true, "Show BOS / CHoCH",              group = grpStruct)
-i_showSwings    = input.bool(true, "Show Swing High / Low markers", group = grpStruct)
+i_showBOS_raw    = input.bool(false, "Show BOS / CHoCH",              group = grpStruct)
+i_showSwings_raw = input.bool(false, "Show Swing High / Low markers", group = grpStruct)
 
 // ── Order Blocks ────────────────────────────────────────────────────────────────────
-i_showOB        = input.bool(true, "Show Order Blocks",             group = grpOB)
+i_showOB_raw    = input.bool(false, "Show Order Blocks",             group = grpOB)
 i_obMaxBoxes    = input.int(8,    "Max OB Boxes Kept", minval = 1, maxval = 20, group = grpOB)
 i_obMitigate    = input.bool(true, "Remove OBs after Mitigation",   group = grpOB)
 i_obGrade       = input.string("A+B", "Min Grade to Show", options = ["A only", "A+B", "A+B+C"], group = grpOB, tooltip = "A = swept liquidity + displacement, B = displacement only, C = simple.")
 
 // ── FVG ─────────────────────────────────────────────────────────────────────────────
-i_showFVG       = input.bool(true, "Show Fair Value Gaps",          group = grpFVG)
+i_showFVG_raw   = input.bool(false, "Show Fair Value Gaps",          group = grpFVG)
 i_fvgMaxBoxes   = input.int(6,    "Max FVG Boxes Kept", minval = 1, maxval = 20, group = grpFVG)
 i_fvgMitigate   = input.bool(true, "Remove FVGs after Fill",        group = grpFVG)
 
 // ── Liquidity ───────────────────────────────────────────────────────────────────────
-i_showLiq       = input.bool(true, "Show BSL / SSL Liquidity Lines", group = grpLiq)
-i_showSweep     = input.bool(true, "Mark Liquidity Sweeps",          group = grpLiq)
+i_showLiq_raw   = input.bool(false, "Show BSL / SSL Liquidity Lines", group = grpLiq)
+i_showSweep_raw = input.bool(false, "Mark Liquidity Sweeps",          group = grpLiq)
 i_liqMax        = input.int(6,    "Max Liquidity Lines per side", minval = 1, maxval = 15, group = grpLiq)
 
 // ── Premium / Discount ──────────────────────────────────────────────────────────────
-i_showPD        = input.bool(true, "Show Premium / Discount Zones", group = grpPD)
+i_showPD_raw    = input.bool(false, "Show Premium / Discount Zones", group = grpPD)
 i_pdSource      = input.string("Daily", "Range Source", options = ["Daily", "Weekly", "Session"], group = grpPD)
+i_showWeeklyOHLC = input.bool(false, "Show Weekly OHLC Lines",       group = grpPD)
 
 // ── HTF Bias ────────────────────────────────────────────────────────────────────────
 i_useHTFBias    = input.bool(true, "Filter Signals by HTF Bias", group = grpHTF)
 i_htfTF         = input.timeframe("60", "HTF Timeframe", group = grpHTF, tooltip = "60 = 1H, 240 = 4H, D = Daily, W = Weekly. 1H is good for 5m charts.")
 
 // ── Sessions ────────────────────────────────────────────────────────────────────────
-i_useSessions   = input.bool(true, "Show NSE ICT Macro Boxes",        group = grpSess)
+i_useSessions_raw = input.bool(false, "Show NSE ICT Macro Boxes",        group = grpSess)
 i_sessAM        = input.session("0915-1045", "AM Macro (Open Drive)", group = grpSess)
 i_sessMid       = input.session("1045-1200", "Mid Morning",           group = grpSess)
 i_sessLunch     = input.session("1200-1330", "Lunch (Avoid)",         group = grpSess)
@@ -76,9 +78,37 @@ i_avoidLunch    = input.bool(true, "Block Signals during Lunch",      group = gr
 i_tz            = input.string("Asia/Kolkata", "Timezone", options = ["Asia/Kolkata", "America/New_York", "Europe/London", "UTC"], group = grpSess)
 
 // ── Signal Engine ───────────────────────────────────────────────────────────────────
-i_minScore      = input.int(4, "Min Confluence Score (0-7)", minval = 1, maxval = 7, group = grpSig, tooltip = "Higher = fewer but stronger signals. 4-5 recommended.")
+i_minScore      = input.int(5, "Min Confluence Score (0-7)", minval = 1, maxval = 7, group = grpSig, tooltip = "Higher = fewer but stronger signals. 5 = balanced quality, 6+ = sniper.")
 i_oneSigPerBar  = input.bool(true, "One Signal Per Setup (no repeats)", group = grpSig)
 i_useOTE        = input.bool(true, "Require OTE Zone (0.62-0.79)",      group = grpSig)
+i_requireBarConf= input.bool(true, "Require Reversal Bar Confirmation", group = grpSig, tooltip = "Buys need close > open on signal bar; sells need close < open. Filters fakeouts.")
+i_structMemBars = input.int(10, "Structure Memory (bars)", minval = 3, maxval = 30, group = grpSig, tooltip = "How many bars after BOS/CHoCH the setup stays valid. Lets the signal fire on the RETRACE bar (before the move) instead of the breakout bar.")
+i_sweepMemBars  = input.int(8,  "Sweep Memory (bars)",     minval = 3, maxval = 30, group = grpSig)
+
+// ── Risk ────────────────────────────────────────────────────────────────────────────
+i_slMode        = input.string("Structure", "SL Mode", options = ["Structure", "ATR", "Fixed%"], group = grpRisk, tooltip = "Structure = beyond swept liquidity / OB. ATR = ATR multiple. Fixed% = % of price.")
+i_slATR         = input.float(1.5,  "SL ATR Multiple", minval = 0.5,  maxval = 5.0,  step = 0.1,  group = grpRisk)
+i_slFixedPct    = input.float(0.3,  "SL Fixed %",      minval = 0.05, maxval = 5.0,  step = 0.05, group = grpRisk)
+i_slBuffer      = input.float(0.05, "SL Buffer %",     minval = 0.0,  maxval = 1.0,  step = 0.01, group = grpRisk)
+i_tp1R          = input.float(1.0, "TP1 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+i_tp2R          = input.float(2.0, "TP2 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+i_tp3R          = input.float(3.0, "TP3 (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+
+// ── Dashboard ───────────────────────────────────────────────────────────────────────
+i_showDash      = input.bool(true, "Show Dashboard", group = grpDash)
+i_dashPos       = input.string("Top Right", "Dashboard Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group = grpDash)
+i_dashSize      = input.string("Small", "Dashboard Size", options = ["Tiny", "Small", "Normal", "Large"], group = grpDash)
+
+// ── Effective show flags (Clean Mode forces everything off) ─────────────────────────
+i_showBOS     = i_cleanMode ? false : i_showBOS_raw
+i_showSwings  = i_cleanMode ? false : i_showSwings_raw
+i_showOB      = i_cleanMode ? false : i_showOB_raw
+i_showFVG     = i_cleanMode ? false : i_showFVG_raw
+i_showLiq     = i_cleanMode ? false : i_showLiq_raw
+i_showSweep   = i_cleanMode ? false : i_showSweep_raw
+i_showPD      = i_cleanMode ? false : i_showPD_raw
+i_useSessions = i_cleanMode ? false : i_useSessions_raw
+i_showWeekly  = i_cleanMode ? false : i_showWeeklyOHLC
 
 // ── Risk ────────────────────────────────────────────────────────────────────────────
 i_slMode        = input.string("Structure", "SL Mode", options = ["Structure", "ATR", "Fixed%"], group = grpRisk, tooltip = "Structure = beyond swept liquidity / OB. ATR = ATR multiple. Fixed% = % of price.")
@@ -185,6 +215,18 @@ if bullBOS
 if bearBOS
     trend := -1
 
+// Memory of recent structural shifts so the signal can fire on the RETRACE bar
+// (i.e. AFTER the BOS/CHoCH, when price returns to the OB/FVG) — that's the
+// pre-move entry, not the breakout chase.
+var int lastBullStructBar = na
+var int lastBearStructBar = na
+if bullBOS or bullCHoCH
+    lastBullStructBar := bar_index
+if bearBOS or bearCHoCH
+    lastBearStructBar := bar_index
+recentBullStruct = not na(lastBullStructBar) and (bar_index - lastBullStructBar) <= i_structMemBars
+recentBearStruct = not na(lastBearStructBar) and (bar_index - lastBearStructBar) <= i_structMemBars
+
 if i_showBOS and bullBOS and not na(lastSHBar)
     line.new(lastSHBar, lastSH, bar_index, lastSH, color = c_bull, width = 1, style = line.style_dashed)
     label.new(bar_index, lastSH, bullCHoCH ? "CHoCH UP" : "BOS UP", color = c_bull, textcolor = color.white, style = label.style_label_down, size = size.tiny)
@@ -219,22 +261,28 @@ swept_high_recently = ta.highest(high, 3) > ta.highest(high, 10)[3]
 f_obAllowed(_grade) =>
     i_obGrade == "A only" ? _grade == "A" : i_obGrade == "A+B" ? (_grade == "A" or _grade == "B") : true
 
-// Bullish OB: last bearish candle before bullish displacement / BOS
-if i_showOB and bullBOS and close[1] < open[1]
+// Bullish OB — track ALWAYS so confluence works; show only when i_showOB
+if bullBOS and close[1] < open[1]
     grade = (swept_low_recently and displacement) ? "A" : displacement ? "B" : "C"
     if f_obAllowed(grade)
-        bx = box.new(bar_index[1], high[1], bar_index + 5, low[1], bgcolor = c_obBull, border_color = color.new(#1976d2, 30), border_width = 1, text = "OB " + grade, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
+        bgC = i_showOB ? c_obBull : color(na)
+        bdC = i_showOB ? color.new(#1976d2, 30) : color(na)
+        txt = i_showOB ? "OB " + grade : ""
+        bx = box.new(bar_index[1], high[1], bar_index + 5, low[1], bgcolor = bgC, border_color = bdC, border_width = 1, text = txt, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
         ob = OB.new(bx, high[1], low[1], true, grade, false)
         array.push(obs, ob)
         if array.size(obs) > i_obMaxBoxes
             old = array.shift(obs)
             box.delete(old.bx)
 
-// Bearish OB
-if i_showOB and bearBOS and close[1] > open[1]
+// Bearish OB — same pattern
+if bearBOS and close[1] > open[1]
     grade = (swept_high_recently and displacement) ? "A" : displacement ? "B" : "C"
     if f_obAllowed(grade)
-        bx = box.new(bar_index[1], high[1], bar_index + 5, low[1], bgcolor = c_obBear, border_color = color.new(#f57c00, 30), border_width = 1, text = "OB " + grade, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
+        bgC = i_showOB ? c_obBear : color(na)
+        bdC = i_showOB ? color.new(#f57c00, 30) : color(na)
+        txt = i_showOB ? "OB " + grade : ""
+        bx = box.new(bar_index[1], high[1], bar_index + 5, low[1], bgcolor = bgC, border_color = bdC, border_width = 1, text = txt, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
         ob = OB.new(bx, high[1], low[1], false, grade, false)
         array.push(obs, ob)
         if array.size(obs) > i_obMaxBoxes
@@ -294,16 +342,20 @@ var array<FVG> fvgs = array.new<FVG>()
 bullFVG = low > high[2] and close[1] > open[1]
 bearFVG = high < low[2] and close[1] < open[1]
 
-if i_showFVG and bullFVG
-    bx = box.new(bar_index - 2, low, bar_index + 5, high[2], bgcolor = c_fvgBull, border_color = color.new(#00bcd4, 50), border_width = 1)
+if bullFVG
+    bgC = i_showFVG ? c_fvgBull : color(na)
+    bdC = i_showFVG ? color.new(#00bcd4, 50) : color(na)
+    bx = box.new(bar_index - 2, low, bar_index + 5, high[2], bgcolor = bgC, border_color = bdC, border_width = 1)
     f = FVG.new(bx, low, high[2], true, false)
     array.push(fvgs, f)
     if array.size(fvgs) > i_fvgMaxBoxes
         old = array.shift(fvgs)
         box.delete(old.bx)
 
-if i_showFVG and bearFVG
-    bx = box.new(bar_index - 2, low[2], bar_index + 5, high, bgcolor = c_fvgBear, border_color = color.new(#ff9800, 50), border_width = 1)
+if bearFVG
+    bgC = i_showFVG ? c_fvgBear : color(na)
+    bdC = i_showFVG ? color.new(#ff9800, 50) : color(na)
+    bx = box.new(bar_index - 2, low[2], bar_index + 5, high, bgcolor = bgC, border_color = bdC, border_width = 1)
     f = FVG.new(bx, low[2], high, false, false)
     array.push(fvgs, f)
     if array.size(fvgs) > i_fvgMaxBoxes
@@ -359,12 +411,14 @@ type Liq
 
 var array<Liq> liqs = array.new<Liq>()
 
-if i_showLiq and not na(phRaw)
-    ln = line.new(bar_index - i_pivotLen, phRaw, bar_index + 5, phRaw, color = color.new(c_liqBuy, 60), style = line.style_dotted, width = 1)
+if not na(phRaw)
+    lc = i_showLiq ? color.new(c_liqBuy, 60) : color(na)
+    ln = line.new(bar_index - i_pivotLen, phRaw, bar_index + 5, phRaw, color = lc, style = line.style_dotted, width = 1)
     array.push(liqs, Liq.new(ln, phRaw, bar_index - i_pivotLen, true, false))
 
-if i_showLiq and not na(plRaw)
-    ln = line.new(bar_index - i_pivotLen, plRaw, bar_index + 5, plRaw, color = color.new(c_liqSell, 60), style = line.style_dotted, width = 1)
+if not na(plRaw)
+    lc = i_showLiq ? color.new(c_liqSell, 60) : color(na)
+    ln = line.new(bar_index - i_pivotLen, plRaw, bar_index + 5, plRaw, color = lc, style = line.style_dotted, width = 1)
     array.push(liqs, Liq.new(ln, plRaw, bar_index - i_pivotLen, false, false))
 
 // Sweep detection + line management
@@ -413,8 +467,8 @@ if justSweptSSL
 if justSweptBSL
     lastBSLSweepBar := bar_index
 
-recentSSLSweep = not na(lastSSLSweepBar) and (bar_index - lastSSLSweepBar) <= 5
-recentBSLSweep = not na(lastBSLSweepBar) and (bar_index - lastBSLSweepBar) <= 5
+recentSSLSweep = not na(lastSSLSweepBar) and (bar_index - lastSSLSweepBar) <= i_sweepMemBars
+recentBSLSweep = not na(lastBSLSweepBar) and (bar_index - lastBSLSweepBar) <= i_sweepMemBars
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   8. PREMIUM / DISCOUNT DEALING RANGE + OTE
@@ -518,35 +572,41 @@ sessionOK = i_avoidLunch ? not inLunch : true
 weeklyBullBias = not na(pwHigh) and not na(pwLow) and close > (pwHigh + pwLow) / 2
 weeklyBearBias = not na(pwHigh) and not na(pwLow) and close < (pwHigh + pwLow) / 2
 
-plot(wHigh, "Weekly High", color = color.new(c_bear, 70),       style = plot.style_linebr, linewidth = 1)
-plot(wLow,  "Weekly Low",  color = color.new(c_bull, 70),       style = plot.style_linebr, linewidth = 1)
-plot(wOpen, "Weekly Open", color = color.new(color.orange, 70), style = plot.style_linebr, linewidth = 1)
+plot(i_showWeekly ? wHigh : na, "Weekly High", color = color.new(c_bear, 70),       style = plot.style_linebr, linewidth = 1)
+plot(i_showWeekly ? wLow  : na, "Weekly Low",  color = color.new(c_bull, 70),       style = plot.style_linebr, linewidth = 1)
+plot(i_showWeekly ? wOpen : na, "Weekly Open", color = color.new(color.orange, 70), style = plot.style_linebr, linewidth = 1)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   11. CONFLUENCE SCORING ENGINE
 // ════════════════════════════════════════════════════════════════════════════════════
 buy_htf    = i_useHTFBias ? htfBull : true
 buy_sweep  = recentSSLSweep
-buy_struct = bullCHoCH or bullBOS
+buy_struct = recentBullStruct                       // memory-based: setup stays armed for N bars after BOS/CHoCH
 buy_ob     = f_inBullOB()
 buy_fvg    = f_inBullFVG()
 buy_pd     = i_useOTE ? inBuyOTE : inDiscount
 buy_vol    = volOK
+buy_bar    = i_requireBarConf ? close > open : true // bullish reaction bar at the OB/FVG
 
 buyScore = (buy_htf ? 1 : 0) + (buy_sweep ? 1 : 0) + (buy_struct ? 1 : 0) + (buy_ob ? 1 : 0) + (buy_fvg ? 1 : 0) + (buy_pd ? 1 : 0) + (buy_vol ? 1 : 0)
 
 sell_htf    = i_useHTFBias ? htfBear : true
 sell_sweep  = recentBSLSweep
-sell_struct = bearCHoCH or bearBOS
+sell_struct = recentBearStruct
 sell_ob     = f_inBearOB()
 sell_fvg    = f_inBearFVG()
 sell_pd     = i_useOTE ? inSellOTE : inPremium
 sell_vol    = volOK
+sell_bar    = i_requireBarConf ? close < open : true
 
 sellScore = (sell_htf ? 1 : 0) + (sell_sweep ? 1 : 0) + (sell_struct ? 1 : 0) + (sell_ob ? 1 : 0) + (sell_fvg ? 1 : 0) + (sell_pd ? 1 : 0) + (sell_vol ? 1 : 0)
 
-buy_core_trigger  = (buy_sweep and buy_struct) or ((buy_ob or buy_fvg) and buy_struct)
-sell_core_trigger = (sell_sweep and sell_struct) or ((sell_ob or sell_fvg) and sell_struct)
+// Pre-movement trigger:
+//   sweep already happened (memory) AND structure already shifted (memory)
+//   AND price has now returned to an OB or FVG AND a reaction bar prints
+//   → entry on the retrace, BEFORE the next leg
+buy_core_trigger  = buy_sweep  and buy_struct  and (buy_ob  or buy_fvg)  and buy_bar
+sell_core_trigger = sell_sweep and sell_struct and (sell_ob or sell_fvg) and sell_bar
 
 buyCandidate  = sessionOK and buy_core_trigger  and buyScore  >= i_minScore
 sellCandidate = sessionOK and sell_core_trigger and sellScore >= i_minScore
@@ -641,11 +701,11 @@ f_drawTradePlan(_isBuy, _entry, _sl, _tp1, _tp2, _tp3, _startBar) =>
     label.new(rEnd, _tp3,   "TP3 "   + str.tostring(_tp3,   format.mintick), color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.tiny)
 
 if buySignal
-    label.new(bar_index, low, "BUY (" + str.tostring(buyScore) + "/7)", color = c_bull, textcolor = color.white, style = label.style_label_up, size = size.normal)
+    label.new(bar_index, low, "BUY  " + str.tostring(buyScore) + "/7", color = c_bull, textcolor = color.white, style = label.style_label_up, size = size.large)
     f_drawTradePlan(true, buyEntry, buySL, buyTP1, buyTP2, buyTP3, bar_index)
 
 if sellSignal
-    label.new(bar_index, high, "SELL (" + str.tostring(sellScore) + "/7)", color = c_bear, textcolor = color.white, style = label.style_label_down, size = size.normal)
+    label.new(bar_index, high, "SELL  " + str.tostring(sellScore) + "/7", color = c_bear, textcolor = color.white, style = label.style_label_down, size = size.large)
     f_drawTradePlan(false, sellEntry, sellSL, sellTP1, sellTP2, sellTP3, bar_index)
 
 plotshape(buySignal,  title = "Buy Signal",  location = location.belowbar, color = c_bull, style = shape.triangleup,   size = size.small, text = "BUY")
@@ -751,26 +811,51 @@ if i_showDash and barstate.islast
         tpTxt := "TP1:" + str.tostring(sellTP1, format.mintick) + " TP2:" + str.tostring(sellTP2, format.mintick) + " TP3:" + str.tostring(sellTP3, format.mintick)
     table.cell(dash, 1, 12, tpTxt, text_color = color.white, bgcolor = color.new(color.gray, 80), text_size = sz)
 
+    // Pre-movement awareness: setup armed = sweep + structure are both fresh,
+    // we just need price to retrace into an OB/FVG and react.
+    buySetupArmed  = recentSSLSweep and recentBullStruct
+    sellSetupArmed = recentBSLSweep and recentBearStruct
     string statusTxt = "Scanning..."
     color  statusCol = color.new(#1565c0, 0)
     if buyCandidate
-        statusTxt := "BUY READY"
+        statusTxt := "BUY READY  (take entry)"
         statusCol := color.new(c_bull, 0)
     else if sellCandidate
-        statusTxt := "SELL READY"
+        statusTxt := "SELL READY  (take entry)"
         statusCol := color.new(c_bear, 0)
+    else if buySetupArmed and (buy_ob or buy_fvg)
+        statusTxt := "BUY armed - waiting bar confirm"
+        statusCol := color.new(c_bull, 30)
+    else if sellSetupArmed and (sell_ob or sell_fvg)
+        statusTxt := "SELL armed - waiting bar confirm"
+        statusCol := color.new(c_bear, 30)
+    else if buySetupArmed
+        statusTxt := "Buy setup forming - awaiting retrace"
+        statusCol := color.new(c_bull, 60)
+    else if sellSetupArmed
+        statusTxt := "Sell setup forming - awaiting retrace"
+        statusCol := color.new(c_bear, 60)
     else if buyScore >= i_minScore
-        statusTxt := "Buy waiting trigger"
+        statusTxt := "Buy score met - need sweep+struct"
     else if sellScore >= i_minScore
-        statusTxt := "Sell waiting trigger"
+        statusTxt := "Sell score met - need sweep+struct"
     table.cell(dash, 0, 13, "STATUS", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 13, statusTxt, text_color = color.white, bgcolor = statusCol, text_size = sz)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   15. ALERTS
 // ════════════════════════════════════════════════════════════════════════════════════
+// Entry signals (the actual trade trigger)
 alertcondition(buySignal,    title = "ICT Buy Signal",      message = "ICT MASTER PRO: BUY {{ticker}} @ {{close}} - confluence-based entry. Check chart for SL/TP.")
 alertcondition(sellSignal,   title = "ICT Sell Signal",     message = "ICT MASTER PRO: SELL {{ticker}} @ {{close}} - confluence-based entry. Check chart for SL/TP.")
+
+// Pre-signal alerts (setup armed, waiting for retrace into OB/FVG)
+buySetupArmedAlert  = recentSSLSweep and recentBullStruct and (f_inBullOB() or f_inBullFVG())
+sellSetupArmedAlert = recentBSLSweep and recentBearStruct and (f_inBearOB() or f_inBearFVG())
+alertcondition(buySetupArmedAlert,  title = "Buy Setup Armed",  message = "ICT: BUY setup armed on {{ticker}} - sweep+CHoCH done, price in OB/FVG. Wait for reaction bar.")
+alertcondition(sellSetupArmedAlert, title = "Sell Setup Armed", message = "ICT: SELL setup armed on {{ticker}} - sweep+CHoCH done, price in OB/FVG. Wait for reaction bar.")
+
+// Component alerts
 alertcondition(bullCHoCH,    title = "Bullish CHoCH",       message = "ICT: Bullish CHoCH on {{ticker}} {{interval}}")
 alertcondition(bearCHoCH,    title = "Bearish CHoCH",       message = "ICT: Bearish CHoCH on {{ticker}} {{interval}}")
 alertcondition(bullBOS,      title = "Bullish BOS",         message = "ICT: Bullish BOS on {{ticker}} {{interval}}")
