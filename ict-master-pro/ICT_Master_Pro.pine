@@ -726,6 +726,14 @@ f_calcSL_sell() =>
 buySLcalc  = f_calcSL_buy()
 sellSLcalc = f_calcSL_sell()
 
+// Position-size suggestion. Defined here (before the trade-plan block) because
+// the buy/sell alert messages call it inside their if-blocks. Pine v6 forbids
+// forward references to user-defined functions.
+f_positionSize(_entry, _sl) =>
+    risk    = math.abs(_entry - _sl)
+    riskAmt = i_account * (i_riskPct / 100)
+    risk == 0 ? 0.0 : riskAmt / risk
+
 // ════════════════════════════════════════════════════════════════════════════════════
 //   12b. ADAPTIVE TARGETS — project TP1 / TP2 / TP3 to actual price-action levels
 //   For BUYS: scan above entry for unswept BSL pools, opposing (bear) OBs / FVGs,
@@ -1136,12 +1144,6 @@ f_perfStats() =>
 [winsW, lossesW, rSumW, countedW] = f_perfStats()
 winRatePct = countedW > 0 ? 100.0 * winsW / countedW : 0.0
 avgRWin    = countedW > 0 ? rSumW / countedW : 0.0
-
-// Position-size suggestion (used in alert messages and shown in dashboard)
-f_positionSize(_entry, _sl) =>
-    risk    = math.abs(_entry - _sl)
-    riskAmt = i_account * (i_riskPct / 100)
-    risk == 0 ? 0.0 : riskAmt / risk
 
 posSizeBuy  = tpActive and tpIsBuy ?     f_positionSize(tpEntry, tpSL) : 0.0
 posSizeSell = tpActive and not tpIsBuy ? f_positionSize(tpEntry, tpSL) : 0.0
