@@ -1272,19 +1272,29 @@ if i_showDash and barstate.islast
     table.cell(dash, 1, 14, regimeStr + "  (ADX " + str.tostring(adx, "#") + ")", text_color = color.white, bgcolor = regimeCol, text_size = sz)
 
     // Row 15 — Last sweep quality
-    sweepQTxt = recentSSLSweep ? "SSL G" + str.tostring(lastSSLSweepGrade) + (lastSSLSweepGrade >= 3 ? " (major)" : " (minor/inducement)") :
-                recentBSLSweep ? "BSL G" + str.tostring(lastBSLSweepGrade) + (lastBSLSweepGrade >= 3 ? " (major)" : " (minor/inducement)") : "-"
-    sweepQCol = recentSSLSweep and lastSSLSweepGrade >= 3 ? color.new(c_bull, 40) :
-                recentBSLSweep and lastBSLSweepGrade >= 3 ? color.new(c_bear, 40) :
-                (recentSSLSweep or recentBSLSweep) ? color.new(#ef6c00, 50) : color.new(color.gray, 80)
+    string sweepQTxt = "-"
+    color  sweepQCol = color.new(color.gray, 80)
+    if recentSSLSweep
+        sweepQTxt := "SSL G" + str.tostring(lastSSLSweepGrade) + (lastSSLSweepGrade >= 3 ? " (major)" : " (minor/inducement)")
+        sweepQCol := lastSSLSweepGrade >= 3 ? color.new(c_bull, 40) : color.new(#ef6c00, 50)
+    else if recentBSLSweep
+        sweepQTxt := "BSL G" + str.tostring(lastBSLSweepGrade) + (lastBSLSweepGrade >= 3 ? " (major)" : " (minor/inducement)")
+        sweepQCol := lastBSLSweepGrade >= 3 ? color.new(c_bear, 40) : color.new(#ef6c00, 50)
     table.cell(dash, 0, 15, "Sweep Quality", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 15, sweepQTxt, text_color = color.white, bgcolor = sweepQCol, text_size = sz)
 
     // Row 16 — Performance stats
-    perfTxt = countedW > 0 ? "Win " + str.tostring(winRatePct, "#") + "%  Avg " + str.tostring(avgRWin, "#.##") + "R  DD " + str.tostring(maxDDR, "#.##") + "R  (" + str.tostring(countedW) + " trades)" : "no closed trades yet"
-    perfCol = countedW < 5 ? color.new(color.gray, 70) :
-              winRatePct >= 60 and avgRWin > 0 ? color.new(c_bull, 40) :
-              winRatePct >= 40 ? color.new(#1565c0, 30) : color.new(c_bear, 40)
+    string perfTxt = "no closed trades yet"
+    color  perfCol = color.new(color.gray, 70)
+    if countedW > 0
+        perfTxt := "Win " + str.tostring(winRatePct, "#") + "%  Avg " + str.tostring(avgRWin, "#.##") + "R  DD " + str.tostring(maxDDR, "#.##") + "R  (" + str.tostring(countedW) + " trades)"
+    if countedW >= 5
+        if winRatePct >= 60 and avgRWin > 0
+            perfCol := color.new(c_bull, 40)
+        else if winRatePct >= 40
+            perfCol := color.new(#1565c0, 30)
+        else
+            perfCol := color.new(c_bear, 40)
     table.cell(dash, 0, 16, "Performance", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 16, perfTxt, text_color = color.white, bgcolor = perfCol, text_size = sz)
 
