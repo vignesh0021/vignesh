@@ -452,6 +452,10 @@ type Liq
     int   grade        // 1 = single pivot, 2 = equal H/L pair, 3 = 3+ equal,
                        // 4 = matches PDH/PDL, 5 = matches PWH/PWL/PMH/PML
 
+// Array MUST be declared before any function that references it (Pine v6 forbids
+// forward references to arrays inside user-defined functions).
+var array<Liq> liqs = array.new<Liq>()
+
 // Grade a fresh liquidity level by checking how many existing pivots are within
 // tolerance and whether it aligns with a key HTF level.
 f_gradeLiq(_lvl, _isBuyside) =>
@@ -478,8 +482,6 @@ f_gradeLiq(_lvl, _isBuyside) =>
         if (not na(pwLow) and math.abs(_lvl - pwLow) <= tol) or (not na(pmLow) and math.abs(_lvl - pmLow) <= tol) or (not na(wLow) and math.abs(_lvl - wLow) <= tol)
             g := math.max(g, 5)
     g
-
-var array<Liq> liqs = array.new<Liq>()
 
 if not na(phRaw)
     grade_ph = f_gradeLiq(phRaw, true)
@@ -870,7 +872,10 @@ var float tpTP3     = na
 var int   tpBar     = na
 var int   tpScore   = na
 
-f_clearPlan() =>
+// Pine v6 forbids user-defined functions from writing to global vars, so this
+// function only deletes the drawing objects. Each call site is responsible for
+// flipping tpActive itself.
+f_clearPlanDrawings() =>
     line.delete(tpLnEntry)
     line.delete(tpLnSL)
     line.delete(tpLnTP1)
@@ -882,7 +887,7 @@ f_clearPlan() =>
     label.delete(tpLbTP2)
     label.delete(tpLbTP3)
     label.delete(tpLbSig)
-    tpActive := false
+    0
 
 // Signals can fire only when no same-direction trade is active.
 // Opposite-direction signal replaces the existing plan.
@@ -891,10 +896,12 @@ sellSignal = sellCandidate and (not tpActive or tpIsBuy)
 
 // Pre-fire: clear an existing plan if new opposite signal arrives
 if (buySignal and tpActive and not tpIsBuy) or (sellSignal and tpActive and tpIsBuy)
-    f_clearPlan()
+    f_clearPlanDrawings()
+    tpActive := false
 
 if buySignal
-    f_clearPlan()                     // wipe any stale state defensively
+    f_clearPlanDrawings()             // wipe any stale state defensively
+    tpActive := false
     tpIsBuy := true
     tpEntry := close
     tpSL    := buySLcalc
@@ -930,7 +937,8 @@ if buySignal
     alert("ICT MASTER PRO  BUY  " + syminfo.ticker + "  Entry " + str.tostring(tpEntry, format.mintick) + "  SL " + str.tostring(tpSL, format.mintick) + "  TP1 " + str.tostring(tpTP1, format.mintick) + "  TP2 " + str.tostring(tpTP2, format.mintick) + "  TP3 " + str.tostring(tpTP3, format.mintick) + "  Score " + str.tostring(tpScore) + "/7" + posLineB, alert.freq_once_per_bar_close)
 
 if sellSignal
-    f_clearPlan()
+    f_clearPlanDrawings()
+    tpActive := false
     tpIsBuy := false
     tpEntry := close
     tpSL    := sellSLcalc
@@ -967,9 +975,11 @@ if sellSignal
 // Auto-clear plan when SL or final TP is hit (use bar's high/low for trigger)
 if tpActive
     if tpIsBuy and (low <= tpSL or high >= tpTP3)
-        f_clearPlan()
+        f_clearPlanDrawings()
+        tpActive := false
     else if not tpIsBuy and (high >= tpSL or low <= tpTP3)
-        f_clearPlan()
+        f_clearPlanDrawings()
+        tpActive := false
 
 // Slide labels to the right edge of the chart so they always stay visible
 // regardless of zoom / scroll. Runs every bar so the labels track the latest
