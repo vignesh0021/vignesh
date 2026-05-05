@@ -33,10 +33,14 @@ grpRisk   = "═══ Risk: SL / TP ═══"
 grpDash   = "═══ Dashboard ═══"
 
 // ── Core ────────────────────────────────────────────────────────────────────────────
+i_preset        = input.string("Auto", "Symbol Preset", options = ["Auto", "Custom", "NIFTY/BANKNIFTY Index", "Index Futures", "Stock", "Crypto", "Forex"], group = grpCore, tooltip = "Auto = detect from syminfo.type and apply sensible defaults. Custom = use the individual settings below verbatim. The other choices override Volume Confirm, Inducement Filter, Min Score and Lunch Block to values that work well for that instrument class.")
 i_cleanMode     = input.bool(true, "CLEAN MODE (only signals + dashboard on chart)", group = grpCore, tooltip = "ON = clean chart, only BUY/SELL signals with Entry/SL/TP visible. OFF = show all ICT internals (OB, FVG, liquidity lines, sessions, P/D zones).")
 i_pivotLen      = input.int(5,    "Pivot Length", minval = 2, maxval = 30, group = grpCore, tooltip = "Bars on each side for swing detection. 5 = scalp, 10 = swing.")
-i_useVolume     = input.bool(true, "Require Volume Confirmation", group = grpCore, tooltip = "Signals only fire when volume >= average. Crucial for high-probability setups.")
+i_useVolume     = input.bool(true, "Require Volume Confirmation", group = grpCore, tooltip = "Signals only fire when volume >= average. Disabled automatically when Symbol Preset = NIFTY/BANKNIFTY Index because index volume on TV is zero.")
 i_volLen        = input.int(20,   "Volume MA Length", minval = 5, maxval = 200, group = grpCore)
+i_smartMgmt     = input.bool(true, "Smart Trade Management", group = grpCore, tooltip = "When TP1 hits, the SL is moved to the entry price (break-even). When TP2 hits, the SL is moved to TP1 (locks in 1R). Final exit at TP3 or trailing SL.")
+i_jsonAlerts    = input.bool(false, "JSON Webhook Alerts", group = grpCore, tooltip = "When ON, alert messages are emitted as JSON instead of human text — drop-in compatible with Zerodha Kite Connect / Dhan / Fyers webhook automation.")
+i_diagnostic    = input.bool(true, "Show Why-No-Signal Diagnostic", group = grpCore, tooltip = "When confluence score is high but no trigger, the dashboard shows which filters are blocking the signal so you can adjust settings.")
 
 // ── Structure ───────────────────────────────────────────────────────────────────────
 i_showBOS_raw    = input.bool(false, "Show BOS / CHoCH",              group = grpStruct)
@@ -127,6 +131,30 @@ i_useSessions = i_cleanMode ? false : i_useSessions_raw
 i_showWeekly  = i_cleanMode ? false : i_showWeeklyOHLC
 i_showKey     = i_cleanMode ? false : i_showKeyLevels
 
+// ── Symbol preset resolution (Auto + manual choices) ────────────────────────────────
+// Each instrument class has different liquidity / volume profiles, so a single
+// default never fits all. We classify the symbol once at script start and let
+// the resolved booleans/ints override the user's individual toggles. The user
+// can always pick "Custom" to keep their manual settings.
+isAutoIndex   = i_preset == "Auto" and (syminfo.type == "index" or syminfo.type == "fund")
+isAutoCrypto  = i_preset == "Auto" and syminfo.type == "crypto"
+isAutoForex   = i_preset == "Auto" and syminfo.type == "forex"
+isAutoStock   = i_preset == "Auto" and syminfo.type == "stock"
+isAutoFutures = i_preset == "Auto" and syminfo.type == "futures"
+
+isIndex   = i_preset == "NIFTY/BANKNIFTY Index" or isAutoIndex
+isFutures = i_preset == "Index Futures"        or isAutoFutures
+isStock   = i_preset == "Stock"                or isAutoStock
+isCrypto  = i_preset == "Crypto"               or isAutoCrypto
+isForex   = i_preset == "Forex"                or isAutoForex
+isCustom  = i_preset == "Custom"
+
+// Effective settings — preset wins over the raw inputs unless user picked Custom
+useVolume_eff      = isCustom ? i_useVolume      : not isIndex                       // index volume is zero on TV
+useInducement_eff  = isCustom ? i_useInducement  : not isIndex                       // index pivots are usually grade 1
+minScore_eff       = isCustom ? i_minScore       : (isIndex ? 4 : 5)                 // indices need looser threshold
+avoidLunch_eff     = isCustom ? i_avoidLunch     : not (isCrypto or isForex)         // 24h markets have no lunch
+
 // ── Colors ──────────────────────────────────────────────────────────────────────────
 c_bull       = color.new(#26a69a, 0)
 c_bear       = color.new(#ef5350, 0)
@@ -161,7 +189,7 @@ f_dashSize() =>
 
 atr14 = ta.atr(14)
 volMA = ta.sma(volume, i_volLen)
-volOK = i_useVolume ? (volume >= volMA) : true
+volOK = useVolume_eff ? (volume >= volMA) : true
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   3. HIGHER TIMEFRAME BIAS
@@ -649,7 +677,7 @@ _lunchDrew  = f_drawSession(inLunch,  c_sessLunch,  "Lunch",    i_useSessions)
 _pmDrew     = f_drawSession(inPM,     c_sessPM,     "PM Macro", i_useSessions)
 _expiryDrew = f_drawSession(inExpiry, c_sessExpiry, "Expiry",   i_useSessions)
 
-sessionOK = i_avoidLunch ? not inLunch : true
+sessionOK = avoidLunch_eff ? not inLunch : true
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   10. WEEKLY PROFILE BIAS
@@ -665,7 +693,7 @@ plot(i_showWeekly ? wOpen : na, "Weekly Open", color = color.new(color.orange, 7
 //   11. CONFLUENCE SCORING ENGINE
 // ════════════════════════════════════════════════════════════════════════════════════
 buy_htf    = i_useHTFBias ? htfBull : true
-buy_sweep  = i_useInducement ? sslSweepMajor : recentSSLSweep
+buy_sweep  = useInducement_eff ? sslSweepMajor : recentSSLSweep
 buy_struct = recentBullStruct                       // memory-based: setup stays armed for N bars after BOS/CHoCH
 buy_ob     = f_inBullOB()
 buy_fvg    = f_inBullFVG()
@@ -676,7 +704,7 @@ buy_bar    = i_requireBarConf ? close > open : true // bullish reaction bar at t
 buyScore = (buy_htf ? 1 : 0) + (buy_sweep ? 1 : 0) + (buy_struct ? 1 : 0) + (buy_ob ? 1 : 0) + (buy_fvg ? 1 : 0) + (buy_pd ? 1 : 0) + (buy_vol ? 1 : 0)
 
 sell_htf    = i_useHTFBias ? htfBear : true
-sell_sweep  = i_useInducement ? bslSweepMajor : recentBSLSweep
+sell_sweep  = useInducement_eff ? bslSweepMajor : recentBSLSweep
 sell_struct = recentBearStruct
 sell_ob     = f_inBearOB()
 sell_fvg    = f_inBearFVG()
@@ -693,8 +721,8 @@ sellScore = (sell_htf ? 1 : 0) + (sell_sweep ? 1 : 0) + (sell_struct ? 1 : 0) + 
 buy_core_trigger  = buy_sweep  and buy_struct  and (buy_ob  or buy_fvg)  and buy_bar
 sell_core_trigger = sell_sweep and sell_struct and (sell_ob or sell_fvg) and sell_bar
 
-buyCandidate  = sessionOK and buy_core_trigger  and buyScore  >= i_minScore and regimeAllowsBuy
-sellCandidate = sessionOK and sell_core_trigger and sellScore >= i_minScore and regimeAllowsSell
+buyCandidate  = sessionOK and buy_core_trigger  and buyScore  >= minScore_eff and regimeAllowsBuy
+sellCandidate = sessionOK and sell_core_trigger and sellScore >= minScore_eff and regimeAllowsSell
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   12. ENTRY / SL / TP CALCULATION
@@ -879,6 +907,7 @@ var float tpTP2     = na
 var float tpTP3     = na
 var int   tpBar     = na
 var int   tpScore   = na
+var int   tpHitLevel = 0         // 0 none, 1 TP1 hit, 2 TP2 hit (set by smart-mgmt block)
 
 // Pine v6 forbids user-defined functions from writing to global vars, so this
 // function only deletes the drawing objects. Each call site is responsible for
@@ -926,6 +955,7 @@ if buySignal
         tpTP3 := tpEntry + rk * i_tp3R
     tpBar   := bar_index
     tpScore := buyScore
+    tpHitLevel := 0
     tpActive := true
     col_entry = c_bull
     col_tp    = c_tpBuy
@@ -940,9 +970,17 @@ if buySignal
     tpLbTP1   := label.new(bar_index + 1, tpTP1,   "TP1 "   + str.tostring(tpTP1,   format.mintick), color = col_tp,    textcolor = color.white, style = label.style_label_left, size = size.small)
     tpLbTP2   := label.new(bar_index + 1, tpTP2,   "TP2 "   + str.tostring(tpTP2,   format.mintick), color = color.new(col_tp, 30), textcolor = color.white, style = label.style_label_left, size = size.small)
     tpLbTP3   := label.new(bar_index + 1, tpTP3,   "TP3 "   + str.tostring(tpTP3,   format.mintick), color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.small)
-    // Rich dynamic alert with all levels (and position size if enabled)
-    posLineB = i_useRiskCalc ? "  Size: " + str.tostring(f_positionSize(tpEntry, tpSL), "#.##") + " (risk " + str.tostring(i_riskPct, "#.#") + "%)" : ""
-    alert("ICT MASTER PRO  BUY  " + syminfo.ticker + "  Entry " + str.tostring(tpEntry, format.mintick) + "  SL " + str.tostring(tpSL, format.mintick) + "  TP1 " + str.tostring(tpTP1, format.mintick) + "  TP2 " + str.tostring(tpTP2, format.mintick) + "  TP3 " + str.tostring(tpTP3, format.mintick) + "  Score " + str.tostring(tpScore) + "/7" + posLineB, alert.freq_once_per_bar_close)
+    // Rich dynamic alert with all levels (and position size if enabled). When
+    // JSON Webhook Alerts is ON, emit a structured payload that drops straight
+    // into broker webhooks (Zerodha Kite Connect / Dhan / Fyers / TradeStation).
+    qtyB = f_positionSize(tpEntry, tpSL)
+    msgB = ""
+    if i_jsonAlerts
+        msgB := "{\"action\":\"BUY\",\"symbol\":\"" + syminfo.ticker + "\",\"entry\":" + str.tostring(tpEntry, format.mintick) + ",\"sl\":" + str.tostring(tpSL, format.mintick) + ",\"tp1\":" + str.tostring(tpTP1, format.mintick) + ",\"tp2\":" + str.tostring(tpTP2, format.mintick) + ",\"tp3\":" + str.tostring(tpTP3, format.mintick) + ",\"qty\":" + str.tostring(qtyB, "#.##") + ",\"score\":" + str.tostring(tpScore) + ",\"time\":\"{{timenow}}\"}"
+    else
+        posLineB = i_useRiskCalc ? "  Size: " + str.tostring(qtyB, "#.##") + " (risk " + str.tostring(i_riskPct, "#.#") + "%)" : ""
+        msgB := "ICT MASTER PRO  BUY  " + syminfo.ticker + "  Entry " + str.tostring(tpEntry, format.mintick) + "  SL " + str.tostring(tpSL, format.mintick) + "  TP1 " + str.tostring(tpTP1, format.mintick) + "  TP2 " + str.tostring(tpTP2, format.mintick) + "  TP3 " + str.tostring(tpTP3, format.mintick) + "  Score " + str.tostring(tpScore) + "/7" + posLineB
+    alert(msgB, alert.freq_once_per_bar_close)
 
 if sellSignal
     f_clearPlanDrawings()
@@ -963,6 +1001,7 @@ if sellSignal
         tpTP3 := tpEntry - rk * i_tp3R
     tpBar   := bar_index
     tpScore := sellScore
+    tpHitLevel := 0
     tpActive := true
     col_entry = c_bear
     col_tp    = c_tpSell
@@ -977,8 +1016,49 @@ if sellSignal
     tpLbTP1   := label.new(bar_index + 1, tpTP1,   "TP1 "   + str.tostring(tpTP1,   format.mintick), color = col_tp,    textcolor = color.white, style = label.style_label_left, size = size.small)
     tpLbTP2   := label.new(bar_index + 1, tpTP2,   "TP2 "   + str.tostring(tpTP2,   format.mintick), color = color.new(col_tp, 30), textcolor = color.white, style = label.style_label_left, size = size.small)
     tpLbTP3   := label.new(bar_index + 1, tpTP3,   "TP3 "   + str.tostring(tpTP3,   format.mintick), color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.small)
-    posLineS = i_useRiskCalc ? "  Size: " + str.tostring(f_positionSize(tpEntry, tpSL), "#.##") + " (risk " + str.tostring(i_riskPct, "#.#") + "%)" : ""
-    alert("ICT MASTER PRO  SELL  " + syminfo.ticker + "  Entry " + str.tostring(tpEntry, format.mintick) + "  SL " + str.tostring(tpSL, format.mintick) + "  TP1 " + str.tostring(tpTP1, format.mintick) + "  TP2 " + str.tostring(tpTP2, format.mintick) + "  TP3 " + str.tostring(tpTP3, format.mintick) + "  Score " + str.tostring(tpScore) + "/7" + posLineS, alert.freq_once_per_bar_close)
+    qtyS = f_positionSize(tpEntry, tpSL)
+    msgS = ""
+    if i_jsonAlerts
+        msgS := "{\"action\":\"SELL\",\"symbol\":\"" + syminfo.ticker + "\",\"entry\":" + str.tostring(tpEntry, format.mintick) + ",\"sl\":" + str.tostring(tpSL, format.mintick) + ",\"tp1\":" + str.tostring(tpTP1, format.mintick) + ",\"tp2\":" + str.tostring(tpTP2, format.mintick) + ",\"tp3\":" + str.tostring(tpTP3, format.mintick) + ",\"qty\":" + str.tostring(qtyS, "#.##") + ",\"score\":" + str.tostring(tpScore) + ",\"time\":\"{{timenow}}\"}"
+    else
+        posLineS = i_useRiskCalc ? "  Size: " + str.tostring(qtyS, "#.##") + " (risk " + str.tostring(i_riskPct, "#.#") + "%)" : ""
+        msgS := "ICT MASTER PRO  SELL  " + syminfo.ticker + "  Entry " + str.tostring(tpEntry, format.mintick) + "  SL " + str.tostring(tpSL, format.mintick) + "  TP1 " + str.tostring(tpTP1, format.mintick) + "  TP2 " + str.tostring(tpTP2, format.mintick) + "  TP3 " + str.tostring(tpTP3, format.mintick) + "  Score " + str.tostring(tpScore) + "/7" + posLineS
+    alert(msgS, alert.freq_once_per_bar_close)
+
+// Smart Trade Management — when TP1 hits, advance the SL to entry (break-even);
+// when TP2 hits, advance the SL to TP1 (locks in 1R). The TP lines themselves
+// are not redrawn — only the SL line/label move.
+if tpActive and i_smartMgmt
+    if tpIsBuy
+        if tpHitLevel < 2 and high >= tpTP2
+            tpHitLevel := 2
+            tpSL := tpTP1
+            line.set_y1(tpLnSL, tpSL)
+            line.set_y2(tpLnSL, tpSL)
+            label.set_y(tpLbSL, tpSL)
+            label.set_text(tpLbSL, "SL " + str.tostring(tpSL, format.mintick) + " (locked +1R)")
+        else if tpHitLevel < 1 and high >= tpTP1
+            tpHitLevel := 1
+            tpSL := tpEntry
+            line.set_y1(tpLnSL, tpSL)
+            line.set_y2(tpLnSL, tpSL)
+            label.set_y(tpLbSL, tpSL)
+            label.set_text(tpLbSL, "SL " + str.tostring(tpSL, format.mintick) + " (BE)")
+    else
+        if tpHitLevel < 2 and low <= tpTP2
+            tpHitLevel := 2
+            tpSL := tpTP1
+            line.set_y1(tpLnSL, tpSL)
+            line.set_y2(tpLnSL, tpSL)
+            label.set_y(tpLbSL, tpSL)
+            label.set_text(tpLbSL, "SL " + str.tostring(tpSL, format.mintick) + " (locked +1R)")
+        else if tpHitLevel < 1 and low <= tpTP1
+            tpHitLevel := 1
+            tpSL := tpEntry
+            line.set_y1(tpLnSL, tpSL)
+            line.set_y2(tpLnSL, tpSL)
+            label.set_y(tpLbSL, tpSL)
+            label.set_text(tpLbSL, "SL " + str.tostring(tpSL, format.mintick) + " (BE)")
 
 // Auto-clear plan when SL or final TP is hit (use bar's high/low for trigger)
 if tpActive
@@ -1151,7 +1231,7 @@ posSizeSell = tpActive and not tpIsBuy ? f_positionSize(tpEntry, tpSL) : 0.0
 // ════════════════════════════════════════════════════════════════════════════════════
 //   14. DASHBOARD — at-a-glance ICT context
 // ════════════════════════════════════════════════════════════════════════════════════
-var table dash = table.new(f_dashPos(), 2, 17, border_width = 1, frame_color = color.new(color.gray, 50))
+var table dash = table.new(f_dashPos(), 2, 18, border_width = 1, frame_color = color.new(color.gray, 50))
 
 f_zoneText() =>
     inDiscount ? "DISCOUNT (Buy zone)" : inPremium ? "PREMIUM (Sell zone)" : "EQUILIBRIUM"
@@ -1220,11 +1300,11 @@ if i_showDash and barstate.islast
     table.cell(dash, 1, 7, volOK ? "ABOVE AVG" : "below avg", text_color = color.white, bgcolor = volBg, text_size = sz)
 
     table.cell(dash, 0, 8, "Buy Score", text_color = color.white, bgcolor = cellHdr, text_size = sz)
-    buyScoreBg = buyScore >= i_minScore ? color.new(c_bull, 40) : color.new(color.gray, 80)
+    buyScoreBg = buyScore >= minScore_eff ? color.new(c_bull, 40) : color.new(color.gray, 80)
     table.cell(dash, 1, 8, str.tostring(buyScore) + " / 7", text_color = color.white, bgcolor = buyScoreBg, text_size = sz)
 
     table.cell(dash, 0, 9, "Sell Score", text_color = color.white, bgcolor = cellHdr, text_size = sz)
-    sellScoreBg = sellScore >= i_minScore ? color.new(c_bear, 40) : color.new(color.gray, 80)
+    sellScoreBg = sellScore >= minScore_eff ? color.new(c_bear, 40) : color.new(color.gray, 80)
     table.cell(dash, 1, 9, str.tostring(sellScore) + " / 7", text_color = color.white, bgcolor = sellScoreBg, text_size = sz)
 
     table.cell(dash, 0, 10, "Last Signal", text_color = color.white, bgcolor = cellHdr, text_size = sz)
@@ -1272,9 +1352,9 @@ if i_showDash and barstate.islast
     else if sellSetupArmed
         statusTxt := "Sell setup forming - awaiting retrace"
         statusCol := color.new(c_bear, 60)
-    else if buyScore >= i_minScore
+    else if buyScore >= minScore_eff
         statusTxt := "Buy score met - need sweep+struct"
-    else if sellScore >= i_minScore
+    else if sellScore >= minScore_eff
         statusTxt := "Sell score met - need sweep+struct"
     table.cell(dash, 0, 13, "STATUS", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 13, statusTxt, text_color = color.white, bgcolor = statusCol, text_size = sz)
@@ -1309,6 +1389,64 @@ if i_showDash and barstate.islast
             perfCol := color.new(c_bear, 40)
     table.cell(dash, 0, 16, "Performance", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 16, perfTxt, text_color = color.white, bgcolor = perfCol, text_size = sz)
+
+    // Row 17 — Diagnostic. When a side has score >= 3 but no signal can fire,
+    // build a comma-separated list of the blocking filters so the user can
+    // see exactly which setting to relax. Also surfaces the active preset.
+    string diagTxt = "-"
+    color  diagCol = color.new(color.gray, 80)
+    if i_diagnostic
+        // Pick whichever side has the higher score to diagnose
+        bestIsBuy   = buyScore >= sellScore
+        bestScore   = bestIsBuy ? buyScore  : sellScore
+        bestStruct  = bestIsBuy ? buy_struct : sell_struct
+        bestSweep   = bestIsBuy ? buy_sweep  : sell_sweep
+        bestOB      = bestIsBuy ? buy_ob     : sell_ob
+        bestFVG     = bestIsBuy ? buy_fvg    : sell_fvg
+        bestPD      = bestIsBuy ? buy_pd     : sell_pd
+        bestHTF     = bestIsBuy ? buy_htf    : sell_htf
+        bestVol     = bestIsBuy ? buy_vol    : sell_vol
+        bestBar     = bestIsBuy ? buy_bar    : sell_bar
+        bestSweepRaw = bestIsBuy ? recentSSLSweep : recentBSLSweep
+        bestSweepGr  = bestIsBuy ? lastSSLSweepGrade : lastBSLSweepGrade
+        if bestScore >= 3 and not (buyCandidate or sellCandidate)
+            blockers = array.new<string>()
+            if not bestStruct
+                array.push(blockers, "no recent BOS/CHoCH")
+            if not bestSweep
+                if bestSweepRaw and bestSweepGr < 3 and useInducement_eff
+                    array.push(blockers, "sweep is G" + str.tostring(bestSweepGr) + " (inducement filter)")
+                else
+                    array.push(blockers, "no recent sweep")
+            if not (bestOB or bestFVG)
+                array.push(blockers, "price not in OB/FVG")
+            if not bestPD
+                array.push(blockers, i_useOTE ? "outside OTE 0.62-0.79" : "wrong premium/discount zone")
+            if not bestHTF and i_useHTFBias
+                array.push(blockers, "HTF bias against trade")
+            if not bestVol and useVolume_eff
+                array.push(blockers, "volume below avg")
+            if not bestBar and i_requireBarConf
+                array.push(blockers, "no reversal bar")
+            if not sessionOK
+                array.push(blockers, "lunch block")
+            if not regimeAllowsBuy and bestIsBuy and i_useRegime
+                array.push(blockers, "regime: trending against buy")
+            if not regimeAllowsSell and not bestIsBuy and i_useRegime
+                array.push(blockers, "regime: trending against sell")
+            if array.size(blockers) > 0
+                diagTxt := (bestIsBuy ? "BUY " : "SELL ") + str.tostring(bestScore) + "/7 blocked by: " + array.join(blockers, ", ")
+                diagCol := color.new(#ef6c00, 30)
+            else
+                diagTxt := "score below " + str.tostring(minScore_eff)
+                diagCol := color.new(color.gray, 70)
+        else
+            // Show active preset summary for context
+            presetLabel = isCustom ? "Custom" : isIndex ? "Index" : isCrypto ? "Crypto" : isForex ? "Forex" : isFutures ? "Futures" : isStock ? "Stock" : "Auto"
+            diagTxt := "Preset: " + presetLabel + "  Vol:" + (useVolume_eff ? "on" : "off") + "  Inducement:" + (useInducement_eff ? "on" : "off") + "  MinScore:" + str.tostring(minScore_eff) + "  Lunch:" + (avoidLunch_eff ? "block" : "allow")
+            diagCol := color.new(#1565c0, 50)
+    table.cell(dash, 0, 17, "Diagnostic", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 17, diagTxt, text_color = color.white, bgcolor = diagCol, text_size = sz)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   15. ALERTS
