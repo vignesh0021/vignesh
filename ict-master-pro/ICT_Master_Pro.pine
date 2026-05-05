@@ -107,6 +107,8 @@ i_riskPct       = input.float(1.0, "Risk per Trade (%)", minval = 0.1, maxval = 
 grpKey          = "═══ Key Levels ═══"
 i_showKeyLevels = input.bool(false, "Show Key Levels (PDH/PDL/PWH/PWL)", group = grpKey, tooltip = "Plot previous-day and previous-week high/low. These act as major liquidity targets.")
 i_useKeyAsTP    = input.bool(true,  "Use Key Levels as TP destinations", group = grpKey, tooltip = "When Adaptive Targets is ON, also project to PDH/PDL/PWH/PWL.")
+i_showMTF       = input.bool(false, "Show MTF Liquidity Pools (1H/4H)", group = grpKey, tooltip = "Plot the most recent 1H and 4H pivot highs and lows on the chart. They tag where institutional traders are watching the next BSL/SSL grab.")
+i_useMTFAsTP    = input.bool(true,  "Use MTF Pools as TP destinations", group = grpKey)
 
 // ── Performance Tracker ─────────────────────────────────────────────────────────────
 grpPerf         = "═══ Performance ═══"
@@ -130,6 +132,7 @@ i_showPD      = i_cleanMode ? false : i_showPD_raw
 i_useSessions = i_cleanMode ? false : i_useSessions_raw
 i_showWeekly  = i_cleanMode ? false : i_showWeeklyOHLC
 i_showKey     = i_cleanMode ? false : i_showKeyLevels
+i_showMTFEff  = i_cleanMode ? false : i_showMTF
 
 // ── Symbol preset resolution (Auto + manual choices) ────────────────────────────────
 // Each instrument class has different liquidity / volume profiles, so a single
@@ -203,6 +206,27 @@ htfBear = not na(htfEma50) and htfClose < htfEma50 and htfEma20 < htfEma50
 htfBiasStr = htfBull ? "BULLISH UP" : htfBear ? "BEARISH DN" : "NEUTRAL"
 htfBiasCol = htfBull ? c_bull : htfBear ? c_bear : color.gray
 
+// ── Multi-timeframe bias panel — 15m / 1H / 4H / Daily simultaneous ─────────────────
+// Each TF has its own EMA20/50 alignment check. Used in the dashboard so the
+// trader sees the full HTF stack at a glance, not just the chosen filter TF.
+mtf15Close  = request.security(syminfo.tickerid, "15",  close,            lookahead = barmerge.lookahead_off)
+mtf15Ema50  = request.security(syminfo.tickerid, "15",  ta.ema(close,50), lookahead = barmerge.lookahead_off)
+mtf60Close  = request.security(syminfo.tickerid, "60",  close,            lookahead = barmerge.lookahead_off)
+mtf60Ema50  = request.security(syminfo.tickerid, "60",  ta.ema(close,50), lookahead = barmerge.lookahead_off)
+mtf240Close = request.security(syminfo.tickerid, "240", close,            lookahead = barmerge.lookahead_off)
+mtf240Ema50 = request.security(syminfo.tickerid, "240", ta.ema(close,50), lookahead = barmerge.lookahead_off)
+mtfDClose   = request.security(syminfo.tickerid, "D",   close,            lookahead = barmerge.lookahead_off)
+mtfDEma50   = request.security(syminfo.tickerid, "D",   ta.ema(close,50), lookahead = barmerge.lookahead_off)
+
+bias15  = not na(mtf15Ema50)  and mtf15Close  > mtf15Ema50  ? 1 : not na(mtf15Ema50)  and mtf15Close  < mtf15Ema50  ? -1 : 0
+bias60  = not na(mtf60Ema50)  and mtf60Close  > mtf60Ema50  ? 1 : not na(mtf60Ema50)  and mtf60Close  < mtf60Ema50  ? -1 : 0
+bias240 = not na(mtf240Ema50) and mtf240Close > mtf240Ema50 ? 1 : not na(mtf240Ema50) and mtf240Close < mtf240Ema50 ? -1 : 0
+biasD   = not na(mtfDEma50)   and mtfDClose   > mtfDEma50   ? 1 : not na(mtfDEma50)   and mtfDClose   < mtfDEma50   ? -1 : 0
+
+// Combined HTF alignment score: -4..+4 (sum of all four). Useful for confluence.
+htfAlignmentScore = bias15 + bias60 + bias240 + biasD
+htfFullyAligned   = math.abs(htfAlignmentScore) >= 3
+
 // ── Regime detection (Trending / Ranging / Transition) ──────────────────────────────
 // ADX-style strength of directional movement. Avoids reversal signals in strong
 // trends and continuation signals in tight ranges.
@@ -250,22 +274,54 @@ plot(i_showKey ? pwLow  : na, "PWL", color = color.new(#69f0ae, 0),  style = plo
 plot(i_showKey ? pmHigh : na, "PMH", color = color.new(#d50000, 0),  style = plot.style_linebr, linewidth = 2)
 plot(i_showKey ? pmLow  : na, "PML", color = color.new(#00c853, 0),  style = plot.style_linebr, linewidth = 2)
 
+// MTF liquidity pools — last 1H and 4H pivot highs and lows
+plot(i_showMTFEff ? htf60H_last  : na, "1H Pivot High",  color = color.new(#ff5252, 30), style = plot.style_linebr, linewidth = 1)
+plot(i_showMTFEff ? htf60L_last  : na, "1H Pivot Low",   color = color.new(#69f0ae, 30), style = plot.style_linebr, linewidth = 1)
+plot(i_showMTFEff ? htf240H_last : na, "4H Pivot High",  color = color.new(#ff5252, 0),  style = plot.style_linebr, linewidth = 2)
+plot(i_showMTFEff ? htf240L_last : na, "4H Pivot Low",   color = color.new(#69f0ae, 0),  style = plot.style_linebr, linewidth = 2)
+
 // ════════════════════════════════════════════════════════════════════════════════════
 //   4. MARKET STRUCTURE — Swings, BOS, CHoCH
 // ════════════════════════════════════════════════════════════════════════════════════
 phRaw = ta.pivothigh(high, i_pivotLen, i_pivotLen)
 plRaw = ta.pivotlow(low,   i_pivotLen, i_pivotLen)
 
+// HTF pivots (1H and 4H) — used as MTF liquidity pools and TP destinations.
+// Computed via request.security so they reflect proper HTF swings, not LTF noise.
+htf60_PH  = request.security(syminfo.tickerid, "60",  ta.pivothigh(high, 5, 5), lookahead = barmerge.lookahead_off)
+htf60_PL  = request.security(syminfo.tickerid, "60",  ta.pivotlow(low,   5, 5), lookahead = barmerge.lookahead_off)
+htf240_PH = request.security(syminfo.tickerid, "240", ta.pivothigh(high, 5, 5), lookahead = barmerge.lookahead_off)
+htf240_PL = request.security(syminfo.tickerid, "240", ta.pivotlow(low,   5, 5), lookahead = barmerge.lookahead_off)
+
+// Latch the most recent HTF pivot value (request.security returns na on bars
+// where no pivot formed, so we keep the last non-na around for plotting).
+var float htf60H_last  = na
+var float htf60L_last  = na
+var float htf240H_last = na
+var float htf240L_last = na
+if not na(htf60_PH)
+    htf60H_last := htf60_PH
+if not na(htf60_PL)
+    htf60L_last := htf60_PL
+if not na(htf240_PH)
+    htf240H_last := htf240_PH
+if not na(htf240_PL)
+    htf240L_last := htf240_PL
+
 var float lastSH    = na
 var float lastSL    = na
 var int   lastSHBar = na
 var int   lastSLBar = na
+var float prevSH    = na     // previous swing high (for HH/LH classification)
+var float prevSL    = na     // previous swing low  (for HL/LL classification)
 
 if not na(phRaw)
+    prevSH    := lastSH
     lastSH    := phRaw
     lastSHBar := bar_index - i_pivotLen
 
 if not na(plRaw)
+    prevSL    := lastSL
     lastSL    := plRaw
     lastSLBar := bar_index - i_pivotLen
 
@@ -304,11 +360,21 @@ if i_showBOS and bearBOS and not na(lastSLBar)
     line.new(lastSLBar, lastSL, bar_index, lastSL, color = c_bear, width = 1, style = line.style_dashed)
     label.new(bar_index, lastSL, bearCHoCH ? "CHoCH DN" : "BOS DN", color = c_bear, textcolor = color.white, style = label.style_label_up, size = size.tiny)
 
-// Swing markers
+// Swing markers — proper SMC structure labels: HH / HL / LH / LL.
+// HH = Higher High (bullish continuation), HL = Higher Low (bullish dip),
+// LH = Lower High (bearish dip),         LL = Lower Low  (bearish continuation).
 if i_showSwings and not na(phRaw)
-    label.new(bar_index - i_pivotLen, phRaw, "H", color = color.new(c_bear, 70), textcolor = color.white, style = label.style_label_down, size = size.tiny)
+    isHH = not na(prevSH) and phRaw > prevSH
+    isLH = not na(prevSH) and phRaw < prevSH
+    swingTagH = na(prevSH) ? "H" : isHH ? "HH" : isLH ? "LH" : "EH"   // EH = equal high
+    swingColH = isHH ? c_bull : isLH ? c_bear : color.gray
+    label.new(bar_index - i_pivotLen, phRaw, swingTagH, color = color.new(swingColH, 60), textcolor = color.white, style = label.style_label_down, size = size.small)
 if i_showSwings and not na(plRaw)
-    label.new(bar_index - i_pivotLen, plRaw, "L", color = color.new(c_bull, 70), textcolor = color.white, style = label.style_label_up, size = size.tiny)
+    isHL = not na(prevSL) and plRaw > prevSL
+    isLL = not na(prevSL) and plRaw < prevSL
+    swingTagL = na(prevSL) ? "L" : isHL ? "HL" : isLL ? "LL" : "EL"   // EL = equal low
+    swingColL = isHL ? c_bull : isLL ? c_bear : color.gray
+    label.new(bar_index - i_pivotLen, plRaw, swingTagL, color = color.new(swingColL, 60), textcolor = color.white, style = label.style_label_up, size = size.small)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   5. ORDER BLOCKS — graded A / B / C
@@ -317,9 +383,10 @@ type OB
     box    bx
     float  top
     float  bot
-    bool   bull
+    bool   bull        // true = bullish OB. If isBreaker is also true the role flips.
     string grade
     bool   mitigated
+    bool   isBreaker   // bullish OB violated by close-through becomes bearish breaker (resistance), and vice versa
 
 var array<OB> obs = array.new<OB>()
 
@@ -338,7 +405,7 @@ if bullBOS and close[1] < open[1]
         bdC = i_showOB ? color.new(#1976d2, 30) : color(na)
         txt = i_showOB ? "OB " + grade : ""
         bx = box.new(bar_index[1], high[1], bar_index + 5, low[1], bgcolor = bgC, border_color = bdC, border_width = 1, text = txt, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
-        ob = OB.new(bx, high[1], low[1], true, grade, false)
+        ob = OB.new(bx, high[1], low[1], true, grade, false, false)
         array.push(obs, ob)
         if array.size(obs) > i_obMaxBoxes
             old = array.shift(obs)
@@ -352,13 +419,17 @@ if bearBOS and close[1] > open[1]
         bdC = i_showOB ? color.new(#f57c00, 30) : color(na)
         txt = i_showOB ? "OB " + grade : ""
         bx = box.new(bar_index[1], high[1], bar_index + 5, low[1], bgcolor = bgC, border_color = bdC, border_width = 1, text = txt, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
-        ob = OB.new(bx, high[1], low[1], false, grade, false)
+        ob = OB.new(bx, high[1], low[1], false, grade, false, false)
         array.push(obs, ob)
         if array.size(obs) > i_obMaxBoxes
             old = array.shift(obs)
             box.delete(old.bx)
 
-// Extend / mitigate OBs (iterate backwards via reverse index so removals are safe)
+// Extend / mitigate OBs (iterate backwards via reverse index so removals are safe).
+// When an OB is violated by a strong CLOSE through (not just a wick) it flips role
+// and becomes a Breaker Block — old support becomes resistance, old resistance
+// becomes support. Breakers stay on the chart in purple and act as opposite-side
+// zones for confluence and adaptive targets.
 if array.size(obs) > 0
     n_obs = array.size(obs)
     for i = 0 to n_obs - 1
@@ -367,22 +438,36 @@ if array.size(obs) > 0
             ob = array.get(obs, idx)
             if not ob.mitigated
                 box.set_right(ob.bx, bar_index + 2)
-                mit = ob.bull ? (low <= ob.bot) : (high >= ob.top)
-                if mit
+                wickMit  = ob.bull ? (low  <= ob.bot) : (high >= ob.top)
+                closeBrk = ob.bull ? (close < ob.bot) : (close > ob.top)
+                if wickMit
                     ob.mitigated := true
-                    if i_obMitigate
-                        box.delete(ob.bx)
-                        array.remove(obs, idx)
+                    if closeBrk
+                        // Promote to breaker — keep on chart in purple, role flipped
+                        ob.isBreaker := true
+                        ob.mitigated := false       // reuse as opposite-side zone
+                        if i_showOB
+                            box.set_bgcolor(ob.bx, color.new(#9c27b0, 80))
+                            box.set_border_color(ob.bx, color.new(#7b1fa2, 30))
+                            box.set_text(ob.bx, "BR " + ob.grade)
                     else
-                        box.set_bgcolor(ob.bx, color.new(color.gray, 90))
+                        if i_obMitigate
+                            box.delete(ob.bx)
+                            array.remove(obs, idx)
+                        else
+                            box.set_bgcolor(ob.bx, color.new(color.gray, 90))
 
+// "In a bullish zone" = price is inside an unmitigated bullish OB OR inside a
+// bearish OB that's been broken into a bullish breaker (role flipped).
 f_inBullOB() =>
     found = false
     n = array.size(obs)
     if n > 0
         for j = 0 to n - 1
             ob = array.get(obs, j)
-            if ob.bull and not ob.mitigated and low <= ob.top and low >= ob.bot
+            isBullZone = (ob.bull and not ob.isBreaker) or (not ob.bull and ob.isBreaker)
+            inside = low <= ob.top and low >= ob.bot
+            if isBullZone and not ob.mitigated and inside
                 found := true
     found
 
@@ -392,7 +477,9 @@ f_inBearOB() =>
     if n > 0
         for j = 0 to n - 1
             ob = array.get(obs, j)
-            if not ob.bull and not ob.mitigated and high >= ob.bot and high <= ob.top
+            isBearZone = (not ob.bull and not ob.isBreaker) or (ob.bull and ob.isBreaker)
+            inside = high >= ob.bot and high <= ob.top
+            if isBearZone and not ob.mitigated and inside
                 found := true
     found
 
@@ -517,6 +604,19 @@ if not na(phRaw)
     width_ph = grade_ph >= 4 ? 2 : 1
     ln = line.new(bar_index - i_pivotLen, phRaw, bar_index + 5, phRaw, color = lcol, style = line.style_dotted, width = width_ph)
     array.push(liqs, Liq.new(ln, phRaw, bar_index - i_pivotLen, true, false, grade_ph))
+    // Equal-highs visualization: when a grade-2+ pivot forms, draw a bright
+    // line back to the matching prior pivot — premium-tool style "double top"
+    // / liquidity pool indicator. Only when liquidity display is enabled.
+    if grade_ph >= 2 and i_showLiq and array.size(liqs) > 1
+        tolEH = atr14 * 0.25
+        nL = array.size(liqs) - 1
+        // Forward iteration with reverse index — same effect, Pine-v6 safe
+        for k = 0 to nL - 1
+            idxEH = nL - 1 - k
+            prv = array.get(liqs, idxEH)
+            if prv.buyside and math.abs(prv.lvl - phRaw) <= tolEH
+                line.new(prv.bar, prv.lvl, bar_index - i_pivotLen, phRaw, color = color.new(#ab47bc, 20), style = line.style_solid, width = 2)
+                break
 
 if not na(plRaw)
     grade_pl = f_gradeLiq(plRaw, false)
@@ -524,6 +624,15 @@ if not na(plRaw)
     width_pl = grade_pl >= 4 ? 2 : 1
     ln = line.new(bar_index - i_pivotLen, plRaw, bar_index + 5, plRaw, color = lcol, style = line.style_dotted, width = width_pl)
     array.push(liqs, Liq.new(ln, plRaw, bar_index - i_pivotLen, false, false, grade_pl))
+    if grade_pl >= 2 and i_showLiq and array.size(liqs) > 1
+        tolEL = atr14 * 0.25
+        nL = array.size(liqs) - 1
+        for k = 0 to nL - 1
+            idxEL = nL - 1 - k
+            prv = array.get(liqs, idxEL)
+            if not prv.buyside and math.abs(prv.lvl - plRaw) <= tolEL
+                line.new(prv.bar, prv.lvl, bar_index - i_pivotLen, plRaw, color = color.new(#26a69a, 20), style = line.style_solid, width = 2)
+                break
 
 // Sweep detection + line management
 justSweptSSL    = false
@@ -779,7 +888,8 @@ f_collectBuyTargets(_entry) =>
     if array.size(obs) > 0
         for j = 0 to array.size(obs) - 1
             ob = array.get(obs, j)
-            if not ob.bull and not ob.mitigated and ob.bot > _entry
+            isBearZone = (not ob.bull and not ob.isBreaker) or (ob.bull and ob.isBreaker)
+            if isBearZone and not ob.mitigated and ob.bot > _entry
                 array.push(arr, ob.bot)
     if array.size(fvgs) > 0
         for j = 0 to array.size(fvgs) - 1
@@ -797,6 +907,11 @@ f_collectBuyTargets(_entry) =>
             array.push(arr, wHigh)
         if not na(pmHigh) and pmHigh > _entry
             array.push(arr, pmHigh)
+    if i_useMTFAsTP
+        if not na(htf60H_last)  and htf60H_last  > _entry
+            array.push(arr, htf60H_last)
+        if not na(htf240H_last) and htf240H_last > _entry
+            array.push(arr, htf240H_last)
     if not na(pdMid) and pdMid > _entry
         array.push(arr, pdMid)
     array.sort(arr, order.ascending)
@@ -812,7 +927,8 @@ f_collectSellTargets(_entry) =>
     if array.size(obs) > 0
         for j = 0 to array.size(obs) - 1
             ob = array.get(obs, j)
-            if ob.bull and not ob.mitigated and ob.top < _entry
+            isBullZone = (ob.bull and not ob.isBreaker) or (not ob.bull and ob.isBreaker)
+            if isBullZone and not ob.mitigated and ob.top < _entry
                 array.push(arr, ob.top)
     if array.size(fvgs) > 0
         for j = 0 to array.size(fvgs) - 1
@@ -830,6 +946,11 @@ f_collectSellTargets(_entry) =>
             array.push(arr, wLow)
         if not na(pmLow) and pmLow < _entry
             array.push(arr, pmLow)
+    if i_useMTFAsTP
+        if not na(htf60L_last)  and htf60L_last  < _entry
+            array.push(arr, htf60L_last)
+        if not na(htf240L_last) and htf240L_last < _entry
+            array.push(arr, htf240L_last)
     if not na(pdMid) and pdMid < _entry
         array.push(arr, pdMid)
     array.sort(arr, order.descending)
@@ -1273,8 +1394,15 @@ if i_showDash and barstate.islast
     table.cell(dash, 0, 0, "ICT MASTER PRO", text_color = color.white, bgcolor = color.new(#1565c0, 0), text_size = sz)
     table.merge_cells(dash, 0, 0, 1, 0)
 
-    table.cell(dash, 0, 1, "HTF Bias (" + i_htfTF + ")", text_color = color.white, bgcolor = cellHdr, text_size = sz)
-    table.cell(dash, 1, 1, htfBiasStr, text_color = color.white, bgcolor = htfBiasCol, text_size = sz)
+    // HTF stack: show 15m, 1H, 4H, Daily bias arrows side-by-side.
+    arr15  = bias15  > 0 ? "UP" : bias15  < 0 ? "DN" : "-"
+    arr60  = bias60  > 0 ? "UP" : bias60  < 0 ? "DN" : "-"
+    arr240 = bias240 > 0 ? "UP" : bias240 < 0 ? "DN" : "-"
+    arrD   = biasD   > 0 ? "UP" : biasD   < 0 ? "DN" : "-"
+    htfStackTxt = "15m " + arr15 + "  1H " + arr60 + "  4H " + arr240 + "  D " + arrD
+    htfStackCol = htfAlignmentScore >=  3 ? color.new(c_bull, 30) : htfAlignmentScore <= -3 ? color.new(c_bear, 30) : math.abs(htfAlignmentScore) >= 2 ? color.new(#1565c0, 50) : color.new(color.gray, 60)
+    table.cell(dash, 0, 1, "HTF Stack", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 1, htfStackTxt, text_color = color.white, bgcolor = htfStackCol, text_size = sz)
 
     table.cell(dash, 0, 2, "Weekly Bias", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     wkBg = weeklyBullBias ? color.new(c_bull, 60) : weeklyBearBias ? color.new(c_bear, 60) : color.new(color.gray, 60)
