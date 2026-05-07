@@ -186,9 +186,39 @@ Python/Node bridge.
 
 ```
 ict-master-pro/
-├── ICT_Master_Pro.pine     ← the indicator (paste into TradingView Pine Editor)
-└── README.md               ← this file
+├── ICT_Master_Pro.pine             ← INDICATOR — live charting & alerts
+├── ICT_Master_Pro_Strategy.pine    ← STRATEGY  — backtestable twin
+└── README.md                       ← this file
 ```
+
+### When to use which file
+
+| File | Purpose |
+|---|---|
+| `ICT_Master_Pro.pine` | Live charting, dashboard, alerts, webhook automation. **Use this on real charts.** |
+| `ICT_Master_Pro_Strategy.pine` | Same engine but declared as `strategy()`. Use this in TradingView's **Strategy Tester** to backtest the signals — profit factor, Sharpe, max drawdown, equity curve, monthly returns. |
+
+Pine Script does not allow runtime switching between `indicator()` and
+`strategy()` (script type is fixed at compile time), so both files are
+shipped side-by-side. **Settings, dashboard, and signals are identical**;
+the strategy file simply forwards each fired signal to TradingView's
+strategy engine with `strategy.entry()` and a bracket exit
+(`stop = SL, limit = TP3`). When Smart Trade Management is on, the
+bracket SL is re-issued whenever TP1 or TP2 is reached, mirroring the
+indicator's break-even / lock-in behaviour.
+
+### Strategy defaults
+
+| Setting | Value |
+|---|---|
+| Initial capital | 100,000 |
+| Order size | 1% of equity per trade |
+| Commission | 0.03% (Zerodha intraday equivalent) |
+| Slippage | 1 tick |
+| Pyramiding | 0 (one trade at a time) |
+| Process orders on close | Yes (cleaner backtest, no lookahead) |
+
+Adjust the strategy properties in TradingView **Settings → Properties** to match your account / instrument. The defaults are conservative.
 
 ---
 

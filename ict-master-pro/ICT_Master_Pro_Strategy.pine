@@ -1,0 +1,1723 @@
+//@version=6
+// ════════════════════════════════════════════════════════════════════════════════════
+//   ICT MASTER PRO [STRATEGY]  —  Backtestable twin of the indicator (Pine v6)
+//   ────────────────────────────────────────────────────────────────────────────────
+//   Identical confluence engine, dashboard, and trade-plan visuals to the
+//   indicator version. Difference: this file is declared as a strategy() so
+//   TradingView's built-in Strategy Tester runs against every fired signal —
+//   profit factor, Sharpe, max drawdown, monthly equity, all of it.
+//
+//   Pine Script does not allow runtime switching between indicator() and
+//   strategy() (script type is fixed at compile time), so we ship the two
+//   files side-by-side. Use ICT_Master_Pro.pine for live charting and
+//   ICT_Master_Pro_Strategy.pine to backtest.
+//
+//   Strategy entries fire on the same buySignal / sellSignal as the indicator.
+//   Each trade is sent to the engine with stop = tpSL and limit = tpTP3.
+//   When Smart Trade Management is on, the bracket SL is re-issued whenever
+//   TP1 (move to break-even) or TP2 (lock +1R) is reached.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+strategy("ICT Master Pro [Strategy]", shorttitle = "ICT-MP-S", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500, max_bars_back = 5000, pyramiding = 0, initial_capital = 100000, default_qty_type = strategy.percent_of_equity, default_qty_value = 1, commission_type = strategy.commission.percent, commission_value = 0.03, slippage = 1, calc_on_every_tick = false, process_orders_on_close = true)
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   1. INPUTS
+// ════════════════════════════════════════════════════════════════════════════════════
+grpCore   = "═══ Core ═══"
+grpStruct = "═══ Market Structure ═══"
+grpOB     = "═══ Order Blocks ═══"
+grpFVG    = "═══ Fair Value Gaps ═══"
+grpLiq    = "═══ Liquidity & Sweeps ═══"
+grpPD     = "═══ Premium / Discount ═══"
+grpHTF    = "═══ HTF Bias ═══"
+grpSess   = "═══ ICT Macro Sessions (IST) ═══"
+grpSig    = "═══ Signal Engine ═══"
+grpRisk   = "═══ Risk: SL / TP ═══"
+grpDash   = "═══ Dashboard ═══"
+
+// ── Core ────────────────────────────────────────────────────────────────────────────
+i_preset        = input.string("Auto", "Symbol Preset", options = ["Auto", "Custom", "NIFTY/BANKNIFTY Index", "Index Futures", "Stock", "Crypto", "Forex"], group = grpCore, tooltip = "Auto = detect from syminfo.type and apply sensible defaults. Custom = use the individual settings below verbatim. The other choices override Volume Confirm, Inducement Filter, Min Score and Lunch Block to values that work well for that instrument class.")
+i_cleanMode     = input.bool(true, "CLEAN MODE (only signals + dashboard on chart)", group = grpCore, tooltip = "ON = clean chart, only BUY/SELL signals with Entry/SL/TP visible. OFF = show all ICT internals (OB, FVG, liquidity lines, sessions, P/D zones).")
+i_pivotLen      = input.int(5,    "Pivot Length", minval = 2, maxval = 30, group = grpCore, tooltip = "Bars on each side for swing detection. 5 = scalp, 10 = swing.")
+i_useVolume     = input.bool(true, "Require Volume Confirmation", group = grpCore, tooltip = "Signals only fire when volume >= average. Disabled automatically when Symbol Preset = NIFTY/BANKNIFTY Index because index volume on TV is zero.")
+i_volLen        = input.int(20,   "Volume MA Length", minval = 5, maxval = 200, group = grpCore)
+i_smartMgmt     = input.bool(true, "Smart Trade Management", group = grpCore, tooltip = "When TP1 hits, the SL is moved to the entry price (break-even). When TP2 hits, the SL is moved to TP1 (locks in 1R). Final exit at TP3 or trailing SL.")
+i_jsonAlerts    = input.bool(false, "JSON Webhook Alerts", group = grpCore, tooltip = "When ON, alert messages are emitted as JSON instead of human text — drop-in compatible with Zerodha Kite Connect / Dhan / Fyers webhook automation.")
+i_diagnostic    = input.bool(true, "Show Why-No-Signal Diagnostic", group = grpCore, tooltip = "When confluence score is high but no trigger, the dashboard shows which filters are blocking the signal so you can adjust settings.")
+
+// ── Structure ───────────────────────────────────────────────────────────────────────
+i_showBOS_raw    = input.bool(false, "Show BOS / CHoCH",              group = grpStruct)
+i_showSwings_raw = input.bool(false, "Show Swing High / Low markers", group = grpStruct)
+
+// ── Order Blocks ────────────────────────────────────────────────────────────────────
+i_showOB_raw    = input.bool(false, "Show Order Blocks",             group = grpOB)
+i_obMaxBoxes    = input.int(8,    "Max OB Boxes Kept", minval = 1, maxval = 20, group = grpOB)
+i_obMitigate    = input.bool(true, "Remove OBs after Mitigation",   group = grpOB)
+i_obGrade       = input.string("A+B", "Min Grade to Show", options = ["A only", "A+B", "A+B+C"], group = grpOB, tooltip = "A = swept liquidity + displacement, B = displacement only, C = simple.")
+
+// ── FVG ─────────────────────────────────────────────────────────────────────────────
+i_showFVG_raw   = input.bool(false, "Show Fair Value Gaps",          group = grpFVG)
+i_fvgMaxBoxes   = input.int(6,    "Max FVG Boxes Kept", minval = 1, maxval = 20, group = grpFVG)
+i_fvgMitigate   = input.bool(true, "Remove FVGs after Fill",        group = grpFVG)
+
+// ── Liquidity ───────────────────────────────────────────────────────────────────────
+i_showLiq_raw   = input.bool(false, "Show BSL / SSL Liquidity Lines", group = grpLiq)
+i_showSweep_raw = input.bool(false, "Mark Liquidity Sweeps",          group = grpLiq)
+i_liqMax        = input.int(6,    "Max Liquidity Lines per side", minval = 1, maxval = 15, group = grpLiq)
+
+// ── Premium / Discount ──────────────────────────────────────────────────────────────
+i_showPD_raw    = input.bool(false, "Show Premium / Discount Zones", group = grpPD)
+i_pdSource      = input.string("Daily", "Range Source", options = ["Daily", "Weekly", "Session"], group = grpPD)
+i_showWeeklyOHLC = input.bool(false, "Show Weekly OHLC Lines",       group = grpPD)
+
+// ── HTF Bias ────────────────────────────────────────────────────────────────────────
+i_useHTFBias    = input.bool(true, "Filter Signals by HTF Bias", group = grpHTF)
+i_htfTF         = input.timeframe("60", "HTF Timeframe", group = grpHTF, tooltip = "60 = 1H, 240 = 4H, D = Daily, W = Weekly. 1H is good for 5m charts.")
+
+// ── Sessions ────────────────────────────────────────────────────────────────────────
+i_useSessions_raw = input.bool(false, "Show NSE ICT Macro Boxes",        group = grpSess)
+i_sessAM        = input.session("0915-1045", "AM Macro (Open Drive)", group = grpSess)
+i_sessMid       = input.session("1045-1200", "Mid Morning",           group = grpSess)
+i_sessLunch     = input.session("1200-1330", "Lunch (Avoid)",         group = grpSess)
+i_sessPM        = input.session("1330-1500", "PM Macro",              group = grpSess)
+i_sessExpiry    = input.session("1430-1530", "Expiry / Close Window", group = grpSess)
+i_avoidLunch    = input.bool(true, "Block Signals during Lunch",      group = grpSess)
+i_tz            = input.string("Asia/Kolkata", "Timezone", options = ["Asia/Kolkata", "America/New_York", "Europe/London", "UTC"], group = grpSess)
+
+// ── Signal Engine ───────────────────────────────────────────────────────────────────
+i_minScore      = input.int(5, "Min Confluence Score (0-7)", minval = 1, maxval = 7, group = grpSig, tooltip = "Higher = fewer but stronger signals. 5 = balanced quality, 6+ = sniper.")
+i_useOTE        = input.bool(true, "Require OTE Zone (0.62-0.79)",      group = grpSig)
+i_requireBarConf= input.bool(true, "Require Reversal Bar Confirmation", group = grpSig, tooltip = "Buys need close > open on signal bar; sells need close < open. Filters fakeouts.")
+i_structMemBars = input.int(10, "Structure Memory (bars)", minval = 3, maxval = 30, group = grpSig, tooltip = "How many bars after BOS/CHoCH the setup stays valid. Lets the signal fire on the RETRACE bar (before the move) instead of the breakout bar.")
+i_sweepMemBars  = input.int(8,  "Sweep Memory (bars)",     minval = 3, maxval = 30, group = grpSig)
+i_useInducement = input.bool(true, "Require Major Liquidity Sweep (filter inducement)", group = grpSig, tooltip = "Only fire signals when the recent sweep was on MAJOR liquidity (equal highs/lows, PDH/PDL, PWH/PWL). Filters fake sweeps that trap retail.")
+i_useRegime     = input.bool(false, "Filter by Market Regime", group = grpSig, tooltip = "When ON, blocks BUY in strong downtrends and SELL in strong uptrends. Regime is always shown on the dashboard regardless.")
+
+// ── Risk ────────────────────────────────────────────────────────────────────────────
+i_slMode        = input.string("Structure", "SL Mode", options = ["Structure", "ATR", "Fixed%"], group = grpRisk, tooltip = "Structure = beyond swept liquidity / OB. ATR = ATR multiple. Fixed% = % of price.")
+i_slATR         = input.float(1.5,  "SL ATR Multiple", minval = 0.5,  maxval = 5.0,  step = 0.1,  group = grpRisk)
+i_slFixedPct    = input.float(0.3,  "SL Fixed %",      minval = 0.05, maxval = 5.0,  step = 0.05, group = grpRisk)
+i_slBuffer      = input.float(0.05, "SL Buffer %",     minval = 0.0,  maxval = 1.0,  step = 0.01, group = grpRisk)
+i_useAdaptiveTP = input.bool(true, "Adaptive Targets (price-action levels)", group = grpRisk, tooltip = "TP1/TP2/TP3 are projected to the next liquidity pool / opposing OB / HTF level above (or below) entry, instead of fixed R multiples. Falls back to R multiples when not enough structure exists.")
+i_tp1R          = input.float(1.0, "TP1 (R multiple, fallback)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+i_tp2R          = input.float(2.0, "TP2 (R multiple, fallback)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+i_tp3R          = input.float(3.0, "TP3 (R multiple, fallback)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+i_useRiskCalc   = input.bool(false, "Position-size in Alerts", group = grpRisk, tooltip = "Add suggested position size to alert messages, computed from account size and risk per trade.")
+i_account       = input.float(100000, "Account Size", minval = 1000, group = grpRisk)
+i_riskPct       = input.float(1.0, "Risk per Trade (%)", minval = 0.1, maxval = 5.0, step = 0.1, group = grpRisk)
+
+// ── Key Levels (PDH/PDL/PWH/PWL/PMH/PML) ────────────────────────────────────────────
+grpKey          = "═══ Key Levels ═══"
+i_showKeyLevels = input.bool(false, "Show Key Levels (PDH/PDL/PWH/PWL)", group = grpKey, tooltip = "Plot previous-day and previous-week high/low. These act as major liquidity targets.")
+i_useKeyAsTP    = input.bool(true,  "Use Key Levels as TP destinations", group = grpKey, tooltip = "When Adaptive Targets is ON, also project to PDH/PDL/PWH/PWL.")
+i_showMTF       = input.bool(false, "Show MTF Liquidity Pools (1H/4H)", group = grpKey, tooltip = "Plot the most recent 1H and 4H pivot highs and lows on the chart. They tag where institutional traders are watching the next BSL/SSL grab.")
+i_useMTFAsTP    = input.bool(true,  "Use MTF Pools as TP destinations", group = grpKey)
+
+// ── Performance Tracker ─────────────────────────────────────────────────────────────
+grpPerf         = "═══ Performance ═══"
+i_trackPerf     = input.bool(true, "Track Signal Performance", group = grpPerf, tooltip = "Tracks each fired signal until SL/TP3 hits, then computes win rate, average R, max drawdown over the rolling window.")
+i_perfWindow    = input.int(30, "Performance Window (signals)", minval = 5, maxval = 200, group = grpPerf)
+i_showPerfLines = input.bool(false, "Mark Closed Trades on Chart", group = grpPerf, tooltip = "Drop a tiny WIN/LOSS marker on past signals once they resolve. Off by default to keep the chart clean.")
+
+// ── Dashboard ───────────────────────────────────────────────────────────────────────
+i_showDash      = input.bool(true, "Show Dashboard", group = grpDash)
+i_dashPos       = input.string("Top Right", "Dashboard Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group = grpDash)
+i_dashSize      = input.string("Small", "Dashboard Size", options = ["Tiny", "Small", "Normal", "Large"], group = grpDash)
+
+// ── Effective show flags (Clean Mode forces everything off) ─────────────────────────
+i_showBOS     = i_cleanMode ? false : i_showBOS_raw
+i_showSwings  = i_cleanMode ? false : i_showSwings_raw
+i_showOB      = i_cleanMode ? false : i_showOB_raw
+i_showFVG     = i_cleanMode ? false : i_showFVG_raw
+i_showLiq     = i_cleanMode ? false : i_showLiq_raw
+i_showSweep   = i_cleanMode ? false : i_showSweep_raw
+i_showPD      = i_cleanMode ? false : i_showPD_raw
+i_useSessions = i_cleanMode ? false : i_useSessions_raw
+i_showWeekly  = i_cleanMode ? false : i_showWeeklyOHLC
+i_showKey     = i_cleanMode ? false : i_showKeyLevels
+i_showMTFEff  = i_cleanMode ? false : i_showMTF
+
+// ── Symbol preset resolution (Auto + manual choices) ────────────────────────────────
+// Each instrument class has different liquidity / volume profiles, so a single
+// default never fits all. We classify the symbol once at script start and let
+// the resolved booleans/ints override the user's individual toggles. The user
+// can always pick "Custom" to keep their manual settings.
+isAutoIndex   = i_preset == "Auto" and (syminfo.type == "index" or syminfo.type == "fund")
+isAutoCrypto  = i_preset == "Auto" and syminfo.type == "crypto"
+isAutoForex   = i_preset == "Auto" and syminfo.type == "forex"
+isAutoStock   = i_preset == "Auto" and syminfo.type == "stock"
+isAutoFutures = i_preset == "Auto" and syminfo.type == "futures"
+
+isIndex   = i_preset == "NIFTY/BANKNIFTY Index" or isAutoIndex
+isFutures = i_preset == "Index Futures"        or isAutoFutures
+isStock   = i_preset == "Stock"                or isAutoStock
+isCrypto  = i_preset == "Crypto"               or isAutoCrypto
+isForex   = i_preset == "Forex"                or isAutoForex
+isCustom  = i_preset == "Custom"
+
+// Effective settings — preset wins over the raw inputs unless user picked Custom
+useVolume_eff      = isCustom ? i_useVolume      : not isIndex                       // index volume is zero on TV
+useInducement_eff  = isCustom ? i_useInducement  : not isIndex                       // index pivots are usually grade 1
+minScore_eff       = isCustom ? i_minScore       : (isIndex ? 4 : 5)                 // indices need looser threshold
+avoidLunch_eff     = isCustom ? i_avoidLunch     : not (isCrypto or isForex)         // 24h markets have no lunch
+
+// ── Colors ──────────────────────────────────────────────────────────────────────────
+c_bull       = color.new(#26a69a, 0)
+c_bear       = color.new(#ef5350, 0)
+c_obBull     = color.new(#1976d2, 80)
+c_obBear     = color.new(#f57c00, 80)
+c_fvgBull    = color.new(#00bcd4, 85)
+c_fvgBear    = color.new(#ff9800, 85)
+c_liqBuy     = color.new(#ff5252, 0)
+c_liqSell    = color.new(#69f0ae, 0)
+c_premium    = color.new(#ef5350, 92)
+c_discount   = color.new(#26a69a, 92)
+c_sessAM     = color.new(#2962ff, 88)
+c_sessMid    = color.new(#43a047, 90)
+c_sessLunch  = color.new(#9e9e9e, 92)
+c_sessPM     = color.new(#8e24aa, 88)
+c_sessExpiry = color.new(#d50000, 88)
+c_slLine     = color.new(#b00020, 0)
+c_tpBuy      = color.new(#00c853, 0)
+c_tpSell     = color.new(#ff6f00, 0)
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   2. UTILITY HELPERS
+// ════════════════════════════════════════════════════════════════════════════════════
+f_inSession(_sess) =>
+    not na(time(timeframe.period, _sess, i_tz))
+
+f_dashPos() =>
+    i_dashPos == "Top Right" ? position.top_right : i_dashPos == "Top Left" ? position.top_left : i_dashPos == "Bottom Right" ? position.bottom_right : i_dashPos == "Bottom Left" ? position.bottom_left : position.middle_right
+
+f_dashSize() =>
+    i_dashSize == "Tiny" ? size.tiny : i_dashSize == "Small" ? size.small : i_dashSize == "Normal" ? size.normal : size.large
+
+atr14 = ta.atr(14)
+volMA = ta.sma(volume, i_volLen)
+volOK = useVolume_eff ? (volume >= volMA) : true
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   3. HIGHER TIMEFRAME BIAS
+// ════════════════════════════════════════════════════════════════════════════════════
+htfClose = request.security(syminfo.tickerid, i_htfTF, close, lookahead = barmerge.lookahead_off)
+htfEma50 = request.security(syminfo.tickerid, i_htfTF, ta.ema(close, 50), lookahead = barmerge.lookahead_off)
+htfEma20 = request.security(syminfo.tickerid, i_htfTF, ta.ema(close, 20), lookahead = barmerge.lookahead_off)
+
+htfBull = not na(htfEma50) and htfClose > htfEma50 and htfEma20 > htfEma50
+htfBear = not na(htfEma50) and htfClose < htfEma50 and htfEma20 < htfEma50
+htfBiasStr = htfBull ? "BULLISH UP" : htfBear ? "BEARISH DN" : "NEUTRAL"
+htfBiasCol = htfBull ? c_bull : htfBear ? c_bear : color.gray
+
+// ── Multi-timeframe bias panel — 15m / 1H / 4H / Daily simultaneous ─────────────────
+// Each TF has its own EMA20/50 alignment check. Used in the dashboard so the
+// trader sees the full HTF stack at a glance, not just the chosen filter TF.
+mtf15Close  = request.security(syminfo.tickerid, "15",  close,            lookahead = barmerge.lookahead_off)
+mtf15Ema50  = request.security(syminfo.tickerid, "15",  ta.ema(close,50), lookahead = barmerge.lookahead_off)
+mtf60Close  = request.security(syminfo.tickerid, "60",  close,            lookahead = barmerge.lookahead_off)
+mtf60Ema50  = request.security(syminfo.tickerid, "60",  ta.ema(close,50), lookahead = barmerge.lookahead_off)
+mtf240Close = request.security(syminfo.tickerid, "240", close,            lookahead = barmerge.lookahead_off)
+mtf240Ema50 = request.security(syminfo.tickerid, "240", ta.ema(close,50), lookahead = barmerge.lookahead_off)
+mtfDClose   = request.security(syminfo.tickerid, "D",   close,            lookahead = barmerge.lookahead_off)
+mtfDEma50   = request.security(syminfo.tickerid, "D",   ta.ema(close,50), lookahead = barmerge.lookahead_off)
+
+bias15  = not na(mtf15Ema50)  and mtf15Close  > mtf15Ema50  ? 1 : not na(mtf15Ema50)  and mtf15Close  < mtf15Ema50  ? -1 : 0
+bias60  = not na(mtf60Ema50)  and mtf60Close  > mtf60Ema50  ? 1 : not na(mtf60Ema50)  and mtf60Close  < mtf60Ema50  ? -1 : 0
+bias240 = not na(mtf240Ema50) and mtf240Close > mtf240Ema50 ? 1 : not na(mtf240Ema50) and mtf240Close < mtf240Ema50 ? -1 : 0
+biasD   = not na(mtfDEma50)   and mtfDClose   > mtfDEma50   ? 1 : not na(mtfDEma50)   and mtfDClose   < mtfDEma50   ? -1 : 0
+
+// Combined HTF alignment score: -4..+4 (sum of all four). Useful for confluence.
+htfAlignmentScore = bias15 + bias60 + bias240 + biasD
+htfFullyAligned   = math.abs(htfAlignmentScore) >= 3
+
+// ── Regime detection (Trending / Ranging / Transition) ──────────────────────────────
+// ADX-style strength of directional movement. Avoids reversal signals in strong
+// trends and continuation signals in tight ranges.
+_dmPlus  = high  - high[1]
+_dmMinus = low[1] - low
+plusDM   = (_dmPlus  > _dmMinus and _dmPlus  > 0) ? _dmPlus  : 0.0
+minusDM  = (_dmMinus > _dmPlus  and _dmMinus > 0) ? _dmMinus : 0.0
+trAvg    = ta.rma(ta.tr, 14)
+plusDI   = trAvg == 0 ? 0.0 : 100 * ta.rma(plusDM, 14)  / trAvg
+minusDI  = trAvg == 0 ? 0.0 : 100 * ta.rma(minusDM, 14) / trAvg
+diSum    = plusDI + minusDI
+dx       = diSum == 0 ? 0.0 : 100 * math.abs(plusDI - minusDI) / diSum
+adx      = ta.rma(dx, 14)
+
+regimeTrending = adx >= 25
+regimeRanging  = adx <  18
+regimeStr      = regimeTrending ? "TRENDING" : regimeRanging ? "RANGING" : "TRANSITION"
+regimeCol      = regimeTrending ? color.new(#1565c0, 0) : regimeRanging ? color.new(#ef6c00, 0) : color.new(color.gray, 0)
+
+// Soft regime filter: when enabled, block buy in strong downtrends and sell in
+// strong uptrends. Range-bound regimes still allow both sides (mean reversion).
+regimeAllowsBuy  = i_useRegime ? not (regimeTrending and htfBear) : true
+regimeAllowsSell = i_useRegime ? not (regimeTrending and htfBull) : true
+
+// Daily / Weekly OHLC for premium-discount and weekly profile
+dHigh = request.security(syminfo.tickerid, "D", high, lookahead = barmerge.lookahead_on)
+dLow  = request.security(syminfo.tickerid, "D", low,  lookahead = barmerge.lookahead_on)
+wHigh = request.security(syminfo.tickerid, "W", high, lookahead = barmerge.lookahead_on)
+wLow  = request.security(syminfo.tickerid, "W", low,  lookahead = barmerge.lookahead_on)
+wOpen = request.security(syminfo.tickerid, "W", open, lookahead = barmerge.lookahead_on)
+
+// Previous-day / previous-week / previous-month highs and lows — major liquidity
+pdHigh = request.security(syminfo.tickerid, "D", high[1], lookahead = barmerge.lookahead_on)
+pdLow  = request.security(syminfo.tickerid, "D", low[1],  lookahead = barmerge.lookahead_on)
+pwHigh = request.security(syminfo.tickerid, "W", high[1], lookahead = barmerge.lookahead_on)
+pwLow  = request.security(syminfo.tickerid, "W", low[1],  lookahead = barmerge.lookahead_on)
+pmHigh = request.security(syminfo.tickerid, "M", high[1], lookahead = barmerge.lookahead_on)
+pmLow  = request.security(syminfo.tickerid, "M", low[1],  lookahead = barmerge.lookahead_on)
+
+// Plot key levels (when not in clean mode)
+plot(i_showKey ? pdHigh : na, "PDH", color = color.new(#ff5252, 30), style = plot.style_linebr, linewidth = 1)
+plot(i_showKey ? pdLow  : na, "PDL", color = color.new(#69f0ae, 30), style = plot.style_linebr, linewidth = 1)
+plot(i_showKey ? pwHigh : na, "PWH", color = color.new(#ff5252, 0),  style = plot.style_linebr, linewidth = 2)
+plot(i_showKey ? pwLow  : na, "PWL", color = color.new(#69f0ae, 0),  style = plot.style_linebr, linewidth = 2)
+plot(i_showKey ? pmHigh : na, "PMH", color = color.new(#d50000, 0),  style = plot.style_linebr, linewidth = 2)
+plot(i_showKey ? pmLow  : na, "PML", color = color.new(#00c853, 0),  style = plot.style_linebr, linewidth = 2)
+
+// HTF pivots (1H and 4H) — fetched here (before the MTF plots) so the latched
+// vars are declared before they're referenced. Used as MTF liquidity pools
+// and TP destinations.
+htf60_PH  = request.security(syminfo.tickerid, "60",  ta.pivothigh(high, 5, 5), lookahead = barmerge.lookahead_off)
+htf60_PL  = request.security(syminfo.tickerid, "60",  ta.pivotlow(low,   5, 5), lookahead = barmerge.lookahead_off)
+htf240_PH = request.security(syminfo.tickerid, "240", ta.pivothigh(high, 5, 5), lookahead = barmerge.lookahead_off)
+htf240_PL = request.security(syminfo.tickerid, "240", ta.pivotlow(low,   5, 5), lookahead = barmerge.lookahead_off)
+
+var float htf60H_last  = na
+var float htf60L_last  = na
+var float htf240H_last = na
+var float htf240L_last = na
+if not na(htf60_PH)
+    htf60H_last := htf60_PH
+if not na(htf60_PL)
+    htf60L_last := htf60_PL
+if not na(htf240_PH)
+    htf240H_last := htf240_PH
+if not na(htf240_PL)
+    htf240L_last := htf240_PL
+
+// MTF liquidity pools — last 1H and 4H pivot highs and lows
+plot(i_showMTFEff ? htf60H_last  : na, "1H Pivot High",  color = color.new(#ff5252, 30), style = plot.style_linebr, linewidth = 1)
+plot(i_showMTFEff ? htf60L_last  : na, "1H Pivot Low",   color = color.new(#69f0ae, 30), style = plot.style_linebr, linewidth = 1)
+plot(i_showMTFEff ? htf240H_last : na, "4H Pivot High",  color = color.new(#ff5252, 0),  style = plot.style_linebr, linewidth = 2)
+plot(i_showMTFEff ? htf240L_last : na, "4H Pivot Low",   color = color.new(#69f0ae, 0),  style = plot.style_linebr, linewidth = 2)
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   4. MARKET STRUCTURE — Swings, BOS, CHoCH
+// ════════════════════════════════════════════════════════════════════════════════════
+phRaw = ta.pivothigh(high, i_pivotLen, i_pivotLen)
+plRaw = ta.pivotlow(low,   i_pivotLen, i_pivotLen)
+
+var float lastSH    = na
+var float lastSL    = na
+var int   lastSHBar = na
+var int   lastSLBar = na
+var float prevSH    = na     // previous swing high (for HH/LH classification)
+var float prevSL    = na     // previous swing low  (for HL/LL classification)
+
+if not na(phRaw)
+    prevSH    := lastSH
+    lastSH    := phRaw
+    lastSHBar := bar_index - i_pivotLen
+
+if not na(plRaw)
+    prevSL    := lastSL
+    lastSL    := plRaw
+    lastSLBar := bar_index - i_pivotLen
+
+// Track current structural state (1 = bullish, -1 = bearish, 0 = neutral)
+var int trend = 0
+
+bullBOS = not na(lastSH) and close > lastSH and close[1] <= lastSH
+bearBOS = not na(lastSL) and close < lastSL and close[1] >= lastSL
+
+// CHoCH = first opposing BOS after a trend change
+bullCHoCH = bullBOS and trend == -1
+bearCHoCH = bearBOS and trend ==  1
+
+if bullBOS
+    trend := 1
+if bearBOS
+    trend := -1
+
+// Memory of recent structural shifts so the signal can fire on the RETRACE bar
+// (i.e. AFTER the BOS/CHoCH, when price returns to the OB/FVG) — that's the
+// pre-move entry, not the breakout chase.
+var int lastBullStructBar = na
+var int lastBearStructBar = na
+if bullBOS or bullCHoCH
+    lastBullStructBar := bar_index
+if bearBOS or bearCHoCH
+    lastBearStructBar := bar_index
+recentBullStruct = not na(lastBullStructBar) and (bar_index - lastBullStructBar) <= i_structMemBars
+recentBearStruct = not na(lastBearStructBar) and (bar_index - lastBearStructBar) <= i_structMemBars
+
+if i_showBOS and bullBOS and not na(lastSHBar)
+    line.new(lastSHBar, lastSH, bar_index, lastSH, color = c_bull, width = 1, style = line.style_dashed)
+    label.new(bar_index, lastSH, bullCHoCH ? "CHoCH UP" : "BOS UP", color = c_bull, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+
+if i_showBOS and bearBOS and not na(lastSLBar)
+    line.new(lastSLBar, lastSL, bar_index, lastSL, color = c_bear, width = 1, style = line.style_dashed)
+    label.new(bar_index, lastSL, bearCHoCH ? "CHoCH DN" : "BOS DN", color = c_bear, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+
+// Swing markers — proper SMC structure labels: HH / HL / LH / LL.
+// HH = Higher High (bullish continuation), HL = Higher Low (bullish dip),
+// LH = Lower High (bearish dip),         LL = Lower Low  (bearish continuation).
+if i_showSwings and not na(phRaw)
+    isHH = not na(prevSH) and phRaw > prevSH
+    isLH = not na(prevSH) and phRaw < prevSH
+    swingTagH = na(prevSH) ? "H" : isHH ? "HH" : isLH ? "LH" : "EH"   // EH = equal high
+    swingColH = isHH ? c_bull : isLH ? c_bear : color.gray
+    label.new(bar_index - i_pivotLen, phRaw, swingTagH, color = color.new(swingColH, 60), textcolor = color.white, style = label.style_label_down, size = size.small)
+if i_showSwings and not na(plRaw)
+    isHL = not na(prevSL) and plRaw > prevSL
+    isLL = not na(prevSL) and plRaw < prevSL
+    swingTagL = na(prevSL) ? "L" : isHL ? "HL" : isLL ? "LL" : "EL"   // EL = equal low
+    swingColL = isHL ? c_bull : isLL ? c_bear : color.gray
+    label.new(bar_index - i_pivotLen, plRaw, swingTagL, color = color.new(swingColL, 60), textcolor = color.white, style = label.style_label_up, size = size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   5. ORDER BLOCKS — graded A / B / C
+// ════════════════════════════════════════════════════════════════════════════════════
+type OB
+    box    bx
+    float  top
+    float  bot
+    bool   bull        // true = bullish OB. If isBreaker is also true the role flips.
+    string grade
+    bool   mitigated
+    bool   isBreaker   // bullish OB violated by close-through becomes bearish breaker (resistance), and vice versa
+
+var array<OB> obs = array.new<OB>()
+
+displacement = (high - low) > 1.5 * atr14
+swept_low_recently  = ta.lowest(low,  3) < ta.lowest(low,  10)[3]
+swept_high_recently = ta.highest(high, 3) > ta.highest(high, 10)[3]
+
+f_obAllowed(_grade) =>
+    i_obGrade == "A only" ? _grade == "A" : i_obGrade == "A+B" ? (_grade == "A" or _grade == "B") : true
+
+// Bullish OB — track ALWAYS so confluence works; show only when i_showOB
+if bullBOS and close[1] < open[1]
+    grade = (swept_low_recently and displacement) ? "A" : displacement ? "B" : "C"
+    if f_obAllowed(grade)
+        bgC = i_showOB ? c_obBull : color(na)
+        bdC = i_showOB ? color.new(#1976d2, 30) : color(na)
+        txt = i_showOB ? "OB " + grade : ""
+        bx = box.new(bar_index[1], high[1], bar_index + 5, low[1], bgcolor = bgC, border_color = bdC, border_width = 1, text = txt, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
+        ob = OB.new(bx, high[1], low[1], true, grade, false, false)
+        array.push(obs, ob)
+        if array.size(obs) > i_obMaxBoxes
+            old = array.shift(obs)
+            box.delete(old.bx)
+
+// Bearish OB — same pattern
+if bearBOS and close[1] > open[1]
+    grade = (swept_high_recently and displacement) ? "A" : displacement ? "B" : "C"
+    if f_obAllowed(grade)
+        bgC = i_showOB ? c_obBear : color(na)
+        bdC = i_showOB ? color.new(#f57c00, 30) : color(na)
+        txt = i_showOB ? "OB " + grade : ""
+        bx = box.new(bar_index[1], high[1], bar_index + 5, low[1], bgcolor = bgC, border_color = bdC, border_width = 1, text = txt, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
+        ob = OB.new(bx, high[1], low[1], false, grade, false, false)
+        array.push(obs, ob)
+        if array.size(obs) > i_obMaxBoxes
+            old = array.shift(obs)
+            box.delete(old.bx)
+
+// Extend / mitigate OBs (iterate backwards via reverse index so removals are safe).
+// When an OB is violated by a strong CLOSE through (not just a wick) it flips role
+// and becomes a Breaker Block — old support becomes resistance, old resistance
+// becomes support. Breakers stay on the chart in purple and act as opposite-side
+// zones for confluence and adaptive targets.
+if array.size(obs) > 0
+    n_obs = array.size(obs)
+    for i = 0 to n_obs - 1
+        idx = n_obs - 1 - i
+        if idx < array.size(obs)
+            ob = array.get(obs, idx)
+            if not ob.mitigated
+                box.set_right(ob.bx, bar_index + 2)
+                wickMit  = ob.bull ? (low  <= ob.bot) : (high >= ob.top)
+                closeBrk = ob.bull ? (close < ob.bot) : (close > ob.top)
+                if wickMit
+                    ob.mitigated := true
+                    if closeBrk
+                        // Promote to breaker — keep on chart in purple, role flipped
+                        ob.isBreaker := true
+                        ob.mitigated := false       // reuse as opposite-side zone
+                        if i_showOB
+                            box.set_bgcolor(ob.bx, color.new(#9c27b0, 80))
+                            box.set_border_color(ob.bx, color.new(#7b1fa2, 30))
+                            box.set_text(ob.bx, "BR " + ob.grade)
+                    else
+                        if i_obMitigate
+                            box.delete(ob.bx)
+                            array.remove(obs, idx)
+                        else
+                            box.set_bgcolor(ob.bx, color.new(color.gray, 90))
+
+// "In a bullish zone" = price is inside an unmitigated bullish OB OR inside a
+// bearish OB that's been broken into a bullish breaker (role flipped).
+f_inBullOB() =>
+    found = false
+    n = array.size(obs)
+    if n > 0
+        for j = 0 to n - 1
+            ob = array.get(obs, j)
+            isBullZone = (ob.bull and not ob.isBreaker) or (not ob.bull and ob.isBreaker)
+            inside = low <= ob.top and low >= ob.bot
+            if isBullZone and not ob.mitigated and inside
+                found := true
+    found
+
+f_inBearOB() =>
+    found = false
+    n = array.size(obs)
+    if n > 0
+        for j = 0 to n - 1
+            ob = array.get(obs, j)
+            isBearZone = (not ob.bull and not ob.isBreaker) or (ob.bull and ob.isBreaker)
+            inside = high >= ob.bot and high <= ob.top
+            if isBearZone and not ob.mitigated and inside
+                found := true
+    found
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   6. FAIR VALUE GAPS
+// ════════════════════════════════════════════════════════════════════════════════════
+type FVG
+    box   bx
+    float top
+    float bot
+    bool  bull
+    bool  mitigated
+
+var array<FVG> fvgs = array.new<FVG>()
+
+bullFVG = low > high[2] and close[1] > open[1]
+bearFVG = high < low[2] and close[1] < open[1]
+
+if bullFVG
+    bgC = i_showFVG ? c_fvgBull : color(na)
+    bdC = i_showFVG ? color.new(#00bcd4, 50) : color(na)
+    bx = box.new(bar_index - 2, low, bar_index + 5, high[2], bgcolor = bgC, border_color = bdC, border_width = 1)
+    f = FVG.new(bx, low, high[2], true, false)
+    array.push(fvgs, f)
+    if array.size(fvgs) > i_fvgMaxBoxes
+        old = array.shift(fvgs)
+        box.delete(old.bx)
+
+if bearFVG
+    bgC = i_showFVG ? c_fvgBear : color(na)
+    bdC = i_showFVG ? color.new(#ff9800, 50) : color(na)
+    bx = box.new(bar_index - 2, low[2], bar_index + 5, high, bgcolor = bgC, border_color = bdC, border_width = 1)
+    f = FVG.new(bx, low[2], high, false, false)
+    array.push(fvgs, f)
+    if array.size(fvgs) > i_fvgMaxBoxes
+        old = array.shift(fvgs)
+        box.delete(old.bx)
+
+if array.size(fvgs) > 0
+    n_fvg = array.size(fvgs)
+    for i = 0 to n_fvg - 1
+        idx = n_fvg - 1 - i
+        if idx < array.size(fvgs)
+            fv = array.get(fvgs, idx)
+            if not fv.mitigated
+                box.set_right(fv.bx, bar_index + 2)
+                filled = fv.bull ? (low <= fv.bot) : (high >= fv.top)
+                if filled
+                    fv.mitigated := true
+                    if i_fvgMitigate
+                        box.delete(fv.bx)
+                        array.remove(fvgs, idx)
+                    else
+                        box.set_bgcolor(fv.bx, color.new(color.gray, 92))
+
+f_inBullFVG() =>
+    found = false
+    n = array.size(fvgs)
+    if n > 0
+        for j = 0 to n - 1
+            fv = array.get(fvgs, j)
+            if fv.bull and not fv.mitigated and low <= fv.top and low >= fv.bot
+                found := true
+    found
+
+f_inBearFVG() =>
+    found = false
+    n = array.size(fvgs)
+    if n > 0
+        for j = 0 to n - 1
+            fv = array.get(fvgs, j)
+            if not fv.bull and not fv.mitigated and high >= fv.bot and high <= fv.top
+                found := true
+    found
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   7. LIQUIDITY POOLS (BSL / SSL) + SWEEP DETECTION
+// ════════════════════════════════════════════════════════════════════════════════════
+type Liq
+    line  ln
+    float lvl
+    int   bar
+    bool  buyside
+    bool  swept
+    int   grade        // 1 = single pivot, 2 = equal H/L pair, 3 = 3+ equal,
+                       // 4 = matches PDH/PDL, 5 = matches PWH/PWL/PMH/PML
+
+// Array MUST be declared before any function that references it (Pine v6 forbids
+// forward references to arrays inside user-defined functions).
+var array<Liq> liqs = array.new<Liq>()
+
+// Grade a fresh liquidity level by checking how many existing pivots are within
+// tolerance and whether it aligns with a key HTF level.
+f_gradeLiq(_lvl, _isBuyside) =>
+    int g = 1
+    tol = atr14 * 0.25
+    cnt = 0
+    if array.size(liqs) > 0
+        for j = 0 to array.size(liqs) - 1
+            lq = array.get(liqs, j)
+            if lq.buyside == _isBuyside and math.abs(lq.lvl - _lvl) <= tol
+                cnt := cnt + 1
+    if cnt >= 1
+        g := 2
+    if cnt >= 2
+        g := 3
+    if _isBuyside
+        if (not na(pdHigh) and math.abs(_lvl - pdHigh) <= tol) or (not na(dHigh) and math.abs(_lvl - dHigh) <= tol)
+            g := math.max(g, 4)
+        if (not na(pwHigh) and math.abs(_lvl - pwHigh) <= tol) or (not na(pmHigh) and math.abs(_lvl - pmHigh) <= tol) or (not na(wHigh) and math.abs(_lvl - wHigh) <= tol)
+            g := math.max(g, 5)
+    else
+        if (not na(pdLow) and math.abs(_lvl - pdLow) <= tol) or (not na(dLow) and math.abs(_lvl - dLow) <= tol)
+            g := math.max(g, 4)
+        if (not na(pwLow) and math.abs(_lvl - pwLow) <= tol) or (not na(pmLow) and math.abs(_lvl - pmLow) <= tol) or (not na(wLow) and math.abs(_lvl - wLow) <= tol)
+            g := math.max(g, 5)
+    g
+
+// Strength label helper — turns a 1-5 grade into the institutional vocabulary
+// the dashboard / sweep markers display.
+f_strLabel(_g) =>
+    _g >= 4 ? "STRONG" : _g >= 2 ? "MED" : "WEAK"
+f_strColor(_g, _isBuyside) =>
+    _g >= 4 ? color.new(_isBuyside ? c_liqBuy : c_liqSell, 10) : _g >= 2 ? color.new(#ff9800, 30) : color.new(color.gray, 50)
+
+if not na(phRaw)
+    grade_ph = f_gradeLiq(phRaw, true)
+    lcol     = i_showLiq ? color.new(c_liqBuy, grade_ph >= 4 ? 20 : 60) : color(na)
+    width_ph = grade_ph >= 4 ? 2 : 1
+    ln = line.new(bar_index - i_pivotLen, phRaw, bar_index + 5, phRaw, color = lcol, style = line.style_dotted, width = width_ph)
+    array.push(liqs, Liq.new(ln, phRaw, bar_index - i_pivotLen, true, false, grade_ph))
+    // Liquidity Cluster zone — when a grade-2+ pivot forms it means a stop
+    // cluster is building. Draw a proper ZONE (box) spanning the cluster's
+    // price range from its first pivot to now, instead of a thin line.
+    if grade_ph >= 2 and i_showLiq and array.size(liqs) > 1
+        tolEH = atr14 * 0.25
+        nL = array.size(liqs) - 1
+        for k = 0 to nL - 1
+            idxEH = nL - 1 - k
+            prv = array.get(liqs, idxEH)
+            if prv.buyside and math.abs(prv.lvl - phRaw) <= tolEH
+                clusterTop = math.max(prv.lvl, phRaw) + atr14 * 0.05
+                clusterBot = math.min(prv.lvl, phRaw) - atr14 * 0.05
+                box.new(prv.bar, clusterTop, bar_index - i_pivotLen + 3, clusterBot, bgcolor = f_strColor(grade_ph, true), border_color = color.new(c_liqBuy, 30), border_width = 1, text = f_strLabel(grade_ph) + " BSL", text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
+                break
+
+if not na(plRaw)
+    grade_pl = f_gradeLiq(plRaw, false)
+    lcol     = i_showLiq ? color.new(c_liqSell, grade_pl >= 4 ? 20 : 60) : color(na)
+    width_pl = grade_pl >= 4 ? 2 : 1
+    ln = line.new(bar_index - i_pivotLen, plRaw, bar_index + 5, plRaw, color = lcol, style = line.style_dotted, width = width_pl)
+    array.push(liqs, Liq.new(ln, plRaw, bar_index - i_pivotLen, false, false, grade_pl))
+    if grade_pl >= 2 and i_showLiq and array.size(liqs) > 1
+        tolEL = atr14 * 0.25
+        nL = array.size(liqs) - 1
+        for k = 0 to nL - 1
+            idxEL = nL - 1 - k
+            prv = array.get(liqs, idxEL)
+            if not prv.buyside and math.abs(prv.lvl - plRaw) <= tolEL
+                clusterTop = math.max(prv.lvl, plRaw) + atr14 * 0.05
+                clusterBot = math.min(prv.lvl, plRaw) - atr14 * 0.05
+                box.new(prv.bar, clusterTop, bar_index - i_pivotLen + 3, clusterBot, bgcolor = f_strColor(grade_pl, false), border_color = color.new(c_liqSell, 30), border_width = 1, text = f_strLabel(grade_pl) + " SSL", text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
+                break
+
+// Sweep detection + line management
+justSweptSSL    = false
+justSweptBSL    = false
+var int   lastSSLSweepGrade = 0
+var int   lastBSLSweepGrade = 0
+
+if array.size(liqs) > 0
+    n_liq = array.size(liqs)
+    for i = 0 to n_liq - 1
+        idx = n_liq - 1 - i
+        if idx < array.size(liqs)
+            lq = array.get(liqs, idx)
+            if not lq.swept
+                line.set_x2(lq.ln, bar_index + 2)
+                if lq.buyside and high > lq.lvl and close < lq.lvl
+                    lq.swept := true
+                    justSweptBSL := true
+                    lastBSLSweepGrade := lq.grade
+                    line.set_color(lq.ln, color.new(c_liqBuy, 30))
+                    line.set_style(lq.ln, line.style_solid)
+                    if i_showSweep
+                        label.new(bar_index, high, "x " + f_strLabel(lq.grade) + " BSL", color = c_liqBuy, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+                else if not lq.buyside and low < lq.lvl and close > lq.lvl
+                    lq.swept := true
+                    justSweptSSL := true
+                    lastSSLSweepGrade := lq.grade
+                    line.set_color(lq.ln, color.new(c_liqSell, 30))
+                    line.set_style(lq.ln, line.style_solid)
+                    if i_showSweep
+                        label.new(bar_index, low, "x " + f_strLabel(lq.grade) + " SSL", color = c_liqSell, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+
+// Cap line count: drop oldest swept line if over cap
+if array.size(liqs) > i_liqMax * 2 and array.size(liqs) > 0
+    for i = 0 to array.size(liqs) - 1
+        if i >= array.size(liqs)
+            break
+        lq = array.get(liqs, i)
+        if lq.swept
+            line.delete(lq.ln)
+            array.remove(liqs, i)
+            break
+
+// Track recent sweep memory (5-bar window)
+var int lastSSLSweepBar = na
+var int lastBSLSweepBar = na
+if justSweptSSL
+    lastSSLSweepBar := bar_index
+if justSweptBSL
+    lastBSLSweepBar := bar_index
+
+recentSSLSweep = not na(lastSSLSweepBar) and (bar_index - lastSSLSweepBar) <= i_sweepMemBars
+recentBSLSweep = not na(lastBSLSweepBar) and (bar_index - lastBSLSweepBar) <= i_sweepMemBars
+
+// Inducement filter: a "major" sweep is grade >= 3 (equal H/L pair, PDH/PDL, PWH/PWL).
+// Grade 1-2 sweeps (single isolated pivots) are likely inducement / fake sweeps.
+sslSweepMajor = recentSSLSweep and lastSSLSweepGrade >= 3
+bslSweepMajor = recentBSLSweep and lastBSLSweepGrade >= 3
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   8. PREMIUM / DISCOUNT DEALING RANGE + OTE
+// ════════════════════════════════════════════════════════════════════════════════════
+// Session-based AM range
+var float amSessHi = na
+var float amSessLo = na
+inAM = f_inSession(i_sessAM)
+if inAM and not inAM[1]
+    amSessHi := high
+    amSessLo := low
+else if inAM
+    amSessHi := math.max(nz(amSessHi, high), high)
+    amSessLo := math.min(nz(amSessLo, low),  low)
+
+float pdHi = na
+float pdLo = na
+if i_pdSource == "Weekly"
+    pdHi := wHigh
+    pdLo := wLow
+else if i_pdSource == "Session"
+    pdHi := amSessHi
+    pdLo := amSessLo
+else
+    pdHi := dHigh
+    pdLo := dLow
+
+pdMid   = na(pdHi) or na(pdLo) ? na : (pdHi + pdLo) / 2
+pdRange = na(pdHi) or na(pdLo) ? na : pdHi - pdLo
+
+inDiscount = not na(pdMid) and close < pdMid
+inPremium  = not na(pdMid) and close > pdMid
+
+// OTE zone (0.62 - 0.79) — buy zone above pdLo, sell zone below pdHi
+oteBuyLo  = na(pdRange) ? na : pdLo + pdRange * 0.62
+oteBuyHi  = na(pdRange) ? na : pdLo + pdRange * 0.79
+oteSellLo = na(pdRange) ? na : pdHi - pdRange * 0.79
+oteSellHi = na(pdRange) ? na : pdHi - pdRange * 0.62
+
+inBuyOTE  = not na(oteBuyLo)  and close >= oteBuyLo  and close <= oteBuyHi  and inDiscount
+inSellOTE = not na(oteSellLo) and close >= oteSellLo and close <= oteSellHi and inPremium
+
+// Plot premium/discount lines
+plot(i_showPD ? pdHi  : na, "Range High",   color = color.new(c_bear, 40),   style = plot.style_linebr)
+plot(i_showPD ? pdLo  : na, "Range Low",    color = color.new(c_bull, 40),   style = plot.style_linebr)
+plot(i_showPD ? pdMid : na, "Equilibrium",  color = color.new(color.gray, 30), style = plot.style_linebr)
+
+p_pdHi  = plot(i_showPD ? pdHi  : na, "_pdHi",  display = display.none)
+p_pdMid = plot(i_showPD ? pdMid : na, "_pdMid", display = display.none)
+p_pdLo  = plot(i_showPD ? pdLo  : na, "_pdLo",  display = display.none)
+fill(p_pdHi,  p_pdMid, color = c_premium,  title = "Premium Zone")
+fill(p_pdMid, p_pdLo,  color = c_discount, title = "Discount Zone")
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   9. ICT MACRO SESSIONS (NSE IST)
+// ════════════════════════════════════════════════════════════════════════════════════
+f_drawSession(_inSess, _color, _name, _show) =>
+    var box   sb    = na
+    var line  hl    = na
+    var line  ll    = na
+    var float hv    = na
+    var float lv    = na
+    var bool  wasIn = false
+    started = _show and _inSess and not wasIn
+    ongoing = _show and _inSess and wasIn and not na(sb)
+    if started
+        sb := box.new(bar_index, high, bar_index, low, bgcolor = _color, border_color = color.new(_color, 50), border_width = 1, text = _name, text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
+        hv := high
+        lv := low
+        hl := line.new(bar_index, high, bar_index, high, color = color.new(_color, 30), width = 1)
+        ll := line.new(bar_index, low,  bar_index, low,  color = color.new(_color, 30), width = 1)
+    else if ongoing
+        hv := math.max(nz(hv, high), high)
+        lv := math.min(nz(lv, low),  low)
+        box.set_top(sb, hv)
+        box.set_bottom(sb, lv)
+        box.set_right(sb, bar_index)
+        if not na(hl)
+            line.set_xy2(hl, bar_index + 5, hv)
+        if not na(ll)
+            line.set_xy2(ll, bar_index + 5, lv)
+    wasIn := _inSess
+    nz(hv, 0.0)
+
+inMid    = f_inSession(i_sessMid)
+inLunch  = f_inSession(i_sessLunch)
+inPM     = f_inSession(i_sessPM)
+inExpiry = f_inSession(i_sessExpiry)
+
+_amDrew     = f_drawSession(inAM,     c_sessAM,     "AM Macro", i_useSessions)
+_midDrew    = f_drawSession(inMid,    c_sessMid,    "Mid",      i_useSessions)
+_lunchDrew  = f_drawSession(inLunch,  c_sessLunch,  "Lunch",    i_useSessions)
+_pmDrew     = f_drawSession(inPM,     c_sessPM,     "PM Macro", i_useSessions)
+_expiryDrew = f_drawSession(inExpiry, c_sessExpiry, "Expiry",   i_useSessions)
+
+sessionOK = avoidLunch_eff ? not inLunch : true
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   10. WEEKLY PROFILE BIAS
+// ════════════════════════════════════════════════════════════════════════════════════
+weeklyBullBias = not na(pwHigh) and not na(pwLow) and close > (pwHigh + pwLow) / 2
+weeklyBearBias = not na(pwHigh) and not na(pwLow) and close < (pwHigh + pwLow) / 2
+
+plot(i_showWeekly ? wHigh : na, "Weekly High", color = color.new(c_bear, 70),       style = plot.style_linebr, linewidth = 1)
+plot(i_showWeekly ? wLow  : na, "Weekly Low",  color = color.new(c_bull, 70),       style = plot.style_linebr, linewidth = 1)
+plot(i_showWeekly ? wOpen : na, "Weekly Open", color = color.new(color.orange, 70), style = plot.style_linebr, linewidth = 1)
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   11. CONFLUENCE SCORING ENGINE
+// ════════════════════════════════════════════════════════════════════════════════════
+buy_htf    = i_useHTFBias ? htfBull : true
+buy_sweep  = useInducement_eff ? sslSweepMajor : recentSSLSweep
+buy_struct = recentBullStruct                       // memory-based: setup stays armed for N bars after BOS/CHoCH
+buy_ob     = f_inBullOB()
+buy_fvg    = f_inBullFVG()
+buy_pd     = i_useOTE ? inBuyOTE : inDiscount
+buy_vol    = volOK
+buy_bar    = i_requireBarConf ? close > open : true // bullish reaction bar at the OB/FVG
+
+buyScore = (buy_htf ? 1 : 0) + (buy_sweep ? 1 : 0) + (buy_struct ? 1 : 0) + (buy_ob ? 1 : 0) + (buy_fvg ? 1 : 0) + (buy_pd ? 1 : 0) + (buy_vol ? 1 : 0)
+
+sell_htf    = i_useHTFBias ? htfBear : true
+sell_sweep  = useInducement_eff ? bslSweepMajor : recentBSLSweep
+sell_struct = recentBearStruct
+sell_ob     = f_inBearOB()
+sell_fvg    = f_inBearFVG()
+sell_pd     = i_useOTE ? inSellOTE : inPremium
+sell_vol    = volOK
+sell_bar    = i_requireBarConf ? close < open : true
+
+sellScore = (sell_htf ? 1 : 0) + (sell_sweep ? 1 : 0) + (sell_struct ? 1 : 0) + (sell_ob ? 1 : 0) + (sell_fvg ? 1 : 0) + (sell_pd ? 1 : 0) + (sell_vol ? 1 : 0)
+
+// Pre-movement trigger:
+//   sweep already happened (memory) AND structure already shifted (memory)
+//   AND price has now returned to an OB or FVG AND a reaction bar prints
+//   → entry on the retrace, BEFORE the next leg
+buy_core_trigger  = buy_sweep  and buy_struct  and (buy_ob  or buy_fvg)  and buy_bar
+sell_core_trigger = sell_sweep and sell_struct and (sell_ob or sell_fvg) and sell_bar
+
+buyCandidate  = sessionOK and buy_core_trigger  and buyScore  >= minScore_eff and regimeAllowsBuy
+sellCandidate = sessionOK and sell_core_trigger and sellScore >= minScore_eff and regimeAllowsSell
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   12. ENTRY / SL / TP CALCULATION
+//   Calc functions are called every bar (Pine v6 best practice — silences the
+//   "should be called on each calculation for consistency" warning) and the
+//   results are only consumed inside the signal-fired branches below.
+// ════════════════════════════════════════════════════════════════════════════════════
+f_calcSL_buy() =>
+    float sl = 0.0
+    if i_slMode == "Structure"
+        sl := ta.lowest(low, 5) * (1 - i_slBuffer / 100)
+    else if i_slMode == "ATR"
+        sl := close - atr14 * i_slATR
+    else
+        sl := close * (1 - i_slFixedPct / 100)
+    sl
+
+f_calcSL_sell() =>
+    float sl = 0.0
+    if i_slMode == "Structure"
+        sl := ta.highest(high, 5) * (1 + i_slBuffer / 100)
+    else if i_slMode == "ATR"
+        sl := close + atr14 * i_slATR
+    else
+        sl := close * (1 + i_slFixedPct / 100)
+    sl
+
+// Always evaluate (Pine v6 consistency requirement)
+buySLcalc  = f_calcSL_buy()
+sellSLcalc = f_calcSL_sell()
+
+// Position-size suggestion. Defined here (before the trade-plan block) because
+// the buy/sell alert messages call it inside their if-blocks. Pine v6 forbids
+// forward references to user-defined functions.
+f_positionSize(_entry, _sl) =>
+    risk    = math.abs(_entry - _sl)
+    riskAmt = i_account * (i_riskPct / 100)
+    risk == 0 ? 0.0 : riskAmt / risk
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   12b. ADAPTIVE TARGETS — project TP1 / TP2 / TP3 to actual price-action levels
+//   For BUYS: scan above entry for unswept BSL pools, opposing (bear) OBs / FVGs,
+//   and HTF key levels (PDH, PWH, PMH, daily/weekly mid). Sort ascending and pick
+//   the three nearest. Falls back to R-multiples when the structure stack is short.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+f_collectBuyTargets(_entry) =>
+    arr = array.new<float>()
+    if array.size(liqs) > 0
+        for j = 0 to array.size(liqs) - 1
+            lq = array.get(liqs, j)
+            if lq.buyside and not lq.swept and lq.lvl > _entry
+                array.push(arr, lq.lvl)
+    if array.size(obs) > 0
+        for j = 0 to array.size(obs) - 1
+            ob = array.get(obs, j)
+            isBearZone = (not ob.bull and not ob.isBreaker) or (ob.bull and ob.isBreaker)
+            if isBearZone and not ob.mitigated and ob.bot > _entry
+                array.push(arr, ob.bot)
+    if array.size(fvgs) > 0
+        for j = 0 to array.size(fvgs) - 1
+            fv = array.get(fvgs, j)
+            if not fv.bull and not fv.mitigated and fv.bot > _entry
+                array.push(arr, fv.bot)
+    if i_useKeyAsTP
+        if not na(pdHigh) and pdHigh > _entry
+            array.push(arr, pdHigh)
+        if not na(dHigh)  and dHigh  > _entry and dHigh != pdHigh
+            array.push(arr, dHigh)
+        if not na(pwHigh) and pwHigh > _entry
+            array.push(arr, pwHigh)
+        if not na(wHigh)  and wHigh  > _entry and wHigh != pwHigh
+            array.push(arr, wHigh)
+        if not na(pmHigh) and pmHigh > _entry
+            array.push(arr, pmHigh)
+    if i_useMTFAsTP
+        if not na(htf60H_last)  and htf60H_last  > _entry
+            array.push(arr, htf60H_last)
+        if not na(htf240H_last) and htf240H_last > _entry
+            array.push(arr, htf240H_last)
+    if not na(pdMid) and pdMid > _entry
+        array.push(arr, pdMid)
+    array.sort(arr, order.ascending)
+    arr
+
+f_collectSellTargets(_entry) =>
+    arr = array.new<float>()
+    if array.size(liqs) > 0
+        for j = 0 to array.size(liqs) - 1
+            lq = array.get(liqs, j)
+            if not lq.buyside and not lq.swept and lq.lvl < _entry
+                array.push(arr, lq.lvl)
+    if array.size(obs) > 0
+        for j = 0 to array.size(obs) - 1
+            ob = array.get(obs, j)
+            isBullZone = (ob.bull and not ob.isBreaker) or (not ob.bull and ob.isBreaker)
+            if isBullZone and not ob.mitigated and ob.top < _entry
+                array.push(arr, ob.top)
+    if array.size(fvgs) > 0
+        for j = 0 to array.size(fvgs) - 1
+            fv = array.get(fvgs, j)
+            if fv.bull and not fv.mitigated and fv.top < _entry
+                array.push(arr, fv.top)
+    if i_useKeyAsTP
+        if not na(pdLow) and pdLow < _entry
+            array.push(arr, pdLow)
+        if not na(dLow)  and dLow  < _entry and dLow != pdLow
+            array.push(arr, dLow)
+        if not na(pwLow) and pwLow < _entry
+            array.push(arr, pwLow)
+        if not na(wLow)  and wLow  < _entry and wLow != pwLow
+            array.push(arr, wLow)
+        if not na(pmLow) and pmLow < _entry
+            array.push(arr, pmLow)
+    if i_useMTFAsTP
+        if not na(htf60L_last)  and htf60L_last  < _entry
+            array.push(arr, htf60L_last)
+        if not na(htf240L_last) and htf240L_last < _entry
+            array.push(arr, htf240L_last)
+    if not na(pdMid) and pdMid < _entry
+        array.push(arr, pdMid)
+    array.sort(arr, order.descending)
+    arr
+
+// Pick TP1/TP2/TP3 from a sorted array, with R-multiple fallback. Also enforces a
+// minimum distance from entry so we don't put TP1 right on top of the entry bar.
+f_pickTPs(_isBuy, _entry, _sl, _arr) =>
+    rk      = _isBuy ? _entry - _sl : _sl - _entry
+    minDist = rk * 0.5                                 // TP1 must be at least 0.5R away
+    fb1     = _isBuy ? _entry + rk * i_tp1R : _entry - rk * i_tp1R
+    fb2     = _isBuy ? _entry + rk * i_tp2R : _entry - rk * i_tp2R
+    fb3     = _isBuy ? _entry + rk * i_tp3R : _entry - rk * i_tp3R
+    float t1 = na
+    float t2 = na
+    float t3 = na
+    n = array.size(_arr)
+    picked = array.new<float>()
+    for j = 0 to n - 1
+        v = array.get(_arr, j)
+        d = _isBuy ? v - _entry : _entry - v
+        if d >= minDist
+            // de-dup with tolerance
+            ok = true
+            if array.size(picked) > 0
+                for k = 0 to array.size(picked) - 1
+                    if math.abs(array.get(picked, k) - v) <= atr14 * 0.3
+                        ok := false
+                        break
+            if ok
+                array.push(picked, v)
+                if array.size(picked) >= 3
+                    break
+    p = array.size(picked)
+    t1 := p >= 1 ? array.get(picked, 0) : fb1
+    t2 := p >= 2 ? array.get(picked, 1) : fb2
+    t3 := p >= 3 ? array.get(picked, 2) : fb3
+    // Guarantee t1 < t2 < t3 for buys (and reverse for sells)
+    if _isBuy
+        if t2 <= t1
+            t2 := math.max(t2, fb2)
+        if t3 <= t2
+            t3 := math.max(t3, fb3)
+    else
+        if t2 >= t1
+            t2 := math.min(t2, fb2)
+        if t3 >= t2
+            t3 := math.min(t3, fb3)
+    [t1, t2, t3]
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   12c. INSTITUTIONAL LIQUIDITY INTELLIGENCE
+//   Walks the unswept BSL / SSL pools above and below the current price and
+//   ranks them by attractiveness (grade + distance + HTF alignment) to estimate
+//   which side institutions are likely to sweep next, and surfaces the top
+//   targets for the dashboard "Path" cell.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+// Strength of a single pool, scored 0-100 from a 1-5 grade
+f_strScore(_g) =>
+    _g >= 5 ? 95 : _g >= 4 ? 80 : _g >= 3 ? 60 : _g >= 2 ? 45 : 25
+
+// Find the nearest unswept BSL pool above _price, return [level, grade, distInATR]
+f_nextBSL(_price) =>
+    float bestLvl = na
+    int   bestGr  = 0
+    if array.size(liqs) > 0
+        for j = 0 to array.size(liqs) - 1
+            lq = array.get(liqs, j)
+            if lq.buyside and not lq.swept and lq.lvl > _price
+                if na(bestLvl) or lq.lvl < bestLvl
+                    bestLvl := lq.lvl
+                    bestGr  := lq.grade
+    distR = na(bestLvl) or atr14 == 0 ? na : (bestLvl - _price) / atr14
+    [bestLvl, bestGr, distR]
+
+f_nextSSL(_price) =>
+    float bestLvl = na
+    int   bestGr  = 0
+    if array.size(liqs) > 0
+        for j = 0 to array.size(liqs) - 1
+            lq = array.get(liqs, j)
+            if not lq.buyside and not lq.swept and lq.lvl < _price
+                if na(bestLvl) or lq.lvl > bestLvl
+                    bestLvl := lq.lvl
+                    bestGr  := lq.grade
+    distR = na(bestLvl) or atr14 == 0 ? na : (_price - bestLvl) / atr14
+    [bestLvl, bestGr, distR]
+
+// Sweep-probability heuristic. Higher when the pool is strong, close, and the
+// HTF stack is leaning that way. 0..100 inclusive.
+f_sweepProb(_grade, _distR, _isBuyside) =>
+    base    = f_strScore(_grade)
+    distAdj = na(_distR) ? -50 : math.max(-30, 30 - _distR * 8)         // <1R close = +20, 5R far = -10
+    htfAdj  = (_isBuyside  and htfAlignmentScore >=  2) ? 10 : (not _isBuyside and htfAlignmentScore <= -2) ? 10 : (_isBuyside  and htfAlignmentScore <= -2) ? -10 : (not _isBuyside and htfAlignmentScore >=  2) ? -10 : 0
+    raw     = base + distAdj + htfAdj
+    math.max(0, math.min(100, raw))
+
+// Top-N nearest unswept buyside / sellside levels, returned as a single
+// human-readable string for the dashboard "Path" cell.
+f_pathStr(_isBuyside, _price, _maxN) =>
+    arr = array.new<float>()
+    if array.size(liqs) > 0
+        for j = 0 to array.size(liqs) - 1
+            lq = array.get(liqs, j)
+            if lq.buyside == _isBuyside and not lq.swept
+                if (_isBuyside and lq.lvl > _price) or (not _isBuyside and lq.lvl < _price)
+                    array.push(arr, lq.lvl)
+    if _isBuyside
+        array.sort(arr, order.ascending)
+    else
+        array.sort(arr, order.descending)
+    string s = ""
+    n = math.min(array.size(arr), _maxN)
+    if n == 0
+        s := "-"
+    else
+        for j = 0 to n - 1
+            s := s + (j == 0 ? "" : " -> ") + str.tostring(array.get(arr, j), format.mintick)
+    s
+
+// Compute the live picture every bar so the dashboard always has fresh values
+[nextBSLLvl, nextBSLGr, nextBSLDistR] = f_nextBSL(close)
+[nextSSLLvl, nextSSLGr, nextSSLDistR] = f_nextSSL(close)
+nextBSLProb = f_sweepProb(nextBSLGr, nextBSLDistR, true)
+nextSSLProb = f_sweepProb(nextSSLGr, nextSSLDistR, false)
+sweepDirIsUp = nextBSLProb >= nextSSLProb
+pathUpStr   = f_pathStr(true,  close, 3)
+pathDnStr   = f_pathStr(false, close, 3)
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   13. TRADE PLAN STATE MACHINE
+//   At most ONE active trade plan at a time. New same-direction signals are
+//   suppressed while a trade is active. Opposite-direction signals replace the
+//   plan. Plan auto-clears when SL or TP3 is hit.
+// ════════════════════════════════════════════════════════════════════════════════════
+var line  tpLnEntry = na
+var line  tpLnSL    = na
+var line  tpLnTP1   = na
+var line  tpLnTP2   = na
+var line  tpLnTP3   = na
+var label tpLbEntry = na
+var label tpLbSL    = na
+var label tpLbTP1   = na
+var label tpLbTP2   = na
+var label tpLbTP3   = na
+var label tpLbSig   = na              // big BUY/SELL marker on signal bar
+
+var bool  tpActive  = false
+var bool  tpIsBuy   = false
+var float tpEntry   = na
+var float tpSL      = na
+var float tpTP1     = na
+var float tpTP2     = na
+var float tpTP3     = na
+var int   tpBar     = na
+var int   tpScore   = na
+var int   tpHitLevel = 0         // 0 none, 1 TP1 hit, 2 TP2 hit (set by smart-mgmt block)
+
+// Pine v6 forbids user-defined functions from writing to global vars, so this
+// function only deletes the drawing objects. Each call site is responsible for
+// flipping tpActive itself.
+f_clearPlanDrawings() =>
+    line.delete(tpLnEntry)
+    line.delete(tpLnSL)
+    line.delete(tpLnTP1)
+    line.delete(tpLnTP2)
+    line.delete(tpLnTP3)
+    label.delete(tpLbEntry)
+    label.delete(tpLbSL)
+    label.delete(tpLbTP1)
+    label.delete(tpLbTP2)
+    label.delete(tpLbTP3)
+    label.delete(tpLbSig)
+    0
+
+// Signals can fire only when no same-direction trade is active.
+// Opposite-direction signal replaces the existing plan.
+buySignal  = buyCandidate  and (not tpActive or not tpIsBuy)
+sellSignal = sellCandidate and (not tpActive or tpIsBuy)
+
+// Pre-fire: clear an existing plan if new opposite signal arrives
+if (buySignal and tpActive and not tpIsBuy) or (sellSignal and tpActive and tpIsBuy)
+    f_clearPlanDrawings()
+    tpActive := false
+    // Close any open strategy position so the opposite signal can flip cleanly
+    strategy.close_all(comment = "FLIP")
+
+if buySignal
+    f_clearPlanDrawings()             // wipe any stale state defensively
+    tpActive := false
+    tpIsBuy := true
+    tpEntry := close
+    tpSL    := buySLcalc
+    rk       = tpEntry - tpSL
+    if i_useAdaptiveTP
+        targetsBuy = f_collectBuyTargets(tpEntry)
+        [t1b, t2b, t3b] = f_pickTPs(true, tpEntry, tpSL, targetsBuy)
+        tpTP1 := t1b
+        tpTP2 := t2b
+        tpTP3 := t3b
+    else
+        tpTP1 := tpEntry + rk * i_tp1R
+        tpTP2 := tpEntry + rk * i_tp2R
+        tpTP3 := tpEntry + rk * i_tp3R
+    tpBar   := bar_index
+    tpScore := buyScore
+    tpHitLevel := 0
+    tpActive := true
+    col_entry = c_bull
+    col_tp    = c_tpBuy
+    tpLnEntry := line.new(tpBar, tpEntry, tpBar + 1, tpEntry, color = col_entry, width = 2, style = line.style_solid,  extend = extend.right)
+    tpLnSL    := line.new(tpBar, tpSL,    tpBar + 1, tpSL,    color = c_slLine,  width = 2, style = line.style_dashed, extend = extend.right)
+    tpLnTP1   := line.new(tpBar, tpTP1,   tpBar + 1, tpTP1,   color = color.new(col_tp, 20), width = 1, style = line.style_dashed, extend = extend.right)
+    tpLnTP2   := line.new(tpBar, tpTP2,   tpBar + 1, tpTP2,   color = color.new(col_tp, 40), width = 1, style = line.style_dashed, extend = extend.right)
+    tpLnTP3   := line.new(tpBar, tpTP3,   tpBar + 1, tpTP3,   color = color.new(col_tp, 60), width = 1, style = line.style_dashed, extend = extend.right)
+    tpLbSig   := label.new(tpBar, low, "BUY  " + str.tostring(tpScore) + "/7", color = c_bull, textcolor = color.white, style = label.style_label_up, size = size.normal)
+    tpLbEntry := label.new(bar_index + 1, tpEntry, "ENTRY " + str.tostring(tpEntry, format.mintick), color = col_entry, textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbSL    := label.new(bar_index + 1, tpSL,    "SL "    + str.tostring(tpSL,    format.mintick), color = c_slLine,  textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbTP1   := label.new(bar_index + 1, tpTP1,   "TP1 "   + str.tostring(tpTP1,   format.mintick), color = col_tp,    textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbTP2   := label.new(bar_index + 1, tpTP2,   "TP2 "   + str.tostring(tpTP2,   format.mintick), color = color.new(col_tp, 30), textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbTP3   := label.new(bar_index + 1, tpTP3,   "TP3 "   + str.tostring(tpTP3,   format.mintick), color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.small)
+    // === STRATEGY ENTRY/EXIT (this file only) ===
+    // Submit a long with bracket exit: stop = tpSL, limit = tpTP3. The same
+    // exit id is reused later by the smart-management block to slide the SL
+    // up to break-even (after TP1) or to TP1 (after TP2).
+    strategy.entry("BUY", strategy.long)
+    strategy.exit("EXIT_BUY", "BUY", stop = tpSL, limit = tpTP3, comment_loss = "SL", comment_profit = "TP3")
+    // Rich dynamic alert with all levels (and position size if enabled). When
+    // JSON Webhook Alerts is ON, emit a structured payload that drops straight
+    // into broker webhooks (Zerodha Kite Connect / Dhan / Fyers / TradeStation).
+    qtyB = f_positionSize(tpEntry, tpSL)
+    msgB = ""
+    if i_jsonAlerts
+        msgB := "{\"action\":\"BUY\",\"symbol\":\"" + syminfo.ticker + "\",\"entry\":" + str.tostring(tpEntry, format.mintick) + ",\"sl\":" + str.tostring(tpSL, format.mintick) + ",\"tp1\":" + str.tostring(tpTP1, format.mintick) + ",\"tp2\":" + str.tostring(tpTP2, format.mintick) + ",\"tp3\":" + str.tostring(tpTP3, format.mintick) + ",\"qty\":" + str.tostring(qtyB, "#.##") + ",\"score\":" + str.tostring(tpScore) + ",\"time\":\"{{timenow}}\"}"
+    else
+        posLineB = i_useRiskCalc ? "  Size: " + str.tostring(qtyB, "#.##") + " (risk " + str.tostring(i_riskPct, "#.#") + "%)" : ""
+        msgB := "ICT MASTER PRO  BUY  " + syminfo.ticker + "  Entry " + str.tostring(tpEntry, format.mintick) + "  SL " + str.tostring(tpSL, format.mintick) + "  TP1 " + str.tostring(tpTP1, format.mintick) + "  TP2 " + str.tostring(tpTP2, format.mintick) + "  TP3 " + str.tostring(tpTP3, format.mintick) + "  Score " + str.tostring(tpScore) + "/7" + posLineB
+    alert(msgB, alert.freq_once_per_bar_close)
+
+if sellSignal
+    f_clearPlanDrawings()
+    tpActive := false
+    tpIsBuy := false
+    tpEntry := close
+    tpSL    := sellSLcalc
+    rk       = tpSL - tpEntry
+    if i_useAdaptiveTP
+        targetsSell = f_collectSellTargets(tpEntry)
+        [t1s, t2s, t3s] = f_pickTPs(false, tpEntry, tpSL, targetsSell)
+        tpTP1 := t1s
+        tpTP2 := t2s
+        tpTP3 := t3s
+    else
+        tpTP1 := tpEntry - rk * i_tp1R
+        tpTP2 := tpEntry - rk * i_tp2R
+        tpTP3 := tpEntry - rk * i_tp3R
+    tpBar   := bar_index
+    tpScore := sellScore
+    tpHitLevel := 0
+    tpActive := true
+    col_entry = c_bear
+    col_tp    = c_tpSell
+    tpLnEntry := line.new(tpBar, tpEntry, tpBar + 1, tpEntry, color = col_entry, width = 2, style = line.style_solid,  extend = extend.right)
+    tpLnSL    := line.new(tpBar, tpSL,    tpBar + 1, tpSL,    color = c_slLine,  width = 2, style = line.style_dashed, extend = extend.right)
+    tpLnTP1   := line.new(tpBar, tpTP1,   tpBar + 1, tpTP1,   color = color.new(col_tp, 20), width = 1, style = line.style_dashed, extend = extend.right)
+    tpLnTP2   := line.new(tpBar, tpTP2,   tpBar + 1, tpTP2,   color = color.new(col_tp, 40), width = 1, style = line.style_dashed, extend = extend.right)
+    tpLnTP3   := line.new(tpBar, tpTP3,   tpBar + 1, tpTP3,   color = color.new(col_tp, 60), width = 1, style = line.style_dashed, extend = extend.right)
+    tpLbSig   := label.new(tpBar, high, "SELL  " + str.tostring(tpScore) + "/7", color = c_bear, textcolor = color.white, style = label.style_label_down, size = size.normal)
+    tpLbEntry := label.new(bar_index + 1, tpEntry, "ENTRY " + str.tostring(tpEntry, format.mintick), color = col_entry, textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbSL    := label.new(bar_index + 1, tpSL,    "SL "    + str.tostring(tpSL,    format.mintick), color = c_slLine,  textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbTP1   := label.new(bar_index + 1, tpTP1,   "TP1 "   + str.tostring(tpTP1,   format.mintick), color = col_tp,    textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbTP2   := label.new(bar_index + 1, tpTP2,   "TP2 "   + str.tostring(tpTP2,   format.mintick), color = color.new(col_tp, 30), textcolor = color.white, style = label.style_label_left, size = size.small)
+    tpLbTP3   := label.new(bar_index + 1, tpTP3,   "TP3 "   + str.tostring(tpTP3,   format.mintick), color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.small)
+    // === STRATEGY ENTRY/EXIT (this file only) ===
+    strategy.entry("SELL", strategy.short)
+    strategy.exit("EXIT_SELL", "SELL", stop = tpSL, limit = tpTP3, comment_loss = "SL", comment_profit = "TP3")
+    qtyS = f_positionSize(tpEntry, tpSL)
+    msgS = ""
+    if i_jsonAlerts
+        msgS := "{\"action\":\"SELL\",\"symbol\":\"" + syminfo.ticker + "\",\"entry\":" + str.tostring(tpEntry, format.mintick) + ",\"sl\":" + str.tostring(tpSL, format.mintick) + ",\"tp1\":" + str.tostring(tpTP1, format.mintick) + ",\"tp2\":" + str.tostring(tpTP2, format.mintick) + ",\"tp3\":" + str.tostring(tpTP3, format.mintick) + ",\"qty\":" + str.tostring(qtyS, "#.##") + ",\"score\":" + str.tostring(tpScore) + ",\"time\":\"{{timenow}}\"}"
+    else
+        posLineS = i_useRiskCalc ? "  Size: " + str.tostring(qtyS, "#.##") + " (risk " + str.tostring(i_riskPct, "#.#") + "%)" : ""
+        msgS := "ICT MASTER PRO  SELL  " + syminfo.ticker + "  Entry " + str.tostring(tpEntry, format.mintick) + "  SL " + str.tostring(tpSL, format.mintick) + "  TP1 " + str.tostring(tpTP1, format.mintick) + "  TP2 " + str.tostring(tpTP2, format.mintick) + "  TP3 " + str.tostring(tpTP3, format.mintick) + "  Score " + str.tostring(tpScore) + "/7" + posLineS
+    alert(msgS, alert.freq_once_per_bar_close)
+
+// Smart Trade Management — when TP1 hits, advance the SL to entry (break-even);
+// when TP2 hits, advance the SL to TP1 (locks in 1R). The TP lines themselves
+// are not redrawn — only the SL line/label move.
+if tpActive and i_smartMgmt
+    if tpIsBuy
+        if tpHitLevel < 2 and high >= tpTP2
+            tpHitLevel := 2
+            tpSL := tpTP1
+            line.set_y1(tpLnSL, tpSL)
+            line.set_y2(tpLnSL, tpSL)
+            label.set_y(tpLbSL, tpSL)
+            label.set_text(tpLbSL, "SL " + str.tostring(tpSL, format.mintick) + " (locked +1R)")
+            // Re-issue strategy.exit with the moved stop. Same id => updates the bracket.
+            strategy.exit("EXIT_BUY", "BUY", stop = tpSL, limit = tpTP3)
+        else if tpHitLevel < 1 and high >= tpTP1
+            tpHitLevel := 1
+            tpSL := tpEntry
+            line.set_y1(tpLnSL, tpSL)
+            line.set_y2(tpLnSL, tpSL)
+            label.set_y(tpLbSL, tpSL)
+            label.set_text(tpLbSL, "SL " + str.tostring(tpSL, format.mintick) + " (BE)")
+            strategy.exit("EXIT_BUY", "BUY", stop = tpSL, limit = tpTP3)
+    else
+        if tpHitLevel < 2 and low <= tpTP2
+            tpHitLevel := 2
+            tpSL := tpTP1
+            line.set_y1(tpLnSL, tpSL)
+            line.set_y2(tpLnSL, tpSL)
+            label.set_y(tpLbSL, tpSL)
+            label.set_text(tpLbSL, "SL " + str.tostring(tpSL, format.mintick) + " (locked +1R)")
+            strategy.exit("EXIT_SELL", "SELL", stop = tpSL, limit = tpTP3)
+        else if tpHitLevel < 1 and low <= tpTP1
+            tpHitLevel := 1
+            tpSL := tpEntry
+            line.set_y1(tpLnSL, tpSL)
+            line.set_y2(tpLnSL, tpSL)
+            label.set_y(tpLbSL, tpSL)
+            label.set_text(tpLbSL, "SL " + str.tostring(tpSL, format.mintick) + " (BE)")
+            strategy.exit("EXIT_SELL", "SELL", stop = tpSL, limit = tpTP3)
+
+// Auto-clear plan when SL or final TP is hit (use bar's high/low for trigger)
+if tpActive
+    if tpIsBuy and (low <= tpSL or high >= tpTP3)
+        f_clearPlanDrawings()
+        tpActive := false
+    else if not tpIsBuy and (high >= tpSL or low <= tpTP3)
+        f_clearPlanDrawings()
+        tpActive := false
+
+// Slide labels to the right edge of the chart so they always stay visible
+// regardless of zoom / scroll. Runs every bar so the labels track the latest
+// bar continuously.
+if tpActive and not na(tpLbEntry)
+    rightX = bar_index + 1
+    label.set_x(tpLbEntry, rightX)
+    label.set_x(tpLbSL,    rightX)
+    label.set_x(tpLbTP1,   rightX)
+    label.set_x(tpLbTP2,   rightX)
+    label.set_x(tpLbTP3,   rightX)
+
+plotshape(buySignal,  title = "Buy Signal",  location = location.belowbar, color = c_bull, style = shape.triangleup,   size = size.tiny)
+plotshape(sellSignal, title = "Sell Signal", location = location.abovebar, color = c_bear, style = shape.triangledown, size = size.tiny)
+
+// Compatibility shims so the dashboard "Last Signal / Active Plan / Targets"
+// cells (which were written against the old buyEntry / sellEntry / etc vars)
+// keep working without a second rewrite.
+buyEntry  = tpActive and     tpIsBuy ? tpEntry : na
+buySL     = tpActive and     tpIsBuy ? tpSL    : na
+buyTP1    = tpActive and     tpIsBuy ? tpTP1   : na
+buyTP2    = tpActive and     tpIsBuy ? tpTP2   : na
+buyTP3    = tpActive and     tpIsBuy ? tpTP3   : na
+buyBar    = tpActive and     tpIsBuy ? tpBar   : na
+sellEntry = tpActive and not tpIsBuy ? tpEntry : na
+sellSL    = tpActive and not tpIsBuy ? tpSL    : na
+sellTP1   = tpActive and not tpIsBuy ? tpTP1   : na
+sellTP2   = tpActive and not tpIsBuy ? tpTP2   : na
+sellTP3   = tpActive and not tpIsBuy ? tpTP3   : na
+sellBar   = tpActive and not tpIsBuy ? tpBar   : na
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   13b. PERFORMANCE TRACKER
+//   Logs every fired signal as a Trade and updates each open trade per-bar.
+//   First level hit (TP1 / TP2 / TP3 / SL) is the trade's outcome. Stats:
+//   win rate (TP1+ hit), average R achieved, max drawdown across the rolling
+//   window of the last N closed trades.
+// ════════════════════════════════════════════════════════════════════════════════════
+type Trade
+    int   bar
+    bool  isBuy
+    float entry
+    float sl
+    float tp1
+    float tp2
+    float tp3
+    int   outcome      // 0 = open, 1 = TP1, 2 = TP2, 3 = TP3, -1 = SL
+    float rResult      // realised R multiple
+
+var array<Trade> trades   = array.new<Trade>()
+var int   tradesClosed    = 0
+var int   tradesWon       = 0
+var int   tradesLost      = 0
+var float sumR            = 0.0
+var float maxDDR          = 0.0
+var float runningR        = 0.0
+var float peakR           = 0.0
+
+// Log a new signal
+if i_trackPerf and buySignal
+    array.push(trades, Trade.new(bar_index, true, tpEntry, tpSL, tpTP1, tpTP2, tpTP3, 0, 0.0))
+if i_trackPerf and sellSignal
+    array.push(trades, Trade.new(bar_index, false, tpEntry, tpSL, tpTP1, tpTP2, tpTP3, 0, 0.0))
+
+// Update each open trade. Outcome model: the FIRST level reached (TP1, TP2, TP3
+// or SL) closes the trade and finalises its R. Same-bar tie -> TP wins (price
+// printed the favorable level intra-bar before reversing).
+if i_trackPerf and array.size(trades) > 0
+    for j = 0 to array.size(trades) - 1
+        if j >= array.size(trades)
+            break
+        t = array.get(trades, j)
+        if t.outcome == 0 and bar_index > t.bar
+            risk = t.isBuy ? t.entry - t.sl : t.sl - t.entry
+            done = false
+            if t.isBuy
+                if high >= t.tp3
+                    t.outcome := 3
+                    t.rResult := (t.tp3 - t.entry) / risk
+                    done := true
+                else if high >= t.tp2
+                    t.outcome := 2
+                    t.rResult := (t.tp2 - t.entry) / risk
+                    done := true
+                else if high >= t.tp1
+                    t.outcome := 1
+                    t.rResult := (t.tp1 - t.entry) / risk
+                    done := true
+                else if low <= t.sl
+                    t.outcome := -1
+                    t.rResult := -1.0
+                    done := true
+            else
+                if low <= t.tp3
+                    t.outcome := 3
+                    t.rResult := (t.entry - t.tp3) / risk
+                    done := true
+                else if low <= t.tp2
+                    t.outcome := 2
+                    t.rResult := (t.entry - t.tp2) / risk
+                    done := true
+                else if low <= t.tp1
+                    t.outcome := 1
+                    t.rResult := (t.entry - t.tp1) / risk
+                    done := true
+                else if high >= t.sl
+                    t.outcome := -1
+                    t.rResult := -1.0
+                    done := true
+            if done
+                tradesClosed := tradesClosed + 1
+                if t.rResult > 0
+                    tradesWon  := tradesWon + 1
+                else
+                    tradesLost := tradesLost + 1
+                sumR     := sumR + t.rResult
+                runningR := runningR + t.rResult
+                peakR    := math.max(peakR, runningR)
+                dd       = peakR - runningR
+                maxDDR   := math.max(maxDDR, dd)
+                if i_showPerfLines
+                    perfTxt = t.rResult > 0 ? "+" + str.tostring(t.rResult, "#.##") + "R" : str.tostring(t.rResult, "#.##") + "R"
+                    perfBg  = t.rResult > 0 ? color.new(c_bull, 50) : color.new(c_bear, 50)
+                    perfStyle = t.isBuy ? label.style_label_down : label.style_label_up
+                    perfY   = t.isBuy ? high : low
+                    label.new(bar_index, perfY, perfTxt, color = perfBg, textcolor = color.white, style = perfStyle, size = size.tiny)
+
+// Cap trade history length
+if i_trackPerf and array.size(trades) > i_perfWindow * 3
+    array.shift(trades)
+
+// Rolling window stats — only count the last N closed trades
+f_perfStats() =>
+    int   wins   = 0
+    int   losses = 0
+    float rSum   = 0.0
+    int   counted = 0
+    n = array.size(trades)
+    if n > 0
+        for k = 0 to n - 1
+            if counted >= i_perfWindow
+                break
+            idx = n - 1 - k
+            t = array.get(trades, idx)
+            if t.outcome != 0
+                if t.rResult > 0
+                    wins := wins + 1
+                else
+                    losses := losses + 1
+                rSum := rSum + t.rResult
+                counted := counted + 1
+    [wins, losses, rSum, counted]
+
+[winsW, lossesW, rSumW, countedW] = f_perfStats()
+winRatePct = countedW > 0 ? 100.0 * winsW / countedW : 0.0
+avgRWin    = countedW > 0 ? rSumW / countedW : 0.0
+
+posSizeBuy  = tpActive and tpIsBuy ?     f_positionSize(tpEntry, tpSL) : 0.0
+posSizeSell = tpActive and not tpIsBuy ? f_positionSize(tpEntry, tpSL) : 0.0
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   14. DASHBOARD — at-a-glance ICT context
+// ════════════════════════════════════════════════════════════════════════════════════
+var table dash = table.new(f_dashPos(), 2, 20, border_width = 1, frame_color = color.new(color.gray, 50))
+
+f_zoneText() =>
+    inDiscount ? "DISCOUNT (Buy zone)" : inPremium ? "PREMIUM (Sell zone)" : "EQUILIBRIUM"
+
+f_zoneCol() =>
+    inDiscount ? color.new(c_bull, 70) : inPremium ? color.new(c_bear, 70) : color.new(color.gray, 70)
+
+f_oteText() =>
+    inBuyOTE ? "BUY OTE (0.62-0.79)" : inSellOTE ? "SELL OTE (0.62-0.79)" : "-"
+
+f_sessName() =>
+    inAM ? "AM Macro" : inMid ? "Mid" : inLunch ? "Lunch (avoid)" : inPM ? "PM Macro" : inExpiry ? "Expiry" : "Off-session"
+
+f_sessCol() =>
+    inAM ? color.new(c_sessAM, 50) : inMid ? color.new(c_sessMid, 50) : inLunch ? color.new(c_sessLunch, 50) : inPM ? color.new(c_sessPM, 50) : inExpiry ? color.new(c_sessExpiry, 50) : color.new(color.gray, 80)
+
+f_lastSig() =>
+    string s = "- (waiting)"
+    if not na(buyBar) and (na(sellBar) or buyBar > sellBar)
+        s := "BUY @ " + str.tostring(buyEntry, format.mintick)
+    else if not na(sellBar) and (na(buyBar) or sellBar > buyBar)
+        s := "SELL @ " + str.tostring(sellEntry, format.mintick)
+    s
+
+f_lastSigCol() =>
+    color c = color.new(color.gray, 80)
+    if not na(buyBar) and (na(sellBar) or buyBar > sellBar)
+        c := color.new(c_bull, 70)
+    else if not na(sellBar) and (na(buyBar) or sellBar > buyBar)
+        c := color.new(c_bear, 70)
+    c
+
+f_weeklyText() =>
+    weeklyBullBias ? "BULLISH (above PW mid)" : weeklyBearBias ? "BEARISH (below PW mid)" : "NEUTRAL"
+
+if i_showDash and barstate.islast
+    sz = f_dashSize()
+    cellHdr = color.new(color.gray, 70)
+    table.cell(dash, 0, 0, "ICT MASTER PRO", text_color = color.white, bgcolor = color.new(#1565c0, 0), text_size = sz)
+    table.merge_cells(dash, 0, 0, 1, 0)
+
+    // HTF stack: show 15m, 1H, 4H, Daily bias arrows side-by-side.
+    arr15  = bias15  > 0 ? "UP" : bias15  < 0 ? "DN" : "-"
+    arr60  = bias60  > 0 ? "UP" : bias60  < 0 ? "DN" : "-"
+    arr240 = bias240 > 0 ? "UP" : bias240 < 0 ? "DN" : "-"
+    arrD   = biasD   > 0 ? "UP" : biasD   < 0 ? "DN" : "-"
+    htfStackTxt = "15m " + arr15 + "  1H " + arr60 + "  4H " + arr240 + "  D " + arrD
+    htfStackCol = htfAlignmentScore >=  3 ? color.new(c_bull, 30) : htfAlignmentScore <= -3 ? color.new(c_bear, 30) : math.abs(htfAlignmentScore) >= 2 ? color.new(#1565c0, 50) : color.new(color.gray, 60)
+    table.cell(dash, 0, 1, "HTF Stack", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 1, htfStackTxt, text_color = color.white, bgcolor = htfStackCol, text_size = sz)
+
+    table.cell(dash, 0, 2, "Weekly Bias", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    wkBg = weeklyBullBias ? color.new(c_bull, 60) : weeklyBearBias ? color.new(c_bear, 60) : color.new(color.gray, 60)
+    table.cell(dash, 1, 2, f_weeklyText(), text_color = color.white, bgcolor = wkBg, text_size = sz)
+
+    table.cell(dash, 0, 3, "Range Zone", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 3, f_zoneText(), text_color = color.white, bgcolor = f_zoneCol(), text_size = sz)
+
+    table.cell(dash, 0, 4, "OTE", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    oteBg = inBuyOTE ? color.new(c_bull, 60) : inSellOTE ? color.new(c_bear, 60) : color.new(color.gray, 80)
+    table.cell(dash, 1, 4, f_oteText(), text_color = color.white, bgcolor = oteBg, text_size = sz)
+
+    table.cell(dash, 0, 5, "Session", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 5, f_sessName(), text_color = color.white, bgcolor = f_sessCol(), text_size = sz)
+
+    table.cell(dash, 0, 6, "Recent Sweep", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    sweepTxt = recentSSLSweep ? "SSL x (bullish setup)" : recentBSLSweep ? "BSL x (bearish setup)" : "-"
+    sweepCol = recentSSLSweep ? color.new(c_bull, 60) : recentBSLSweep ? color.new(c_bear, 60) : color.new(color.gray, 80)
+    table.cell(dash, 1, 6, sweepTxt, text_color = color.white, bgcolor = sweepCol, text_size = sz)
+
+    table.cell(dash, 0, 7, "Volume", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    volBg = volOK ? color.new(c_bull, 60) : color.new(color.gray, 70)
+    table.cell(dash, 1, 7, volOK ? "ABOVE AVG" : "below avg", text_color = color.white, bgcolor = volBg, text_size = sz)
+
+    table.cell(dash, 0, 8, "Buy Score", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    buyScoreBg = buyScore >= minScore_eff ? color.new(c_bull, 40) : color.new(color.gray, 80)
+    table.cell(dash, 1, 8, str.tostring(buyScore) + " / 7", text_color = color.white, bgcolor = buyScoreBg, text_size = sz)
+
+    table.cell(dash, 0, 9, "Sell Score", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    sellScoreBg = sellScore >= minScore_eff ? color.new(c_bear, 40) : color.new(color.gray, 80)
+    table.cell(dash, 1, 9, str.tostring(sellScore) + " / 7", text_color = color.white, bgcolor = sellScoreBg, text_size = sz)
+
+    table.cell(dash, 0, 10, "Last Signal", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 10, f_lastSig(), text_color = color.white, bgcolor = f_lastSigCol(), text_size = sz)
+
+    activeBuy  = not na(buyBar)  and (na(sellBar) or buyBar  > sellBar)
+    activeSell = not na(sellBar) and (na(buyBar)  or sellBar > buyBar)
+    table.cell(dash, 0, 11, "Active Plan", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    string planTxt = "-"
+    if activeBuy
+        planTxt := "E:" + str.tostring(buyEntry, format.mintick) + " SL:" + str.tostring(buySL, format.mintick)
+    else if activeSell
+        planTxt := "E:" + str.tostring(sellEntry, format.mintick) + " SL:" + str.tostring(sellSL, format.mintick)
+    table.cell(dash, 1, 11, planTxt, text_color = color.white, bgcolor = color.new(color.gray, 80), text_size = sz)
+
+    table.cell(dash, 0, 12, "Targets (R)", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    string tpTxt = "-"
+    if activeBuy
+        tpTxt := "TP1:" + str.tostring(buyTP1, format.mintick) + " TP2:" + str.tostring(buyTP2, format.mintick) + " TP3:" + str.tostring(buyTP3, format.mintick)
+    else if activeSell
+        tpTxt := "TP1:" + str.tostring(sellTP1, format.mintick) + " TP2:" + str.tostring(sellTP2, format.mintick) + " TP3:" + str.tostring(sellTP3, format.mintick)
+    table.cell(dash, 1, 12, tpTxt, text_color = color.white, bgcolor = color.new(color.gray, 80), text_size = sz)
+
+    // Pre-movement awareness: setup armed = sweep + structure are both fresh,
+    // we just need price to retrace into an OB/FVG and react.
+    buySetupArmed  = recentSSLSweep and recentBullStruct
+    sellSetupArmed = recentBSLSweep and recentBearStruct
+    string statusTxt = "Scanning..."
+    color  statusCol = color.new(#1565c0, 0)
+    if buyCandidate
+        statusTxt := "BUY READY  (take entry)"
+        statusCol := color.new(c_bull, 0)
+    else if sellCandidate
+        statusTxt := "SELL READY  (take entry)"
+        statusCol := color.new(c_bear, 0)
+    else if buySetupArmed and (buy_ob or buy_fvg)
+        statusTxt := "BUY armed - waiting bar confirm"
+        statusCol := color.new(c_bull, 30)
+    else if sellSetupArmed and (sell_ob or sell_fvg)
+        statusTxt := "SELL armed - waiting bar confirm"
+        statusCol := color.new(c_bear, 30)
+    else if buySetupArmed
+        statusTxt := "Buy setup forming - awaiting retrace"
+        statusCol := color.new(c_bull, 60)
+    else if sellSetupArmed
+        statusTxt := "Sell setup forming - awaiting retrace"
+        statusCol := color.new(c_bear, 60)
+    else if buyScore >= minScore_eff
+        statusTxt := "Buy score met - need sweep+struct"
+    else if sellScore >= minScore_eff
+        statusTxt := "Sell score met - need sweep+struct"
+    table.cell(dash, 0, 13, "STATUS", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 13, statusTxt, text_color = color.white, bgcolor = statusCol, text_size = sz)
+
+    // Row 14 — Regime
+    table.cell(dash, 0, 14, "Regime", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 14, regimeStr + "  (ADX " + str.tostring(adx, "#") + ")", text_color = color.white, bgcolor = regimeCol, text_size = sz)
+
+    // Row 15 — Last sweep quality
+    string sweepQTxt = "-"
+    color  sweepQCol = color.new(color.gray, 80)
+    if recentSSLSweep
+        sweepQTxt := f_strLabel(lastSSLSweepGrade) + " SSL " + (lastSSLSweepGrade >= 3 ? "(major)" : "(inducement)")
+        sweepQCol := lastSSLSweepGrade >= 3 ? color.new(c_bull, 40) : color.new(#ef6c00, 50)
+    else if recentBSLSweep
+        sweepQTxt := f_strLabel(lastBSLSweepGrade) + " BSL " + (lastBSLSweepGrade >= 3 ? "(major)" : "(inducement)")
+        sweepQCol := lastBSLSweepGrade >= 3 ? color.new(c_bear, 40) : color.new(#ef6c00, 50)
+    table.cell(dash, 0, 15, "Sweep Quality", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 15, sweepQTxt, text_color = color.white, bgcolor = sweepQCol, text_size = sz)
+
+    // Row 16 — Performance stats
+    string perfTxt = "no closed trades yet"
+    color  perfCol = color.new(color.gray, 70)
+    if countedW > 0
+        perfTxt := "Win " + str.tostring(winRatePct, "#") + "%  Avg " + str.tostring(avgRWin, "#.##") + "R  DD " + str.tostring(maxDDR, "#.##") + "R  (" + str.tostring(countedW) + " trades)"
+    if countedW >= 5
+        if winRatePct >= 60 and avgRWin > 0
+            perfCol := color.new(c_bull, 40)
+        else if winRatePct >= 40
+            perfCol := color.new(#1565c0, 30)
+        else
+            perfCol := color.new(c_bear, 40)
+    table.cell(dash, 0, 16, "Performance", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 16, perfTxt, text_color = color.white, bgcolor = perfCol, text_size = sz)
+
+    // Row 17 — Diagnostic. When a side has score >= 3 but no signal can fire,
+    // build a comma-separated list of the blocking filters so the user can
+    // see exactly which setting to relax. Also surfaces the active preset.
+    string diagTxt = "-"
+    color  diagCol = color.new(color.gray, 80)
+    if i_diagnostic
+        // Pick whichever side has the higher score to diagnose
+        bestIsBuy   = buyScore >= sellScore
+        bestScore   = bestIsBuy ? buyScore  : sellScore
+        bestStruct  = bestIsBuy ? buy_struct : sell_struct
+        bestSweep   = bestIsBuy ? buy_sweep  : sell_sweep
+        bestOB      = bestIsBuy ? buy_ob     : sell_ob
+        bestFVG     = bestIsBuy ? buy_fvg    : sell_fvg
+        bestPD      = bestIsBuy ? buy_pd     : sell_pd
+        bestHTF     = bestIsBuy ? buy_htf    : sell_htf
+        bestVol     = bestIsBuy ? buy_vol    : sell_vol
+        bestBar     = bestIsBuy ? buy_bar    : sell_bar
+        bestSweepRaw = bestIsBuy ? recentSSLSweep : recentBSLSweep
+        bestSweepGr  = bestIsBuy ? lastSSLSweepGrade : lastBSLSweepGrade
+        if bestScore >= 3 and not (buyCandidate or sellCandidate)
+            blockers = array.new<string>()
+            if not bestStruct
+                array.push(blockers, "no recent BOS/CHoCH")
+            if not bestSweep
+                if bestSweepRaw and bestSweepGr < 3 and useInducement_eff
+                    array.push(blockers, "sweep is G" + str.tostring(bestSweepGr) + " (inducement filter)")
+                else
+                    array.push(blockers, "no recent sweep")
+            if not (bestOB or bestFVG)
+                array.push(blockers, "price not in OB/FVG")
+            if not bestPD
+                array.push(blockers, i_useOTE ? "outside OTE 0.62-0.79" : "wrong premium/discount zone")
+            if not bestHTF and i_useHTFBias
+                array.push(blockers, "HTF bias against trade")
+            if not bestVol and useVolume_eff
+                array.push(blockers, "volume below avg")
+            if not bestBar and i_requireBarConf
+                array.push(blockers, "no reversal bar")
+            if not sessionOK
+                array.push(blockers, "lunch block")
+            if not regimeAllowsBuy and bestIsBuy and i_useRegime
+                array.push(blockers, "regime: trending against buy")
+            if not regimeAllowsSell and not bestIsBuy and i_useRegime
+                array.push(blockers, "regime: trending against sell")
+            if array.size(blockers) > 0
+                diagTxt := (bestIsBuy ? "BUY " : "SELL ") + str.tostring(bestScore) + "/7 blocked by: " + array.join(blockers, ", ")
+                diagCol := color.new(#ef6c00, 30)
+            else
+                diagTxt := "score below " + str.tostring(minScore_eff)
+                diagCol := color.new(color.gray, 70)
+        else
+            // Show active preset summary for context
+            presetLabel = isCustom ? "Custom" : isIndex ? "Index" : isCrypto ? "Crypto" : isForex ? "Forex" : isFutures ? "Futures" : isStock ? "Stock" : "Auto"
+            diagTxt := "Preset: " + presetLabel + "  Vol:" + (useVolume_eff ? "on" : "off") + "  Inducement:" + (useInducement_eff ? "on" : "off") + "  MinScore:" + str.tostring(minScore_eff) + "  Lunch:" + (avoidLunch_eff ? "block" : "allow")
+            diagCol := color.new(#1565c0, 50)
+    table.cell(dash, 0, 17, "Diagnostic", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 17, diagTxt, text_color = color.white, bgcolor = diagCol, text_size = sz)
+
+    // Row 18 — Next-sweep target (BSL above and SSL below, with probability)
+    string nextSwpTxt = "-"
+    color  nextSwpCol = color.new(color.gray, 70)
+    if not na(nextBSLLvl) or not na(nextSSLLvl)
+        bslPart = na(nextBSLLvl) ? "-" : f_strLabel(nextBSLGr) + " BSL " + str.tostring(nextBSLLvl, format.mintick) + " (" + str.tostring(nextBSLProb, "#") + "%)"
+        sslPart = na(nextSSLLvl) ? "-" : f_strLabel(nextSSLGr) + " SSL " + str.tostring(nextSSLLvl, format.mintick) + " (" + str.tostring(nextSSLProb, "#") + "%)"
+        nextSwpTxt := "UP " + bslPart + "  |  DN " + sslPart
+        nextSwpCol := sweepDirIsUp ? color.new(c_bull, 50) : color.new(c_bear, 50)
+    table.cell(dash, 0, 18, "Next Sweep", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 18, nextSwpTxt, text_color = color.white, bgcolor = nextSwpCol, text_size = sz)
+
+    // Row 19 — Liquidity Path (top-3 unswept BSL above, top-3 SSL below)
+    pathTxt = "UP: " + pathUpStr + "  |  DN: " + pathDnStr
+    pathCol = color.new(#1565c0, 50)
+    table.cell(dash, 0, 19, "Liq Path", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 19, pathTxt, text_color = color.white, bgcolor = pathCol, text_size = sz)
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   15. ALERTS
+// ════════════════════════════════════════════════════════════════════════════════════
+// Entry signals (the actual trade trigger)
+alertcondition(buySignal,    title = "ICT Buy Signal",      message = "ICT MASTER PRO: BUY {{ticker}} @ {{close}} - confluence-based entry. Check chart for SL/TP.")
+alertcondition(sellSignal,   title = "ICT Sell Signal",     message = "ICT MASTER PRO: SELL {{ticker}} @ {{close}} - confluence-based entry. Check chart for SL/TP.")
+
+// Pre-signal alerts (setup armed, waiting for retrace into OB/FVG)
+buySetupArmedAlert  = recentSSLSweep and recentBullStruct and (f_inBullOB() or f_inBullFVG())
+sellSetupArmedAlert = recentBSLSweep and recentBearStruct and (f_inBearOB() or f_inBearFVG())
+alertcondition(buySetupArmedAlert,  title = "Buy Setup Armed",  message = "ICT: BUY setup armed on {{ticker}} - sweep+CHoCH done, price in OB/FVG. Wait for reaction bar.")
+alertcondition(sellSetupArmedAlert, title = "Sell Setup Armed", message = "ICT: SELL setup armed on {{ticker}} - sweep+CHoCH done, price in OB/FVG. Wait for reaction bar.")
+
+// Component alerts
+alertcondition(bullCHoCH,    title = "Bullish CHoCH",       message = "ICT: Bullish CHoCH on {{ticker}} {{interval}}")
+alertcondition(bearCHoCH,    title = "Bearish CHoCH",       message = "ICT: Bearish CHoCH on {{ticker}} {{interval}}")
+alertcondition(bullBOS,      title = "Bullish BOS",         message = "ICT: Bullish BOS on {{ticker}} {{interval}}")
+alertcondition(bearBOS,      title = "Bearish BOS",         message = "ICT: Bearish BOS on {{ticker}} {{interval}}")
+alertcondition(justSweptSSL, title = "SSL Liquidity Sweep", message = "ICT: SSL swept on {{ticker}} {{interval}}")
+alertcondition(justSweptBSL, title = "BSL Liquidity Sweep", message = "ICT: BSL swept on {{ticker}} {{interval}}")
