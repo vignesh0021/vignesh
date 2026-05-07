@@ -274,27 +274,14 @@ plot(i_showKey ? pwLow  : na, "PWL", color = color.new(#69f0ae, 0),  style = plo
 plot(i_showKey ? pmHigh : na, "PMH", color = color.new(#d50000, 0),  style = plot.style_linebr, linewidth = 2)
 plot(i_showKey ? pmLow  : na, "PML", color = color.new(#00c853, 0),  style = plot.style_linebr, linewidth = 2)
 
-// MTF liquidity pools — last 1H and 4H pivot highs and lows
-plot(i_showMTFEff ? htf60H_last  : na, "1H Pivot High",  color = color.new(#ff5252, 30), style = plot.style_linebr, linewidth = 1)
-plot(i_showMTFEff ? htf60L_last  : na, "1H Pivot Low",   color = color.new(#69f0ae, 30), style = plot.style_linebr, linewidth = 1)
-plot(i_showMTFEff ? htf240H_last : na, "4H Pivot High",  color = color.new(#ff5252, 0),  style = plot.style_linebr, linewidth = 2)
-plot(i_showMTFEff ? htf240L_last : na, "4H Pivot Low",   color = color.new(#69f0ae, 0),  style = plot.style_linebr, linewidth = 2)
-
-// ════════════════════════════════════════════════════════════════════════════════════
-//   4. MARKET STRUCTURE — Swings, BOS, CHoCH
-// ════════════════════════════════════════════════════════════════════════════════════
-phRaw = ta.pivothigh(high, i_pivotLen, i_pivotLen)
-plRaw = ta.pivotlow(low,   i_pivotLen, i_pivotLen)
-
-// HTF pivots (1H and 4H) — used as MTF liquidity pools and TP destinations.
-// Computed via request.security so they reflect proper HTF swings, not LTF noise.
+// HTF pivots (1H and 4H) — fetched here (before the MTF plots) so the latched
+// vars are declared before they're referenced. Used as MTF liquidity pools
+// and TP destinations.
 htf60_PH  = request.security(syminfo.tickerid, "60",  ta.pivothigh(high, 5, 5), lookahead = barmerge.lookahead_off)
 htf60_PL  = request.security(syminfo.tickerid, "60",  ta.pivotlow(low,   5, 5), lookahead = barmerge.lookahead_off)
 htf240_PH = request.security(syminfo.tickerid, "240", ta.pivothigh(high, 5, 5), lookahead = barmerge.lookahead_off)
 htf240_PL = request.security(syminfo.tickerid, "240", ta.pivotlow(low,   5, 5), lookahead = barmerge.lookahead_off)
 
-// Latch the most recent HTF pivot value (request.security returns na on bars
-// where no pivot formed, so we keep the last non-na around for plotting).
 var float htf60H_last  = na
 var float htf60L_last  = na
 var float htf240H_last = na
@@ -307,6 +294,18 @@ if not na(htf240_PH)
     htf240H_last := htf240_PH
 if not na(htf240_PL)
     htf240L_last := htf240_PL
+
+// MTF liquidity pools — last 1H and 4H pivot highs and lows
+plot(i_showMTFEff ? htf60H_last  : na, "1H Pivot High",  color = color.new(#ff5252, 30), style = plot.style_linebr, linewidth = 1)
+plot(i_showMTFEff ? htf60L_last  : na, "1H Pivot Low",   color = color.new(#69f0ae, 30), style = plot.style_linebr, linewidth = 1)
+plot(i_showMTFEff ? htf240H_last : na, "4H Pivot High",  color = color.new(#ff5252, 0),  style = plot.style_linebr, linewidth = 2)
+plot(i_showMTFEff ? htf240L_last : na, "4H Pivot Low",   color = color.new(#69f0ae, 0),  style = plot.style_linebr, linewidth = 2)
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   4. MARKET STRUCTURE — Swings, BOS, CHoCH
+// ════════════════════════════════════════════════════════════════════════════════════
+phRaw = ta.pivothigh(high, i_pivotLen, i_pivotLen)
+plRaw = ta.pivotlow(low,   i_pivotLen, i_pivotLen)
 
 var float lastSH    = na
 var float lastSL    = na
@@ -598,24 +597,32 @@ f_gradeLiq(_lvl, _isBuyside) =>
             g := math.max(g, 5)
     g
 
+// Strength label helper — turns a 1-5 grade into the institutional vocabulary
+// the dashboard / sweep markers display.
+f_strLabel(_g) =>
+    _g >= 4 ? "STRONG" : _g >= 2 ? "MED" : "WEAK"
+f_strColor(_g, _isBuyside) =>
+    _g >= 4 ? color.new(_isBuyside ? c_liqBuy : c_liqSell, 10) : _g >= 2 ? color.new(#ff9800, 30) : color.new(color.gray, 50)
+
 if not na(phRaw)
     grade_ph = f_gradeLiq(phRaw, true)
     lcol     = i_showLiq ? color.new(c_liqBuy, grade_ph >= 4 ? 20 : 60) : color(na)
     width_ph = grade_ph >= 4 ? 2 : 1
     ln = line.new(bar_index - i_pivotLen, phRaw, bar_index + 5, phRaw, color = lcol, style = line.style_dotted, width = width_ph)
     array.push(liqs, Liq.new(ln, phRaw, bar_index - i_pivotLen, true, false, grade_ph))
-    // Equal-highs visualization: when a grade-2+ pivot forms, draw a bright
-    // line back to the matching prior pivot — premium-tool style "double top"
-    // / liquidity pool indicator. Only when liquidity display is enabled.
+    // Liquidity Cluster zone — when a grade-2+ pivot forms it means a stop
+    // cluster is building. Draw a proper ZONE (box) spanning the cluster's
+    // price range from its first pivot to now, instead of a thin line.
     if grade_ph >= 2 and i_showLiq and array.size(liqs) > 1
         tolEH = atr14 * 0.25
         nL = array.size(liqs) - 1
-        // Forward iteration with reverse index — same effect, Pine-v6 safe
         for k = 0 to nL - 1
             idxEH = nL - 1 - k
             prv = array.get(liqs, idxEH)
             if prv.buyside and math.abs(prv.lvl - phRaw) <= tolEH
-                line.new(prv.bar, prv.lvl, bar_index - i_pivotLen, phRaw, color = color.new(#ab47bc, 20), style = line.style_solid, width = 2)
+                clusterTop = math.max(prv.lvl, phRaw) + atr14 * 0.05
+                clusterBot = math.min(prv.lvl, phRaw) - atr14 * 0.05
+                box.new(prv.bar, clusterTop, bar_index - i_pivotLen + 3, clusterBot, bgcolor = f_strColor(grade_ph, true), border_color = color.new(c_liqBuy, 30), border_width = 1, text = f_strLabel(grade_ph) + " BSL", text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
                 break
 
 if not na(plRaw)
@@ -631,7 +638,9 @@ if not na(plRaw)
             idxEL = nL - 1 - k
             prv = array.get(liqs, idxEL)
             if not prv.buyside and math.abs(prv.lvl - plRaw) <= tolEL
-                line.new(prv.bar, prv.lvl, bar_index - i_pivotLen, plRaw, color = color.new(#26a69a, 20), style = line.style_solid, width = 2)
+                clusterTop = math.max(prv.lvl, plRaw) + atr14 * 0.05
+                clusterBot = math.min(prv.lvl, plRaw) - atr14 * 0.05
+                box.new(prv.bar, clusterTop, bar_index - i_pivotLen + 3, clusterBot, bgcolor = f_strColor(grade_pl, false), border_color = color.new(c_liqSell, 30), border_width = 1, text = f_strLabel(grade_pl) + " SSL", text_color = color.white, text_size = size.tiny, text_halign = text.align_left)
                 break
 
 // Sweep detection + line management
@@ -655,7 +664,7 @@ if array.size(liqs) > 0
                     line.set_color(lq.ln, color.new(c_liqBuy, 30))
                     line.set_style(lq.ln, line.style_solid)
                     if i_showSweep
-                        label.new(bar_index, high, "x BSL G" + str.tostring(lq.grade), color = c_liqBuy, textcolor = color.white, style = label.style_label_down, size = size.tiny)
+                        label.new(bar_index, high, "x " + f_strLabel(lq.grade) + " BSL", color = c_liqBuy, textcolor = color.white, style = label.style_label_down, size = size.tiny)
                 else if not lq.buyside and low < lq.lvl and close > lq.lvl
                     lq.swept := true
                     justSweptSSL := true
@@ -663,7 +672,7 @@ if array.size(liqs) > 0
                     line.set_color(lq.ln, color.new(c_liqSell, 30))
                     line.set_style(lq.ln, line.style_solid)
                     if i_showSweep
-                        label.new(bar_index, low, "x SSL G" + str.tostring(lq.grade), color = c_liqSell, textcolor = color.white, style = label.style_label_up, size = size.tiny)
+                        label.new(bar_index, low, "x " + f_strLabel(lq.grade) + " SSL", color = c_liqSell, textcolor = color.white, style = label.style_label_up, size = size.tiny)
 
 // Cap line count: drop oldest swept line if over cap
 if array.size(liqs) > i_liqMax * 2 and array.size(liqs) > 0
@@ -1000,6 +1009,86 @@ f_pickTPs(_isBuy, _entry, _sl, _arr) =>
         if t3 >= t2
             t3 := math.min(t3, fb3)
     [t1, t2, t3]
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   12c. INSTITUTIONAL LIQUIDITY INTELLIGENCE
+//   Walks the unswept BSL / SSL pools above and below the current price and
+//   ranks them by attractiveness (grade + distance + HTF alignment) to estimate
+//   which side institutions are likely to sweep next, and surfaces the top
+//   targets for the dashboard "Path" cell.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+// Strength of a single pool, scored 0-100 from a 1-5 grade
+f_strScore(_g) =>
+    _g >= 5 ? 95 : _g >= 4 ? 80 : _g >= 3 ? 60 : _g >= 2 ? 45 : 25
+
+// Find the nearest unswept BSL pool above _price, return [level, grade, distInATR]
+f_nextBSL(_price) =>
+    float bestLvl = na
+    int   bestGr  = 0
+    if array.size(liqs) > 0
+        for j = 0 to array.size(liqs) - 1
+            lq = array.get(liqs, j)
+            if lq.buyside and not lq.swept and lq.lvl > _price
+                if na(bestLvl) or lq.lvl < bestLvl
+                    bestLvl := lq.lvl
+                    bestGr  := lq.grade
+    distR = na(bestLvl) or atr14 == 0 ? na : (bestLvl - _price) / atr14
+    [bestLvl, bestGr, distR]
+
+f_nextSSL(_price) =>
+    float bestLvl = na
+    int   bestGr  = 0
+    if array.size(liqs) > 0
+        for j = 0 to array.size(liqs) - 1
+            lq = array.get(liqs, j)
+            if not lq.buyside and not lq.swept and lq.lvl < _price
+                if na(bestLvl) or lq.lvl > bestLvl
+                    bestLvl := lq.lvl
+                    bestGr  := lq.grade
+    distR = na(bestLvl) or atr14 == 0 ? na : (_price - bestLvl) / atr14
+    [bestLvl, bestGr, distR]
+
+// Sweep-probability heuristic. Higher when the pool is strong, close, and the
+// HTF stack is leaning that way. 0..100 inclusive.
+f_sweepProb(_grade, _distR, _isBuyside) =>
+    base    = f_strScore(_grade)
+    distAdj = na(_distR) ? -50 : math.max(-30, 30 - _distR * 8)         // <1R close = +20, 5R far = -10
+    htfAdj  = (_isBuyside  and htfAlignmentScore >=  2) ? 10 : (not _isBuyside and htfAlignmentScore <= -2) ? 10 : (_isBuyside  and htfAlignmentScore <= -2) ? -10 : (not _isBuyside and htfAlignmentScore >=  2) ? -10 : 0
+    raw     = base + distAdj + htfAdj
+    math.max(0, math.min(100, raw))
+
+// Top-N nearest unswept buyside / sellside levels, returned as a single
+// human-readable string for the dashboard "Path" cell.
+f_pathStr(_isBuyside, _price, _maxN) =>
+    arr = array.new<float>()
+    if array.size(liqs) > 0
+        for j = 0 to array.size(liqs) - 1
+            lq = array.get(liqs, j)
+            if lq.buyside == _isBuyside and not lq.swept
+                if (_isBuyside and lq.lvl > _price) or (not _isBuyside and lq.lvl < _price)
+                    array.push(arr, lq.lvl)
+    if _isBuyside
+        array.sort(arr, order.ascending)
+    else
+        array.sort(arr, order.descending)
+    string s = ""
+    n = math.min(array.size(arr), _maxN)
+    if n == 0
+        s := "-"
+    else
+        for j = 0 to n - 1
+            s := s + (j == 0 ? "" : " -> ") + str.tostring(array.get(arr, j), format.mintick)
+    s
+
+// Compute the live picture every bar so the dashboard always has fresh values
+[nextBSLLvl, nextBSLGr, nextBSLDistR] = f_nextBSL(close)
+[nextSSLLvl, nextSSLGr, nextSSLDistR] = f_nextSSL(close)
+nextBSLProb = f_sweepProb(nextBSLGr, nextBSLDistR, true)
+nextSSLProb = f_sweepProb(nextSSLGr, nextSSLDistR, false)
+sweepDirIsUp = nextBSLProb >= nextSSLProb
+pathUpStr   = f_pathStr(true,  close, 3)
+pathDnStr   = f_pathStr(false, close, 3)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   13. TRADE PLAN STATE MACHINE
@@ -1352,7 +1441,7 @@ posSizeSell = tpActive and not tpIsBuy ? f_positionSize(tpEntry, tpSL) : 0.0
 // ════════════════════════════════════════════════════════════════════════════════════
 //   14. DASHBOARD — at-a-glance ICT context
 // ════════════════════════════════════════════════════════════════════════════════════
-var table dash = table.new(f_dashPos(), 2, 18, border_width = 1, frame_color = color.new(color.gray, 50))
+var table dash = table.new(f_dashPos(), 2, 20, border_width = 1, frame_color = color.new(color.gray, 50))
 
 f_zoneText() =>
     inDiscount ? "DISCOUNT (Buy zone)" : inPremium ? "PREMIUM (Sell zone)" : "EQUILIBRIUM"
@@ -1495,10 +1584,10 @@ if i_showDash and barstate.islast
     string sweepQTxt = "-"
     color  sweepQCol = color.new(color.gray, 80)
     if recentSSLSweep
-        sweepQTxt := "SSL G" + str.tostring(lastSSLSweepGrade) + (lastSSLSweepGrade >= 3 ? " (major)" : " (minor/inducement)")
+        sweepQTxt := f_strLabel(lastSSLSweepGrade) + " SSL " + (lastSSLSweepGrade >= 3 ? "(major)" : "(inducement)")
         sweepQCol := lastSSLSweepGrade >= 3 ? color.new(c_bull, 40) : color.new(#ef6c00, 50)
     else if recentBSLSweep
-        sweepQTxt := "BSL G" + str.tostring(lastBSLSweepGrade) + (lastBSLSweepGrade >= 3 ? " (major)" : " (minor/inducement)")
+        sweepQTxt := f_strLabel(lastBSLSweepGrade) + " BSL " + (lastBSLSweepGrade >= 3 ? "(major)" : "(inducement)")
         sweepQCol := lastBSLSweepGrade >= 3 ? color.new(c_bear, 40) : color.new(#ef6c00, 50)
     table.cell(dash, 0, 15, "Sweep Quality", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 15, sweepQTxt, text_color = color.white, bgcolor = sweepQCol, text_size = sz)
@@ -1575,6 +1664,23 @@ if i_showDash and barstate.islast
             diagCol := color.new(#1565c0, 50)
     table.cell(dash, 0, 17, "Diagnostic", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 17, diagTxt, text_color = color.white, bgcolor = diagCol, text_size = sz)
+
+    // Row 18 — Next-sweep target (BSL above and SSL below, with probability)
+    string nextSwpTxt = "-"
+    color  nextSwpCol = color.new(color.gray, 70)
+    if not na(nextBSLLvl) or not na(nextSSLLvl)
+        bslPart = na(nextBSLLvl) ? "-" : f_strLabel(nextBSLGr) + " BSL " + str.tostring(nextBSLLvl, format.mintick) + " (" + str.tostring(nextBSLProb, "#") + "%)"
+        sslPart = na(nextSSLLvl) ? "-" : f_strLabel(nextSSLGr) + " SSL " + str.tostring(nextSSLLvl, format.mintick) + " (" + str.tostring(nextSSLProb, "#") + "%)"
+        nextSwpTxt := "UP " + bslPart + "  |  DN " + sslPart
+        nextSwpCol := sweepDirIsUp ? color.new(c_bull, 50) : color.new(c_bear, 50)
+    table.cell(dash, 0, 18, "Next Sweep", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 18, nextSwpTxt, text_color = color.white, bgcolor = nextSwpCol, text_size = sz)
+
+    // Row 19 — Liquidity Path (top-3 unswept BSL above, top-3 SSL below)
+    pathTxt = "UP: " + pathUpStr + "  |  DN: " + pathDnStr
+    pathCol = color.new(#1565c0, 50)
+    table.cell(dash, 0, 19, "Liq Path", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 19, pathTxt, text_color = color.white, bgcolor = pathCol, text_size = sz)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   15. ALERTS
