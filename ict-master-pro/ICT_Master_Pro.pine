@@ -99,9 +99,20 @@ i_useAdaptiveTP = input.bool(true, "Adaptive Targets (price-action levels)", gro
 i_tp1R          = input.float(1.0, "TP1 (R multiple, fallback)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
 i_tp2R          = input.float(2.0, "TP2 (R multiple, fallback)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
 i_tp3R          = input.float(3.0, "TP3 (R multiple, fallback)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
-i_useRiskCalc   = input.bool(false, "Position-size in Alerts", group = grpRisk, tooltip = "Add suggested position size to alert messages, computed from account size and risk per trade.")
+i_useRiskCalc   = input.bool(true, "Position-size in Alerts", group = grpRisk, tooltip = "Add suggested position size, lots, actual risk and unused-risk fields to alert messages.")
 i_account       = input.float(100000, "Account Size", minval = 1000, group = grpRisk)
 i_riskPct       = input.float(1.0, "Risk per Trade (%)", minval = 0.1, maxval = 5.0, step = 0.1, group = grpRisk)
+
+// ── Position Sizing (institutional-grade quantity engine) ───────────────────────────
+// Calculates exact share / lot quantities from (capital, risk%, SL distance,
+// instrument type, lot size). For F&O, qty is floored to whole lots so the
+// final risk is *less than* the budget — the leftover is reported as
+// "unused risk". Equity is integer shares with i_minOrderQty as floor.
+grpPos            = "═══ Position Sizing ═══"
+i_instrType       = input.string("Auto", "Instrument Type", options = ["Auto", "Equity", "Index Options (NIFTY/BANKNIFTY)", "Stock Options", "Index Futures", "Stock Futures", "Custom"], group = grpPos, tooltip = "Auto = detect from syminfo type + symbol name. Equity = whole shares. Options/Futures = lot-rounded contracts. Custom = treat as equity but you can override lot size.")
+i_lotSizeOverride = input.int(0, "Lot Size Override (0 = auto)", minval = 0, maxval = 10000, group = grpPos, tooltip = "When > 0, this lot size is used. Auto-detected NSE defaults: NIFTY=75, BANKNIFTY=35, FINNIFTY=65, MIDCPNIFTY=120, SENSEX=20, BANKEX=30.")
+i_minOrderQty     = input.int(1, "Minimum Equity Order Qty", minval = 1, maxval = 1000, group = grpPos, tooltip = "Smallest tradable share count for Equity. Ignored for Options/Futures (always rounds to whole lots).")
+i_showPosSizing   = input.bool(true, "Show Position Sizing on Dashboard", group = grpPos)
 
 // ── Key Levels (PDH/PDL/PWH/PWL/PMH/PML) ────────────────────────────────────────────
 grpKey          = "═══ Key Levels ═══"
@@ -872,13 +883,89 @@ f_calcSL_sell() =>
 buySLcalc  = f_calcSL_buy()
 sellSLcalc = f_calcSL_sell()
 
-// Position-size suggestion. Defined here (before the trade-plan block) because
-// the buy/sell alert messages call it inside their if-blocks. Pine v6 forbids
-// forward references to user-defined functions.
+// ── Institutional Position Sizing — auto lot size + tuple calc ──────────────────────
+// Defined here (before the trade-plan block) because the buy/sell alert
+// blocks call them. Pine v6 forbids forward references to user functions.
+
+// Auto-detect lot size from the symbol ticker. Covers all major NSE F&O
+// underlyings; returns 1 for equity / unknown symbols.
+f_autoLotSize() =>
+    int lot = 1
+    tk = syminfo.ticker
+    if str.contains(tk, "BANKNIFTY")
+        lot := 35
+    else if str.contains(tk, "FINNIFTY")
+        lot := 65
+    else if str.contains(tk, "MIDCPNIFTY")
+        lot := 120
+    else if str.contains(tk, "SENSEX")
+        lot := 20
+    else if str.contains(tk, "BANKEX")
+        lot := 30
+    else if str.contains(tk, "NIFTY")
+        lot := 75
+    lot
+
+// Resolve effective instrument class. "Auto" delegates to syminfo.type and
+// the lot-size heuristic — any ticker mapping to a known NSE F&O lot size is
+// treated as Options by default.
+f_instrClass() =>
+    string cls = "Equity"
+    if i_instrType == "Equity" or i_instrType == "Custom"
+        cls := "Equity"
+    else if i_instrType == "Index Options (NIFTY/BANKNIFTY)" or i_instrType == "Stock Options"
+        cls := "Options"
+    else if i_instrType == "Index Futures" or i_instrType == "Stock Futures"
+        cls := "Futures"
+    else
+        if syminfo.type == "futures"
+            cls := "Futures"
+        else if f_autoLotSize() > 1
+            cls := "Options"
+        else
+            cls := "Equity"
+    cls
+
+// Effective lot size: user override > auto-detect > 1
+f_lotSizeEff() =>
+    int ls = i_lotSizeOverride > 0 ? i_lotSizeOverride : f_autoLotSize()
+    if ls < 1
+        ls := 1
+    ls
+
+// Position calculator. Returns tuple:
+//   lots        — number of lots (0 for Equity)
+//   qty         — total tradable units (shares for Equity, lots*lotSize for F&O)
+//   actualRisk  — qty * SL_distance (real money at risk after rounding)
+//   unusedRisk  — riskBudget - actualRisk (capital unused due to lot floor)
+f_calcPosition(_entry, _sl) =>
+    risk = math.abs(_entry - _sl)
+    riskBudget = i_account * (i_riskPct / 100)
+    int   lots = 0
+    int   qty  = 0
+    float actualRisk = 0.0
+    float unusedRisk = 0.0
+    if risk > 0 and riskBudget > 0
+        rawQty = riskBudget / risk
+        cls = f_instrClass()
+        if cls == "Equity"
+            qty := math.max(i_minOrderQty, int(math.floor(rawQty)))
+            actualRisk := qty * risk
+            unusedRisk := math.max(0.0, riskBudget - actualRisk)
+        else
+            ls = f_lotSizeEff()
+            lotsRaw = int(math.floor(rawQty / ls))
+            lots := math.max(0, lotsRaw)
+            qty := lots * ls
+            actualRisk := qty * risk
+            unusedRisk := math.max(0.0, riskBudget - actualRisk)
+    [lots, qty, actualRisk, unusedRisk]
+
+// Backward-compatible thin wrapper — returns just the float qty for any call
+// sites that only need a number (e.g. legacy alert formatting).
 f_positionSize(_entry, _sl) =>
-    risk    = math.abs(_entry - _sl)
-    riskAmt = i_account * (i_riskPct / 100)
-    risk == 0 ? 0.0 : riskAmt / risk
+    [_l, q, _ar, _ur] = f_calcPosition(_entry, _sl)
+    float(q)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   12b. ADAPTIVE TARGETS — project TP1 / TP2 / TP3 to actual price-action levels
@@ -1119,6 +1206,14 @@ var int   tpBar     = na
 var int   tpScore   = na
 var int   tpHitLevel = 0         // 0 none, 1 TP1 hit, 2 TP2 hit (set by smart-mgmt block)
 
+// Position-sizing snapshot for the active trade plan
+var int   tpLots       = 0
+var int   tpQty        = 0
+var float tpActualRisk = 0.0
+var float tpUnusedRisk = 0.0
+var string tpInstrCls  = "Equity"
+var int   tpLotSize    = 1
+
 // Pine v6 forbids user-defined functions from writing to global vars, so this
 // function only deletes the drawing objects. Each call site is responsible for
 // flipping tpActive itself.
@@ -1180,15 +1275,29 @@ if buySignal
     tpLbTP1   := label.new(bar_index + 1, tpTP1,   "TP1 "   + str.tostring(tpTP1,   format.mintick), color = col_tp,    textcolor = color.white, style = label.style_label_left, size = size.small)
     tpLbTP2   := label.new(bar_index + 1, tpTP2,   "TP2 "   + str.tostring(tpTP2,   format.mintick), color = color.new(col_tp, 30), textcolor = color.white, style = label.style_label_left, size = size.small)
     tpLbTP3   := label.new(bar_index + 1, tpTP3,   "TP3 "   + str.tostring(tpTP3,   format.mintick), color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.small)
-    // Rich dynamic alert with all levels (and position size if enabled). When
-    // JSON Webhook Alerts is ON, emit a structured payload that drops straight
-    // into broker webhooks (Zerodha Kite Connect / Dhan / Fyers / TradeStation).
-    qtyB = f_positionSize(tpEntry, tpSL)
+    // Institutional position sizing: compute lots/qty/actualRisk/unusedRisk
+    // once and snapshot into the trade-plan state vars. Dashboard + alert
+    // both read from these.
+    [lotsB, qtyB, actRiskB, unusedB] = f_calcPosition(tpEntry, tpSL)
+    tpLots       := lotsB
+    tpQty        := qtyB
+    tpActualRisk := actRiskB
+    tpUnusedRisk := unusedB
+    tpInstrCls   := f_instrClass()
+    tpLotSize    := f_lotSizeEff()
+    // Rich dynamic alert with all levels and full sizing breakdown. When
+    // JSON Webhook Alerts is ON, emit a structured payload that drops
+    // straight into broker webhooks (Zerodha Kite / Dhan / Fyers).
     msgB = ""
     if i_jsonAlerts
-        msgB := "{\"action\":\"BUY\",\"symbol\":\"" + syminfo.ticker + "\",\"entry\":" + str.tostring(tpEntry, format.mintick) + ",\"sl\":" + str.tostring(tpSL, format.mintick) + ",\"tp1\":" + str.tostring(tpTP1, format.mintick) + ",\"tp2\":" + str.tostring(tpTP2, format.mintick) + ",\"tp3\":" + str.tostring(tpTP3, format.mintick) + ",\"qty\":" + str.tostring(qtyB, "#.##") + ",\"score\":" + str.tostring(tpScore) + ",\"time\":\"{{timenow}}\"}"
+        msgB := "{\"action\":\"BUY\",\"symbol\":\"" + syminfo.ticker + "\",\"entry\":" + str.tostring(tpEntry, format.mintick) + ",\"sl\":" + str.tostring(tpSL, format.mintick) + ",\"tp1\":" + str.tostring(tpTP1, format.mintick) + ",\"tp2\":" + str.tostring(tpTP2, format.mintick) + ",\"tp3\":" + str.tostring(tpTP3, format.mintick) + ",\"qty\":" + str.tostring(tpQty) + ",\"lots\":" + str.tostring(tpLots) + ",\"lotSize\":" + str.tostring(tpLotSize) + ",\"instrument\":\"" + tpInstrCls + "\",\"actualRisk\":" + str.tostring(tpActualRisk, "#.##") + ",\"unusedRisk\":" + str.tostring(tpUnusedRisk, "#.##") + ",\"score\":" + str.tostring(tpScore) + ",\"time\":\"{{timenow}}\"}"
     else
-        posLineB = i_useRiskCalc ? "  Size: " + str.tostring(qtyB, "#.##") + " (risk " + str.tostring(i_riskPct, "#.#") + "%)" : ""
+        string posLineB = ""
+        if i_useRiskCalc
+            if tpInstrCls == "Equity"
+                posLineB := "  Qty: " + str.tostring(tpQty) + " sh  Risk " + str.tostring(tpActualRisk, "#") + " (unused " + str.tostring(tpUnusedRisk, "#") + ")"
+            else
+                posLineB := "  " + str.tostring(tpLots) + " lot x " + str.tostring(tpLotSize) + " = " + str.tostring(tpQty) + " qty  Risk " + str.tostring(tpActualRisk, "#") + " (unused " + str.tostring(tpUnusedRisk, "#") + ")"
         msgB := "ICT MASTER PRO  BUY  " + syminfo.ticker + "  Entry " + str.tostring(tpEntry, format.mintick) + "  SL " + str.tostring(tpSL, format.mintick) + "  TP1 " + str.tostring(tpTP1, format.mintick) + "  TP2 " + str.tostring(tpTP2, format.mintick) + "  TP3 " + str.tostring(tpTP3, format.mintick) + "  Score " + str.tostring(tpScore) + "/7" + posLineB
     alert(msgB, alert.freq_once_per_bar_close)
 
@@ -1226,12 +1335,23 @@ if sellSignal
     tpLbTP1   := label.new(bar_index + 1, tpTP1,   "TP1 "   + str.tostring(tpTP1,   format.mintick), color = col_tp,    textcolor = color.white, style = label.style_label_left, size = size.small)
     tpLbTP2   := label.new(bar_index + 1, tpTP2,   "TP2 "   + str.tostring(tpTP2,   format.mintick), color = color.new(col_tp, 30), textcolor = color.white, style = label.style_label_left, size = size.small)
     tpLbTP3   := label.new(bar_index + 1, tpTP3,   "TP3 "   + str.tostring(tpTP3,   format.mintick), color = color.new(col_tp, 50), textcolor = color.white, style = label.style_label_left, size = size.small)
-    qtyS = f_positionSize(tpEntry, tpSL)
+    [lotsS, qtyS, actRiskS, unusedS] = f_calcPosition(tpEntry, tpSL)
+    tpLots       := lotsS
+    tpQty        := qtyS
+    tpActualRisk := actRiskS
+    tpUnusedRisk := unusedS
+    tpInstrCls   := f_instrClass()
+    tpLotSize    := f_lotSizeEff()
     msgS = ""
     if i_jsonAlerts
-        msgS := "{\"action\":\"SELL\",\"symbol\":\"" + syminfo.ticker + "\",\"entry\":" + str.tostring(tpEntry, format.mintick) + ",\"sl\":" + str.tostring(tpSL, format.mintick) + ",\"tp1\":" + str.tostring(tpTP1, format.mintick) + ",\"tp2\":" + str.tostring(tpTP2, format.mintick) + ",\"tp3\":" + str.tostring(tpTP3, format.mintick) + ",\"qty\":" + str.tostring(qtyS, "#.##") + ",\"score\":" + str.tostring(tpScore) + ",\"time\":\"{{timenow}}\"}"
+        msgS := "{\"action\":\"SELL\",\"symbol\":\"" + syminfo.ticker + "\",\"entry\":" + str.tostring(tpEntry, format.mintick) + ",\"sl\":" + str.tostring(tpSL, format.mintick) + ",\"tp1\":" + str.tostring(tpTP1, format.mintick) + ",\"tp2\":" + str.tostring(tpTP2, format.mintick) + ",\"tp3\":" + str.tostring(tpTP3, format.mintick) + ",\"qty\":" + str.tostring(tpQty) + ",\"lots\":" + str.tostring(tpLots) + ",\"lotSize\":" + str.tostring(tpLotSize) + ",\"instrument\":\"" + tpInstrCls + "\",\"actualRisk\":" + str.tostring(tpActualRisk, "#.##") + ",\"unusedRisk\":" + str.tostring(tpUnusedRisk, "#.##") + ",\"score\":" + str.tostring(tpScore) + ",\"time\":\"{{timenow}}\"}"
     else
-        posLineS = i_useRiskCalc ? "  Size: " + str.tostring(qtyS, "#.##") + " (risk " + str.tostring(i_riskPct, "#.#") + "%)" : ""
+        string posLineS = ""
+        if i_useRiskCalc
+            if tpInstrCls == "Equity"
+                posLineS := "  Qty: " + str.tostring(tpQty) + " sh  Risk " + str.tostring(tpActualRisk, "#") + " (unused " + str.tostring(tpUnusedRisk, "#") + ")"
+            else
+                posLineS := "  " + str.tostring(tpLots) + " lot x " + str.tostring(tpLotSize) + " = " + str.tostring(tpQty) + " qty  Risk " + str.tostring(tpActualRisk, "#") + " (unused " + str.tostring(tpUnusedRisk, "#") + ")"
         msgS := "ICT MASTER PRO  SELL  " + syminfo.ticker + "  Entry " + str.tostring(tpEntry, format.mintick) + "  SL " + str.tostring(tpSL, format.mintick) + "  TP1 " + str.tostring(tpTP1, format.mintick) + "  TP2 " + str.tostring(tpTP2, format.mintick) + "  TP3 " + str.tostring(tpTP3, format.mintick) + "  Score " + str.tostring(tpScore) + "/7" + posLineS
     alert(msgS, alert.freq_once_per_bar_close)
 
@@ -1435,13 +1555,10 @@ f_perfStats() =>
 winRatePct = countedW > 0 ? 100.0 * winsW / countedW : 0.0
 avgRWin    = countedW > 0 ? rSumW / countedW : 0.0
 
-posSizeBuy  = tpActive and tpIsBuy ?     f_positionSize(tpEntry, tpSL) : 0.0
-posSizeSell = tpActive and not tpIsBuy ? f_positionSize(tpEntry, tpSL) : 0.0
-
 // ════════════════════════════════════════════════════════════════════════════════════
 //   14. DASHBOARD — at-a-glance ICT context
 // ════════════════════════════════════════════════════════════════════════════════════
-var table dash = table.new(f_dashPos(), 2, 20, border_width = 1, frame_color = color.new(color.gray, 50))
+var table dash = table.new(f_dashPos(), 2, 21, border_width = 1, frame_color = color.new(color.gray, 50))
 
 f_zoneText() =>
     inDiscount ? "DISCOUNT (Buy zone)" : inPremium ? "PREMIUM (Sell zone)" : "EQUILIBRIUM"
@@ -1681,6 +1798,45 @@ if i_showDash and barstate.islast
     pathCol = color.new(#1565c0, 50)
     table.cell(dash, 0, 19, "Liq Path", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 19, pathTxt, text_color = color.white, bgcolor = pathCol, text_size = sz)
+
+    // Row 20 — Position Sizing snapshot (live or projected)
+    if i_showPosSizing
+        string posTxt = "-"
+        color  posCol = color.new(color.gray, 80)
+        // If a trade is active, show its sized position. Else preview sizing
+        // for a hypothetical trade at current price using SL projected
+        // from the current calculator (so the user can verify settings).
+        bool   showLive   = tpActive
+        float  pEntry     = showLive ? tpEntry : close
+        float  pSL        = showLive ? tpSL    : (buyScore >= sellScore ? buySLcalc : sellSLcalc)
+        int    pLots      = showLive ? tpLots       : 0
+        int    pQty       = showLive ? tpQty        : 0
+        float  pActRisk   = showLive ? tpActualRisk : 0.0
+        float  pUnused    = showLive ? tpUnusedRisk : 0.0
+        string pCls       = showLive ? tpInstrCls   : f_instrClass()
+        int    pLotSz     = showLive ? tpLotSize    : f_lotSizeEff()
+        if not showLive and not na(pSL) and pSL != pEntry
+            [pl, pq, par, pur] = f_calcPosition(pEntry, pSL)
+            pLots    := pl
+            pQty     := pq
+            pActRisk := par
+            pUnused  := pur
+        if pCls == "Equity"
+            if pQty > 0
+                posTxt := "Equity " + str.tostring(pQty) + " sh  Risk " + str.tostring(pActRisk, "#") + " (unused " + str.tostring(pUnused, "#") + ")"
+                posCol := showLive ? (tpIsBuy ? color.new(c_bull, 50) : color.new(c_bear, 50)) : color.new(#1565c0, 60)
+            else
+                posTxt := "Equity 0 sh  (SL too wide for risk budget)"
+                posCol := color.new(#ef6c00, 50)
+        else
+            if pLots > 0
+                posTxt := pCls + "  " + str.tostring(pLots) + " lot x " + str.tostring(pLotSz) + " = " + str.tostring(pQty) + " qty  Risk " + str.tostring(pActRisk, "#") + " (unused " + str.tostring(pUnused, "#") + ")"
+                posCol := showLive ? (tpIsBuy ? color.new(c_bull, 50) : color.new(c_bear, 50)) : color.new(#1565c0, 60)
+            else
+                posTxt := pCls + "  0 lot (lot size " + str.tostring(pLotSz) + " too large for risk budget)"
+                posCol := color.new(#ef6c00, 50)
+        table.cell(dash, 0, 20, "Position", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+        table.cell(dash, 1, 20, posTxt, text_color = color.white, bgcolor = posCol, text_size = sz)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   15. ALERTS

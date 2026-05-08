@@ -150,6 +150,43 @@ Watch the **STATUS** cell — when it lights up green or red, a trade is imminen
 
 ---
 
+## Position Sizing (institutional-grade)
+
+The indicator's **Position Sizing** module computes the exact qty / lots /
+actual risk / unused-risk for every signal — based on your account capital,
+risk %, the SL distance, and the instrument type. Settings live under
+**═══ Position Sizing ═══**.
+
+| Input | What it does |
+|---|---|
+| Instrument Type | Auto = detect from syminfo + ticker. Equity = whole shares. Index/Stock Options or Futures = lot-rounded contracts. |
+| Lot Size Override | Force a custom lot size. 0 = auto. Auto-detected NSE defaults: NIFTY 75, BANKNIFTY 35, FINNIFTY 65, MIDCPNIFTY 120, SENSEX 20, BANKEX 30. |
+| Minimum Equity Order Qty | Smallest tradable share count (Equity only). |
+| Show Position Sizing on Dashboard | Adds a "Position" row to the dashboard. |
+| Use Position Sizing for strategy.entry() | (Strategy file only) — backtest with the lot-rounded qty instead of TradingView's default 1% of equity. |
+
+### Worked examples
+
+| Capital | Risk % | SL distance | Instrument | Output |
+|---|---|---|---|---|
+| ₹1,00,000 | 2% | ₹5 | Equity (TCS, INFY, etc.) | **Qty: 400 sh · Risk ₹2,000 · unused ₹0** |
+| ₹1,00,000 | 2% | ₹13 | NIFTY Options (lot 75) | **2 lots × 75 = 150 qty · Risk ₹1,950 · unused ₹50** |
+| ₹1,00,000 | 1% | ₹100 | NIFTY Options (lot 75) | **0 lots · SL too wide for risk budget** (warning shown) |
+| ₹3,50,000 | 1% | ₹100 | BANKNIFTY Futures (lot 35) | **1 lot × 35 = 35 qty · Risk ₹3,500 · unused ₹0** |
+
+The dashboard **Position** row shows the live trade size when a plan is
+active, and a *projected* size for the next signal otherwise — so you can
+verify your risk inputs before any trade fires. The alert message includes
+the same fields (`qty`, `lots`, `lotSize`, `instrument`, `actualRisk`,
+`unusedRisk`) so a webhook bridge can pass them straight to the broker.
+
+In **Strategy mode**, when `Use Position Sizing for strategy.entry()` is ON,
+the backtest sends each entry with `qty = tpQty` instead of TradingView's
+default `% of equity`, so backtest P/L reflects what real lot-rounded
+trades would have made.
+
+---
+
 ## Setting Alerts
 
 After loading the indicator, click the **Alarm clock icon** → Create Alert:
