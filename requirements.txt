@@ -7,8 +7,5 @@ open-tamil>=0.9
 # DOCX support
 python-docx>=0.8.11
 
-# PDF reading (used indirectly; pdfplumber gives clean text for diagnostics)
-pdfplumber>=0.9.0
-
-# PDF editing – redact and rewrite text spans in-place
+# PDF editing – text extraction, redaction, and rewrite
 PyMuPDF>=1.23.0

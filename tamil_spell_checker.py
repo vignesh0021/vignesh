@@ -13,18 +13,19 @@ Usage:
     python tamil_spell_checker.py document.pdf --output corrected.pdf
     python tamil_spell_checker.py document.docx --no-autocorrect
     python tamil_spell_checker.py document.docx --proper-nouns-file nouns.txt
-    python tamil_spell_checker.py document.docx --log-level DEBUG
+    python tamil_spell_checker.py document.pdf  --tamil-font /usr/share/fonts/truetype/lohit-tamil/Lohit-Tamil.ttf
+    python tamil_spell_checker.py document.docx --max-size 100 --force
 """
 
 import argparse
 import logging
-import os
 import re
+import subprocess
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import List, NamedTuple, Optional, Set, Tuple
 
 # ── Logging setup ──────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -33,6 +34,8 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
+
+_DEFAULT_MAX_SIZE_MB = 50
 
 
 # ── Dependency availability flags ──────────────────────────────────────────────
@@ -46,7 +49,6 @@ def _try_import(module_name: str):
 
 _docx_mod, _docx_err = _try_import("docx")
 _fitz_mod, _fitz_err = _try_import("fitz")
-_pdfplumber_mod, _pdfplumber_err = _try_import("pdfplumber")
 _tamil_mod, _tamil_err = _try_import("tamil")
 
 DOCX_AVAILABLE = _docx_mod is not None
@@ -57,16 +59,12 @@ TAMIL_AVAILABLE = _tamil_mod is not None
 def check_dependencies(file_ext: str) -> None:
     """Exit with a clear message if required packages are missing."""
     missing: List[str] = []
-
     if not TAMIL_AVAILABLE:
         missing.append("open-tamil")
-
     if file_ext == ".docx" and not DOCX_AVAILABLE:
         missing.append("python-docx")
-
     if file_ext == ".pdf" and not PDF_AVAILABLE:
         missing.append("PyMuPDF")
-
     if missing:
         logger.error("Missing required packages: %s", ", ".join(missing))
         logger.error("Install with:  pip install %s", " ".join(missing))
@@ -78,7 +76,7 @@ def check_dependencies(file_ext: str) -> None:
 # Tamil Unicode block: U+0B80 – U+0BFF
 _TAMIL_RE = re.compile(r"[஀-௿]+")
 
-# Tamil digits (U+0BE6–U+0BEF) and special symbol (U+0BF0–U+0BFA)
+# Tamil digits U+0BE6–U+0BEF and symbols U+0BF0–U+0BFA — not real words
 _TAMIL_NON_WORD_RE = re.compile(r"^[௦-௺]+$")
 
 
@@ -92,13 +90,82 @@ def is_checkable_tamil_word(word: str) -> bool:
     return bool(clean) and not _TAMIL_NON_WORD_RE.match(clean)
 
 
-def split_into_tokens(text: str) -> List[str]:
+# ── Tamil font detection ───────────────────────────────────────────────────────
+
+# Well-known paths searched in order before falling back to fc-list.
+_TAMIL_FONT_CANDIDATES = [
+    # Linux – Noto Sans Tamil
+    "/usr/share/fonts/truetype/noto/NotoSansTamil-Regular.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansTamil-Regular.ttf",
+    "/usr/share/fonts/noto/NotoSansTamil-Regular.ttf",
+    # Linux – Lohit Tamil
+    "/usr/share/fonts/truetype/lohit-tamil/Lohit-Tamil.ttf",
+    "/usr/share/fonts/lohit-tamil/Lohit-Tamil.ttf",
+    "/usr/share/fonts/lohit/Lohit-Tamil.ttf",
+    # Linux – other
+    "/usr/share/fonts/truetype/fonts-tamilfont/TAMu_Kalyani.ttf",
+    # macOS
+    "/System/Library/Fonts/Supplemental/Tamil MN.ttc",
+    "/Library/Fonts/Tamil Sangam MN.ttc",
+    "/System/Library/Fonts/Tamil.ttf",
+    # Windows
+    "C:/Windows/Fonts/latha.ttf",
+    "C:/Windows/Fonts/Latha.ttf",
+    "C:/Windows/Fonts/cardt.ttf",
+]
+
+
+def find_tamil_font(hint: Optional[str] = None) -> Optional[str]:
     """
-    Split text into tokens, keeping Tamil word segments and non-Tamil segments intact.
-    Mixed tokens (e.g. a Tamil word attached to punctuation) are returned as-is so
-    the original spacing/punctuation is preserved on reassembly.
+    Return a path to a Tamil-capable font file.
+
+    Resolution order:
+      1. User-supplied *hint* via --tamil-font
+      2. Well-known system paths
+      3. fc-list (Linux fontconfig)
     """
-    return re.split(r"(\s+)", text)
+    if hint:
+        p = Path(hint)
+        if p.exists():
+            return str(p)
+        logger.error("--tamil-font path does not exist: %s", hint)
+        return None
+
+    for path in _TAMIL_FONT_CANDIDATES:
+        if Path(path).exists():
+            logger.info("Tamil font auto-detected: %s", path)
+            return path
+
+    # Linux fallback: ask fontconfig
+    try:
+        result = subprocess.run(
+            ["fc-list", ":lang=ta", "--format=%{file}\n"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line and Path(line).exists():
+                logger.info("Tamil font found via fc-list: %s", line)
+                return line
+    except Exception:
+        pass
+
+    return None
+
+
+# ── Edit distance ──────────────────────────────────────────────────────────────
+
+def _levenshtein(s1: str, s2: str) -> int:
+    """Standard DP Levenshtein distance, operates on Unicode code points."""
+    m, n = len(s1), len(s2)
+    dp = list(range(n + 1))
+    for i in range(1, m + 1):
+        prev, dp[0] = dp[0], i
+        for j in range(1, n + 1):
+            temp = dp[j]
+            dp[j] = prev if s1[i - 1] == s2[j - 1] else 1 + min(prev, dp[j], dp[j - 1])
+            prev = temp
+    return dp[n]
 
 
 # ── Spell-checker wrapper ──────────────────────────────────────────────────────
@@ -111,20 +178,19 @@ class TamilSpellCheckerWrapper:
     Strategy order:
       1. spell.checker.SpellChecker  (open-tamil ≥ 0.9, spell installed as top-level pkg)
       2. tamil.spell.SpellChecker    (some packaged distributions)
-      3. Dictionary lookup via open-tamil's built-in word lists
+      3. Dictionary lookup via open-tamil's built-in word lists + Levenshtein ranking
       4. No checking (pass-through, with a warning)
     """
 
     def __init__(self) -> None:
-        self._checker = None          # native spell-checker object if available
+        self._checker = None
         self._word_set: Set[str] = set()
         self._mode = "none"
         self._init()
 
-    # ── Initialisation helpers ─────────────────────────────────────────────────
+    # ── Initialisation ─────────────────────────────────────────────────────────
 
     def _init(self) -> None:
-        # Strategy 1 – spell.checker (open-tamil standard layout)
         try:
             from spell.checker import SpellChecker  # type: ignore
             self._checker = SpellChecker(lang="TA")
@@ -134,7 +200,6 @@ class TamilSpellCheckerWrapper:
         except Exception as exc:
             logger.debug("spell.checker unavailable: %s", exc)
 
-        # Strategy 2 – tamil.spell
         try:
             import tamil.spell as ts  # type: ignore
             self._checker = ts.SpellChecker()
@@ -144,7 +209,6 @@ class TamilSpellCheckerWrapper:
         except Exception as exc:
             logger.debug("tamil.spell unavailable: %s", exc)
 
-        # Strategy 3 – dictionary lookup
         self._load_word_list()
         if self._word_set:
             self._mode = "dictionary"
@@ -153,7 +217,6 @@ class TamilSpellCheckerWrapper:
             )
             return
 
-        # Strategy 4 – pass-through
         logger.warning(
             "No Tamil spell checker backend found. "
             "Errors will be reported but no corrections can be suggested."
@@ -166,7 +229,6 @@ class TamilSpellCheckerWrapper:
             return
         try:
             import tamil  # type: ignore
-
             pkg_root = Path(tamil.__file__).parent
             for wl_file in sorted(pkg_root.rglob("*.txt")):
                 self._ingest_word_file(wl_file)
@@ -174,8 +236,6 @@ class TamilSpellCheckerWrapper:
                 self._ingest_word_file(wl_file)
         except Exception as exc:
             logger.debug("Word list loading failed: %s", exc)
-
-        # Always add a small seed list so the dictionary is never empty
         self._word_set.update(self._seed_words())
 
     def _ingest_word_file(self, path: Path) -> None:
@@ -191,7 +251,7 @@ class TamilSpellCheckerWrapper:
     @staticmethod
     def _seed_words() -> List[str]:
         """
-        Minimal seed list covering very common Tamil words.
+        Minimal seed list of common Tamil words.
         Acts as a last-resort fallback when no word files are found.
         """
         return [
@@ -212,21 +272,18 @@ class TamilSpellCheckerWrapper:
         """Return True if *word* appears to be a valid Tamil word."""
         if self._mode in ("spell.checker", "tamil.spell"):
             try:
-                result = self._checker.check(word)  # type: ignore[union-attr]
-                # Some versions return None on unknown words; treat as incorrect
-                return bool(result)
+                return bool(self._checker.check(word))  # type: ignore[union-attr]
             except Exception:
                 pass
         if self._mode == "dictionary":
             return word in self._word_set
-        # pass-through: unknown → assume correct so we don't flood warnings
+        # pass-through mode: assume correct to avoid flooding false positives
         return True
 
     def suggest(self, word: str) -> List[str]:
         """Return a ranked list of suggested corrections for *word*."""
         if self._mode in ("spell.checker", "tamil.spell"):
             try:
-                # open-tamil API has two possible method names
                 for method in ("get_suggestion_for_word", "suggest"):
                     fn = getattr(self._checker, method, None)
                     if callable(fn):
@@ -244,25 +301,23 @@ class TamilSpellCheckerWrapper:
         suggestions = self.suggest(word)
         return suggestions[0] if suggestions else None
 
-    # ── Internal helpers ───────────────────────────────────────────────────────
-
-    def _nearest_words(self, word: str, max_results: int = 5) -> List[str]:
+    def _nearest_words(
+        self, word: str, max_results: int = 5, max_dist: int = 3
+    ) -> List[str]:
         """
-        Cheap similarity ranking: prefer candidates of similar length with the
-        most characters in common. Not a proper edit-distance algorithm, but fast
-        and good enough as a last-resort fallback.
+        Levenshtein-based nearest-word search with a fast length pre-filter.
+        Only candidates within *max_dist* edits are returned, sorted by distance.
         """
         word_len = len(word)
-        candidates = [
-            w for w in self._word_set if abs(len(w) - word_len) <= 3
-        ]
-
-        def _score(candidate: str) -> int:
-            # negative score → lower is better → sort ascending
-            return -sum(1 for ch in word if ch in candidate)
-
-        candidates.sort(key=_score)
-        return candidates[:max_results]
+        scored: List[Tuple[int, str]] = []
+        for candidate in self._word_set:
+            if abs(len(candidate) - word_len) > max_dist:
+                continue  # guaranteed to exceed max_dist; skip cheaply
+            dist = _levenshtein(word, candidate)
+            if dist <= max_dist:
+                scored.append((dist, candidate))
+        scored.sort()
+        return [w for _, w in scored[:max_results]]
 
 
 # ── Correction records ─────────────────────────────────────────────────────────
@@ -302,14 +357,14 @@ class SpellCheckSummary:
         print(f"  Words with no suggestion   : {len(self.uncorrectable)}")
 
         if self.log:
-            print(f"\n  {'CORRECTIONS APPLIED':}")
+            print("\n  CORRECTIONS APPLIED:")
             print("  " + "-" * 58)
             for rec in self.log:
                 print(f"  '{rec.original}'  →  '{rec.corrected}'")
                 print(f"      Location: {rec.location}")
 
         if self.uncorrectable:
-            print(f"\n  UNCORRECTABLE WORDS (no suggestion found):")
+            print("\n  UNCORRECTABLE WORDS (no suggestion found):")
             print("  " + "-" * 58)
             for word, count in Counter(self.uncorrectable).most_common():
                 print(f"  '{word}'  (×{count})")
@@ -330,9 +385,8 @@ def process_text(
 ) -> str:
     """
     Scan *text* for Tamil spelling errors, optionally replacing them in-place.
-
-    Non-Tamil characters and proper nouns are left untouched.
-    Returns (possibly corrected) text.
+    Non-Tamil characters, digits, and proper nouns are left untouched.
+    Returns the (possibly corrected) text.
     """
     if not text or not is_tamil_text(text):
         return text
@@ -342,37 +396,28 @@ def process_text(
 
     result_parts: List[str] = []
 
-    # Walk through every whitespace-delimited token, preserving spacing.
     for token in re.split(r"(\s+)", text):
-        # Preserve pure whitespace tokens verbatim
         if re.fullmatch(r"\s+", token) or not token:
             result_parts.append(token)
             continue
 
-        # Extract the Tamil content from the token (may have surrounding punctuation)
         tamil_match = _TAMIL_RE.search(token)
         if not tamil_match:
             result_parts.append(token)
             continue
 
         word = tamil_match.group()
-
         if not is_checkable_tamil_word(word):
             result_parts.append(token)
             continue
 
         summary.total_checked += 1
 
-        # Skip proper nouns
-        if word in proper_nouns:
+        if word in proper_nouns or checker.is_correct(word):
             result_parts.append(token)
             continue
 
-        if checker.is_correct(word):
-            result_parts.append(token)
-            continue
-
-        # ── Misspelling found ──────────────────────────────────────────────
+        # ── Misspelling detected ───────────────────────────────────────────
         if not auto_correct:
             logger.info("Spelling error at %-40s  '%s'", location + ":", word)
             summary.record_uncorrectable(word)
@@ -381,14 +426,15 @@ def process_text(
 
         correction = checker.best_correction(word)
         if correction and correction != word:
-            corrected_token = token[: tamil_match.start()] + correction + token[tamil_match.end() :]
+            corrected_token = (
+                token[: tamil_match.start()] + correction + token[tamil_match.end():]
+            )
             result_parts.append(corrected_token)
             summary.record_correction(word, correction, location)
-            logger.debug("Corrected %-25s '%s' → '%s'", f"[{location}]", word, correction)
+            logger.debug("Corrected [%s]  '%s' → '%s'", location, word, correction)
         else:
             result_parts.append(token)
             summary.record_uncorrectable(word)
-            logger.debug("No suggestion found at %-20s for '%s'", location + ":", word)
 
     return "".join(result_parts)
 
@@ -406,9 +452,9 @@ def process_docx(
 ) -> None:
     """
     Read *input_path* (DOCX), spell-check every Run in the document
-    (body, tables, headers, footers), and save the result to *output_path*.
+    (body, tables, headers/footers, and text boxes), and save to *output_path*.
 
-    Each Run is processed independently so all character-level formatting
+    Each Run is corrected independently so all character-level formatting
     (bold, italic, font, size, colour) is fully preserved.
     """
     if not DOCX_AVAILABLE:
@@ -416,6 +462,8 @@ def process_docx(
         sys.exit(1)
 
     from docx import Document  # type: ignore
+    from docx.oxml.ns import qn  # type: ignore
+    from docx.text.paragraph import Paragraph as DocxParagraph  # type: ignore
 
     logger.info("Opening DOCX: %s", input_path)
     doc = Document(str(input_path))
@@ -435,15 +483,18 @@ def process_docx(
     for p_idx, para in enumerate(doc.paragraphs):
         _fix_paragraph(para, f"body › para {p_idx + 1}")
 
-    # Tables (handles nested tables via cell iteration)
+    # Tables (all rows and cells)
     for t_idx, table in enumerate(doc.tables):
         for r_idx, row in enumerate(table.rows):
             for c_idx, cell in enumerate(row.cells):
                 for p_idx, para in enumerate(cell.paragraphs):
-                    loc = f"table {t_idx+1} › row {r_idx+1} › col {c_idx+1} › para {p_idx+1}"
+                    loc = (
+                        f"table {t_idx+1} › row {r_idx+1} "
+                        f"› col {c_idx+1} › para {p_idx+1}"
+                    )
                     _fix_paragraph(para, loc)
 
-    # Headers and footers (all sections)
+    # Headers and footers (all section variants)
     for s_idx, section in enumerate(doc.sections):
         for hf_name, hf_obj in (
             ("header", section.header),
@@ -458,11 +509,41 @@ def process_docx(
             for p_idx, para in enumerate(hf_obj.paragraphs):
                 _fix_paragraph(para, f"section {s_idx+1} {hf_name} › para {p_idx+1}")
 
+    # Text boxes — DrawingML <wps:txbx> elements not exposed by the high-level API
+    textboxes = list(doc.element.body.iter(qn("w:txbxContent")))
+    for txbx_idx, txbx_content in enumerate(textboxes):
+        for p_elem in txbx_content.findall(qn("w:p")):
+            para = DocxParagraph(p_elem, doc)
+            _fix_paragraph(para, f"textbox {txbx_idx + 1}")
+    if textboxes:
+        logger.info("Processed %d text box(es)", len(textboxes))
+
     doc.save(str(output_path))
     logger.info("Corrected DOCX saved → %s", output_path)
 
 
 # ── PDF handler ────────────────────────────────────────────────────────────────
+
+class _PdfFix(NamedTuple):
+    """One pending text correction for a PDF span."""
+    bbox: object                            # fitz.Rect
+    corrected_text: str
+    font_size: float
+    color_rgb: Tuple[float, float, float]
+
+
+def _is_scanned_pdf(doc) -> bool:
+    """
+    Heuristic: the PDF is likely scanned (image-only) if a sample of its
+    pages have no extractable text but do contain embedded images.
+    """
+    sample = list(doc)[: min(10, len(doc))]
+    if not sample:
+        return False
+    text_pages = sum(1 for page in sample if page.get_text().strip())
+    image_pages = sum(1 for page in sample if page.get_images())
+    return text_pages == 0 and image_pages > 0
+
 
 def process_pdf(
     input_path: Path,
@@ -472,20 +553,22 @@ def process_pdf(
     *,
     auto_correct: bool = True,
     proper_nouns: Optional[Set[str]] = None,
+    tamil_font_path: Optional[str] = None,
 ) -> None:
     """
-    Read *input_path* (PDF), spell-check Tamil text spans, and write a
-    corrected PDF to *output_path* using PyMuPDF.
+    Read *input_path* (PDF), spell-check Tamil text spans, write corrected PDF.
 
-    Correction strategy:
-      1. Extract text spans with bounding boxes using get_text("dict").
-      2. For each misspelled span, redact the original text area.
-      3. Reinsert the corrected text at the same position, matching font size
-         and colour.
+    Correction strategy (per page):
+      1. Extract text spans with bounding boxes via get_text("dict").
+      2. Collect all spans that need correction.
+      3. Add ALL redaction annotations first, then call apply_redactions() once
+         (batching prevents bounding-box drift from incremental geometry updates).
+      4. Reinsert every corrected string at its original position using the
+         supplied Tamil font.
 
     NOTE: PDF editing is inherently "best-effort". Complex layouts, embedded
-    fonts, and ligature-based rendering may cause minor visual differences.
-    The original PDF is never modified; corrections are written to a new file.
+    fonts, and ligature-based rendering may show minor visual differences.
+    The original PDF is never modified; corrections go to a new file.
     """
     if not PDF_AVAILABLE:
         logger.error("PyMuPDF is required for PDF files.  pip install PyMuPDF")
@@ -496,15 +579,21 @@ def process_pdf(
     logger.info("Opening PDF: %s", input_path)
     doc = fitz.open(str(input_path))
 
+    # Scanned PDF guard — no text layer means nothing to correct
+    if _is_scanned_pdf(doc):
+        logger.warning(
+            "This PDF appears to be scanned (image-only, no text layer). "
+            "Spell checking requires selectable text. "
+            "Use an OCR tool (e.g. 'ocrmypdf input.pdf output.pdf') to add a text layer first."
+        )
+        doc.close()
+        return
+
     for page_no, page in enumerate(doc):
         logger.info("  Page %d / %d …", page_no + 1, len(doc))
+        pending: List[_PdfFix] = []
 
-        # Collect corrections for this page first, then apply all at once.
-        # Applying corrections mid-iteration would invalidate span positions.
-        pending: List[Tuple[fitz.Rect, str, str, float, Tuple[float, float, float]]] = []
-
-        page_dict = page.get_text("dict")
-        for block in page_dict.get("blocks", []):
+        for block in page.get_text("dict").get("blocks", []):
             if block.get("type") != 0:  # 0 = text block
                 continue
             for line in block.get("lines", []):
@@ -520,56 +609,59 @@ def process_pdf(
                     )
 
                     if auto_correct and corrected != original:
-                        bbox = fitz.Rect(span["bbox"])
-                        font_size = float(span.get("size", 11))
-                        color_int = span.get("color", 0)
-                        color_rgb = (
-                            ((color_int >> 16) & 0xFF) / 255.0,
-                            ((color_int >> 8) & 0xFF) / 255.0,
-                            (color_int & 0xFF) / 255.0,
-                        )
-                        pending.append((bbox, original, corrected, font_size, color_rgb))
+                        c = span.get("color", 0)
+                        pending.append(_PdfFix(
+                            bbox=fitz.Rect(span["bbox"]),
+                            corrected_text=corrected,
+                            font_size=float(span.get("size", 11)),
+                            color_rgb=(
+                                ((c >> 16) & 0xFF) / 255.0,
+                                ((c >> 8) & 0xFF) / 255.0,
+                                (c & 0xFF) / 255.0,
+                            ),
+                        ))
 
-        # Apply corrections via redact-and-reinsert
-        for bbox, _orig, corrected, font_size, color_rgb in pending:
-            _apply_pdf_span_correction(page, bbox, corrected, font_size, color_rgb)
+        if pending:
+            _batch_apply_corrections(page, pending, tamil_font_path)
 
     doc.save(str(output_path), garbage=4, deflate=True)
     doc.close()
     logger.info("Corrected PDF saved → %s", output_path)
 
 
-def _apply_pdf_span_correction(
+def _batch_apply_corrections(
     page,
-    bbox,
-    corrected_text: str,
-    font_size: float,
-    color_rgb: Tuple[float, float, float],
+    fixes: List[_PdfFix],
+    tamil_font_path: Optional[str],
 ) -> None:
     """
-    Erase the original span with a white redaction rectangle and write the
-    corrected text at the same baseline position.
+    Apply all pending corrections for one page in two clean passes:
+
+    Pass 1 — register every redaction annotation, then apply them all at once.
+              Batching is critical: calling apply_redactions() per-span shifts
+              page geometry and makes subsequent bounding boxes stale.
+
+    Pass 2 — insert each corrected string at the vacated position using the
+              Tamil-capable font.
     """
     import fitz  # type: ignore
 
-    # Redact original text
-    page.add_redact_annot(bbox, fill=(1, 1, 1))
+    # Pass 1: mark every region for erasure, then erase all at once
+    for fix in fixes:
+        page.add_redact_annot(fix.bbox, fill=(1, 1, 1))
     page.apply_redactions()
 
-    # Reinsert corrected text at top-left of the original bounding box.
-    # We use the built-in "helv" font as a safe fallback.  If the document
-    # uses a specific Tamil font, pass fontfile= to insert_text() instead.
-    insertion_point = fitz.Point(bbox.x0, bbox.y1 - 1)  # baseline approximation
-    try:
-        page.insert_text(
-            insertion_point,
-            corrected_text,
-            fontsize=font_size,
-            color=color_rgb,
-        )
-    except Exception as exc:
-        # insert_text can fail for very small font sizes or encoding issues
-        logger.debug("insert_text failed (%s); skipping span", exc)
+    # Pass 2: write corrected text into each cleared region
+    for fix in fixes:
+        # Approximate the original baseline: bottom of bounding box minus 1 pt
+        insertion_point = fitz.Point(fix.bbox.x0, fix.bbox.y1 - 1)
+        kwargs = {"fontsize": fix.font_size, "color": fix.color_rgb}
+        if tamil_font_path:
+            kwargs["fontfile"] = tamil_font_path
+        try:
+            page.insert_text(insertion_point, fix.corrected_text, **kwargs)
+        except Exception as exc:
+            logger.debug("insert_text failed for span (%s); skipped", exc)
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
@@ -583,9 +675,11 @@ def parse_args() -> argparse.Namespace:
 Examples:
   python tamil_spell_checker.py report.docx
   python tamil_spell_checker.py report.docx --output report_fixed.docx
-  python tamil_spell_checker.py report.pdf  --output report_fixed.pdf
+  python tamil_spell_checker.py report.pdf  --output report_fixed.pdf \\
+      --tamil-font /usr/share/fonts/truetype/lohit-tamil/Lohit-Tamil.ttf
   python tamil_spell_checker.py report.docx --no-autocorrect
   python tamil_spell_checker.py report.docx --proper-nouns-file nouns.txt --log-level DEBUG
+  python tamil_spell_checker.py report.docx --max-size 100 --force
         """,
     )
     parser.add_argument("input_file", help="Path to the input .docx or .pdf file.")
@@ -603,6 +697,29 @@ Examples:
         "--proper-nouns-file",
         metavar="FILE",
         help="Plain-text file of Tamil proper nouns to skip (one per line).",
+    )
+    parser.add_argument(
+        "--tamil-font",
+        metavar="FILE",
+        help=(
+            "Path to a Tamil-capable .ttf/.otf/.ttc font file. "
+            "Required for PDF auto-correction when no Tamil font is installed system-wide. "
+            "Install one with: sudo apt install fonts-lohit-taml  (Ubuntu/Debian) "
+            "or sudo dnf install lohit-tamil-fonts  (Fedora)."
+        ),
+    )
+    parser.add_argument(
+        "--max-size",
+        type=float,
+        default=_DEFAULT_MAX_SIZE_MB,
+        metavar="MB",
+        help=f"Maximum input file size in MB (default: {_DEFAULT_MAX_SIZE_MB}). "
+             "Prevents accidental out-of-memory on very large files.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite the output file if it already exists without prompting.",
     )
     parser.add_argument(
         "--log-level",
@@ -648,21 +765,58 @@ def main() -> None:
         )
         sys.exit(1)
 
+    # File size guard — catch huge files before loading into memory
+    file_size_mb = input_path.stat().st_size / (1024 * 1024)
+    if file_size_mb > args.max_size:
+        logger.error(
+            "File size %.1f MB exceeds the %.0f MB limit. "
+            "Use --max-size to raise it.",
+            file_size_mb, args.max_size,
+        )
+        sys.exit(1)
+
     check_dependencies(file_ext)
 
-    output_path = Path(args.output).resolve() if args.output else _default_output_path(input_path)
+    output_path = (
+        Path(args.output).resolve() if args.output else _default_output_path(input_path)
+    )
+
+    # Overwrite guard
+    if output_path.exists() and not args.force:
+        logger.error(
+            "Output file already exists: %s\n"
+            "  Use --force to overwrite, or --output to choose a different path.",
+            output_path,
+        )
+        sys.exit(1)
+
     proper_nouns = _load_proper_nouns(args.proper_nouns_file)
     auto_correct = not args.no_autocorrect
 
+    # Tamil font resolution for PDF — fail fast here rather than mid-processing
+    tamil_font_path: Optional[str] = None
+    if file_ext == ".pdf" and auto_correct:
+        tamil_font_path = find_tamil_font(args.tamil_font)
+        if not tamil_font_path:
+            logger.error(
+                "No Tamil-capable font found. PDF auto-correction requires one.\n"
+                "  Install : sudo apt install fonts-lohit-taml        (Ubuntu/Debian)\n"
+                "          : sudo dnf install lohit-tamil-fonts        (Fedora)\n"
+                "  Or pass : --tamil-font /path/to/NotoSansTamil-Regular.ttf\n"
+                "  Or use  : --no-autocorrect  to report errors without editing the PDF."
+            )
+            sys.exit(1)
+
     logger.info("─" * 62)
-    logger.info("Input file    : %s", input_path)
+    logger.info("Input file    : %s  (%.1f MB)", input_path, file_size_mb)
     logger.info("Output file   : %s", output_path)
     logger.info("Auto-correct  : %s", auto_correct)
+    if tamil_font_path:
+        logger.info("Tamil font    : %s", tamil_font_path)
     logger.info("─" * 62)
 
     logger.info("Initialising Tamil spell checker …")
     checker = TamilSpellCheckerWrapper()
-
     summary = SpellCheckSummary()
 
     try:
@@ -675,6 +829,7 @@ def main() -> None:
             process_pdf(
                 input_path, output_path, checker, summary,
                 auto_correct=auto_correct, proper_nouns=proper_nouns,
+                tamil_font_path=tamil_font_path,
             )
     except Exception as exc:
         logger.error("Failed to process '%s': %s", input_path.name, exc, exc_info=True)
