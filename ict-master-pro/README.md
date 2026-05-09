@@ -32,6 +32,35 @@ guesswork on stop-loss or targets.
 
 ---
 
+## Trading Modes — one engine, five personalities
+
+Set **Trading Mode** in the inputs to make the same ICT engine adapt its
+sensitivity to your style. The mode controls pivot length, score threshold,
+ATR SL multiple, structure/sweep memory windows, OTE/HTF/Lunch filters and
+risk %. The currently active mode is always shown on the dashboard.
+
+| Mode | Pivot | Min Score | ATR SL | Risk % | OTE | HTF | Lunch Block | Best for |
+|---|---:|---:|---:|---:|:---:|:---:|:---:|---|
+| **Scalper** | 2 | 4/7 | 0.8x | 0.75% | off | off | block | 1m / 3m / 5m |
+| **Intraday** | 5 | 6/7 | 1.5x | 1.5% | on | on | block | 5m / 15m |
+| **Swing** | 10 | 7/7 | 3.0x | 2.5% | on | on | allow | 1H / 4H / D |
+| **Auto Adaptive** | — | — | — | — | — | — | — | picks Scalper / Intraday / Swing from the chart timeframe (≤5m → Scalper, ≤30m → Intraday, > 30m → Swing) |
+| **Custom** | input | input | input | input | input | input | input | every per-feature input is used verbatim — no mode override |
+
+Toggles in the **═══ Trading Mode ═══** group:
+
+- **Auto-tune Risk % by Mode** — when ON, Risk % follows the table above; when OFF, the Risk-group input wins.
+- **Mode also controls OTE/HTF/Lunch filters** — when OFF, the mode only adjusts pivot/score/ATR/risk and your OTE/HTF/Lunch toggles stay as-set.
+
+The Mode dashboard row shows: `<MODE> (auto)  pv 5  sc 6/7  ATR x1.5  risk 1.50%`
+— so you can see at a glance how the engine is currently configured.
+
+Mode-specific alerts (`Scalper Buy Setup` / `Intraday Sell Setup` / `Swing Buy Setup` etc.)
+fire only when both the signal AND the active mode match — useful when
+multiple charts share one webhook bridge.
+
+---
+
 ## Quick Start (3 steps)
 
 1. **Open TradingView Pine Editor** → New blank indicator → paste contents of
