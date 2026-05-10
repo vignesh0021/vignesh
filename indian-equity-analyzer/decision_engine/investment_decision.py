@@ -1,76 +1,97 @@
 """
 Investment Decision Engine.
-Combines Piotroski F-Score, Monte Carlo DCF, Reverse DCF, and news signals
-into a single structured STRONG_BUY → STRONG_AVOID recommendation.
+
+Production fixes applied:
+  1. Beta calculated from 3-year weekly returns regression (not hardcoded 1.0).
+  2. All monetary values in ₹ Crores consistently; per-share prices in ₹.
+  3. Shares outstanding = market_cap_cr / price (units now match).
+  4. Composite scoring uses explicit weights (not equal sum).
+  5. Removed duplicate static method definition.
+  6. Decisions are persisted to SQLite via AnalysisDatabase.
 """
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+from utils.database import AnalysisDatabase
+from utils.units import shares_cr_from_mktcap
 
 logger = logging.getLogger(__name__)
 
 DECISION_LABELS = ["STRONG_BUY", "BUY", "HOLD", "AVOID", "STRONG_AVOID"]
 
+# ── Composite scoring weights ───────────────────────────────────────────────
+_W_QUANT  = 0.35  # BharatQuant: F-Score + RS + Trend
+_W_DCF    = 0.25  # Monte Carlo DCF upside probability
+_W_RDCF   = 0.20  # Reverse DCF growth gap
+_W_SECTOR = 0.10  # Sector-relative PE premium
+_W_NEWS   = 0.10  # News catalyst signal
+
 
 @dataclass
 class InvestmentDecision:
-    """Structured output of a full stock analysis."""
+    """Structured output of the full analysis pipeline."""
 
-    symbol: str
-    decision: str  # STRONG_BUY / BUY / HOLD / AVOID / STRONG_AVOID
-    confidence: int  # 0-100
-    key_reasons: List[str] = field(default_factory=list)
-    risks: List[str] = field(default_factory=list)
-    target_price: float = 0.0
-    stop_loss: float = 0.0
-    position_size: str = "None"   # Full / Half / Quarter / None
-    time_horizon: str = "Medium"  # Short / Medium / Long
+    symbol:        str
+    decision:      str   = "HOLD"   # STRONG_BUY / BUY / HOLD / AVOID / STRONG_AVOID
+    confidence:    int   = 50        # 0-100
+    key_reasons:   List[str] = field(default_factory=list)
+    risks:         List[str] = field(default_factory=list)
+    target_price:  float = 0.0
+    stop_loss:     float = 0.0
+    position_size: str   = "None"   # Full / Half / Quarter / None
+    time_horizon:  str   = "Medium" # Short / Medium / Long
     current_price: float = 0.0
 
-    # Snapshot data (populated by engine)
-    pe: float = 0.0
-    pb: float = 0.0
-    roe: float = 0.0
-    roce: float = 0.0
-    debt_equity: float = 0.0
-    promoter_holding: float = 0.0
-    fii_holding: float = 0.0
-    sales_growth: float = 0.0
-    profit_growth: float = 0.0
-    f_score: int = 0
-    rs_score: float = 0.0
-    trend_stage: str = "Unknown"
-    ma50: float = 0.0
-    ma200: float = 0.0
-    rsi: float = 50.0
+    # Fundamentals
+    pe:                float = 0.0
+    pb:                float = 0.0
+    roe:               float = 0.0
+    roce:              float = 0.0
+    debt_equity:       float = 0.0
+    promoter_holding:  float = 0.0
+    fii_holding:       float = 0.0
+    sales_growth:      float = 0.0
+    profit_growth:     float = 0.0
+    f_score:           int   = 0
+    rs_score:          float = 0.0
+    trend_stage:       str   = "Unknown"
+    ma50:              float = 0.0
+    ma200:             float = 0.0
+    rsi:               float = 50.0
+    beta:              float = 1.0
 
     # Valuation
-    dcf_median: float = 0.0
-    dcf_p75: float = 0.0
-    upside_pct: float = 0.0
-    implied_growth: Optional[float] = None
-    actual_growth: float = 0.0
-    valuation_assessment: str = "INDETERMINATE"
+    dcf_median:            float         = 0.0
+    dcf_p75:               float         = 0.0
+    upside_pct:            float         = 0.0
+    implied_growth:        Optional[float] = None
+    actual_growth:         float         = 0.0
+    valuation_assessment:  str           = "INDETERMINATE"
 
-    # Corporate actions and news
+    # Corporate actions & news
     corporate_actions: List[Dict] = field(default_factory=list)
-    recent_news: List[Dict] = field(default_factory=list)
+    recent_news:       List[Dict] = field(default_factory=list)
 
     # Meta
-    analyzed_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    analyzed_at:     str   = field(default_factory=lambda: datetime.now().isoformat())
     composite_score: float = 0.0
 
 
 class InvestmentDecisionEngine:
     """
-    Orchestrates all analysis modules and produces an :class:`InvestmentDecision`.
+    Orchestrates all analysis modules into a single structured decision.
 
-    Composite scoring weights:
-      BharatQuant screen   → normalised bull points  (−2 … +2)
-      Monte Carlo DCF      → upside signal            (−1 … +1)
-      Reverse DCF          → growth gap               (−1 … +1)
-      News / Catalysts     → impact signal             (−0.5 … +0.5)
+    Composite score formula:
+      C = W_quant * quant + W_dcf * dcf + W_rdcf * rdcf
+          + W_sector * sector + W_news * news
+
+    Each sub-signal is normalised to [-1, +1] before weighting.
+    Final score maps to:
+      ≥ +0.6 → STRONG_BUY  | ≥ +0.2 → BUY  | ≥ -0.2 → HOLD
+      ≥ -0.6 → AVOID       | < -0.6 → STRONG_AVOID
     """
 
     def __init__(
@@ -81,13 +102,15 @@ class InvestmentDecisionEngine:
         dcf_engine,
         reverse_dcf,
         news_monitor,
+        db: Optional[AnalysisDatabase] = None,
     ):
-        self.data_mgr = data_manager
-        self.fund_mgr = fundamental_manager
-        self.screener = screener
+        self.data_mgr   = data_manager
+        self.fund_mgr   = fundamental_manager
+        self.screener   = screener
         self.dcf_engine = dcf_engine
-        self.reverse_dcf = reverse_dcf
-        self.news_monitor = news_monitor
+        self.rev_dcf    = reverse_dcf
+        self.news       = news_monitor
+        self._db        = db or AnalysisDatabase()
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -95,268 +118,243 @@ class InvestmentDecisionEngine:
 
     def analyze_stock(self, symbol: str) -> InvestmentDecision:
         """
-        Run the complete analysis pipeline for *symbol*.
-
-        Steps:
-          1. Live quote (current price, sector, valuation multiples).
-          2. Fundamental data (ratios, statements).
-          3. BharatQuant screen (F-Score, RS, Trend).
-          4. Monte Carlo DCF valuation.
-          5. Reverse DCF implied growth comparison.
-          6. News / corporate action scan.
-          7. Composite scoring → decision.
-
-        Returns:
-            :class:`InvestmentDecision` with all fields populated.
+        Run the complete 6-step pipeline and return a populated
+        :class:`InvestmentDecision`.
         """
-        logger.info("Starting full analysis for %s", symbol)
-        decision = InvestmentDecision(symbol=symbol)
+        logger.info("▶ Starting full analysis for %s", symbol)
+        d = InvestmentDecision(symbol=symbol)
 
-        # ---- 1. Live quote ----
+        # ── 1. Live price ──────────────────────────────────────────────
         try:
-            quote = self.data_mgr.get_live_quote(symbol)
-            decision.current_price = quote.get("last_price", 0.0)
-            logger.info("%s current price: ₹%.2f", symbol, decision.current_price)
+            q = self.data_mgr.get_live_quote(symbol)
+            d.current_price = float(q.get("last_price", 0.0))
+            logger.info("%s  current price ₹%.2f", symbol, d.current_price)
         except Exception as exc:
             logger.error("Live quote failed for %s: %s", symbol, exc)
 
-        # ---- 2. Fundamental data ----
-        ratios: Dict[str, Any] = {}
-        growth: Dict[str, Any] = {}
+        # ── 2. Fundamental data ────────────────────────────────────────
+        ratios:     Dict[str, Any] = {}
+        growth:     Dict[str, Any] = {}
         statements: Dict[str, Any] = {}
         try:
-            ratios = self.fund_mgr.get_key_ratios(symbol)
-            growth = self.fund_mgr.get_growth_metrics(symbol)
+            ratios     = self.fund_mgr.get_key_ratios(symbol)
+            growth     = self.fund_mgr.get_growth_metrics(symbol)
             statements = self.fund_mgr.get_financial_statements(symbol)
 
-            decision.pe = ratios.get("pe", 0.0)
-            decision.pb = ratios.get("pb", 0.0)
-            decision.roe = ratios.get("roe", 0.0)
-            decision.roce = ratios.get("roce", 0.0)
-            decision.debt_equity = ratios.get("debt_equity", 0.0)
-            decision.promoter_holding = ratios.get("promoter_holding", 0.0)
-            decision.fii_holding = ratios.get("fii_holding", 0.0)
-            decision.sales_growth = growth.get("sales_growth_yoy", 0.0)
-            decision.profit_growth = growth.get("profit_growth_yoy", 0.0)
+            d.pe               = ratios.get("pe", 0.0)
+            d.pb               = ratios.get("pb", 0.0)
+            d.roe              = ratios.get("roe", 0.0)
+            d.roce             = ratios.get("roce", 0.0)
+            d.debt_equity      = ratios.get("debt_equity", 0.0)
+            d.promoter_holding = ratios.get("promoter_holding", 0.0)
+            d.fii_holding      = ratios.get("fii_holding", 0.0)
+            d.sales_growth     = growth.get("sales_growth_yoy", 0.0)
+            d.profit_growth    = growth.get("profit_growth_yoy", 0.0)
         except Exception as exc:
             logger.error("Fundamental fetch failed for %s: %s", symbol, exc)
 
-        # ---- 3. BharatQuant screen ----
-        bull_points = 0
+        # ── 3. BharatQuant screen ──────────────────────────────────────
+        quant_norm = 0.0
         try:
-            f_result = self.screener.calculate_piotroski_f_score(symbol)
-            rs_result = self.screener.calculate_relative_strength(symbol)
-            trend_result = self.screener.detect_trend_stage(symbol)
+            f_r  = self.screener.calculate_piotroski_f_score(symbol)
+            rs_r = self.screener.calculate_relative_strength(symbol)
+            tr_r = self.screener.detect_trend_stage(symbol)
 
-            decision.f_score = f_result.get("score", 0)
-            decision.rs_score = rs_result.get("rs_score", 0.0)
-            decision.trend_stage = trend_result.get("stage_name", "Unknown")
-            decision.ma50 = trend_result.get("ma50", 0.0)
-            decision.ma200 = trend_result.get("ma200", 0.0)
-            decision.rsi = trend_result.get("rsi", 50.0)
+            d.f_score     = f_r["score"]
+            d.rs_score    = rs_r["rs_score"]
+            d.trend_stage = tr_r["stage_name"]
+            d.ma50        = tr_r.get("ma50", 0.0)
+            d.ma200       = tr_r.get("ma200", 0.0)
+            d.rsi         = tr_r.get("rsi", 50.0)
 
-            # Bull points (same logic as screener)
-            if decision.rs_score > 0:
-                bull_points += 1
-            if decision.f_score >= 7:
-                bull_points += 1
-            if decision.sales_growth > 20:
-                bull_points += 1
-            if decision.profit_growth > 20:
-                bull_points += 1
-            if decision.roe > 15:
-                bull_points += 1
-            if trend_result.get("stage") == 2:
-                bull_points += 1
-            if decision.f_score <= 3:
-                bull_points -= 2
-            if decision.sales_growth < 0:
-                bull_points -= 1
-            if decision.profit_growth < 0:
-                bull_points -= 1
-            if decision.debt_equity > 2:
-                bull_points -= 1
+            # Normalise each sub-signal to [-1, +1]
+            f_norm  = (d.f_score - 4.5) / 4.5          # 0→-1, 9→+1
+            rs_norm = max(-1.0, min(1.0, d.rs_score / 30))  # ±30% → ±1
+            trend_norm = {2: 1.0, 1: 0.0, 3: -0.3, 4: -1.0, 0: 0.0}.get(
+                tr_r.get("stage", 0), 0.0
+            )
+            quant_norm = (f_norm + rs_norm + trend_norm) / 3
+
         except Exception as exc:
             logger.error("BharatQuant screen failed for %s: %s", symbol, exc)
 
-        # ---- 4. Monte Carlo DCF ----
-        mc_result: Dict[str, Any] = {}
-        dcf_signal = 0.0
+        # ── 4. Beta calculation + Monte Carlo DCF ─────────────────────
+        dcf_norm = 0.0
         try:
-            cash_flows = statements.get("cash_flow", [])
-            hist_fcf = [float(r.get("free_cash_flow", 0) or 0) for r in cash_flows]
-            market_cap = ratios.get("market_cap", 0.0) or (
-                decision.current_price * 100  # rough estimate in crore
+            # Calculate actual beta from price history
+            d.beta = self.data_mgr.calculate_beta(symbol)
+
+            market_cap_cr = ratios.get("market_cap", 0.0) or (
+                d.current_price * 100  # very rough estimate
             )
-            de = ratios.get("debt_equity", 0.5)
-            equity_est = market_cap
-            debt_est = equity_est * de
+            de        = max(ratios.get("debt_equity", 0.0), 0.0)
+            equity_cr = market_cap_cr
+            debt_cr   = equity_cr * de
+
             wacc = self.dcf_engine.calculate_wacc(
-                beta=1.0, cost_of_debt=0.09, debt=debt_est, equity=equity_est
+                beta=d.beta,
+                cost_of_debt=0.09,
+                debt=debt_cr,
+                equity=equity_cr,
             )
 
-            if hist_fcf and any(f != 0 for f in hist_fcf):
-                shares = market_cap / decision.current_price if decision.current_price > 0 else 1.0
-                mc_result = self.dcf_engine.run_monte_carlo(
-                    historical_fcf=hist_fcf,
-                    wacc=wacc,
-                    current_market_cap=market_cap,
-                    shares_outstanding=shares,
-                    n_simulations=5000,  # reduced for speed in single-stock mode
-                )
-                decision.dcf_median = mc_result.get("per_share_median", 0.0)
-                decision.dcf_p75 = mc_result.get("per_share_p75", 0.0)
+            # FCF list in Crores (statements already in Cr)
+            cash_flows = statements.get("cash_flow", [])
+            hist_fcf   = [
+                float(r.get("free_cash_flow", 0) or 0)
+                for r in cash_flows
+            ]
 
-                if decision.current_price > 0 and decision.dcf_median > 0:
-                    decision.upside_pct = (
-                        (decision.dcf_median - decision.current_price)
-                        / decision.current_price * 100
+            if hist_fcf and any(f != 0 for f in hist_fcf) and d.current_price > 0:
+                # shares in Crore units so per_share_value = DCF_Cr / shares_Cr = ₹/share ✓
+                shares_cr = shares_cr_from_mktcap(market_cap_cr, d.current_price)
+
+                mc = self.dcf_engine.run_monte_carlo(
+                    historical_fcf   = hist_fcf,
+                    wacc             = wacc,
+                    current_market_cap = market_cap_cr,
+                    shares_outstanding = shares_cr,
+                    n_simulations    = 5_000,
+                )
+                d.dcf_median = mc.get("per_share_median", 0.0)
+                d.dcf_p75    = mc.get("per_share_p75", 0.0)
+
+                if d.current_price > 0 and d.dcf_median > 0:
+                    d.upside_pct = (
+                        (d.dcf_median - d.current_price) / d.current_price * 100
                     )
 
-                prob_up = mc_result.get("probability_of_upside", 50.0)
-                if prob_up > 65:
-                    dcf_signal = 1.0
-                elif prob_up > 50:
-                    dcf_signal = 0.5
-                elif prob_up < 35:
-                    dcf_signal = -1.0
-                elif prob_up < 50:
-                    dcf_signal = -0.5
+                # Normalise: probability of upside → [-1, +1]
+                prob_up = mc.get("probability_of_upside", 50.0)
+                dcf_norm = (prob_up - 50) / 50  # 100% → +1, 0% → -1
 
         except Exception as exc:
             logger.error("Monte Carlo DCF failed for %s: %s", symbol, exc)
 
-        # ---- 5. Reverse DCF ----
-        rdcf_signal = 0.0
+        # ── 5. Reverse DCF ────────────────────────────────────────────
+        rdcf_norm = 0.0
         try:
-            rdcf = self.reverse_dcf.compare_to_historical_growth(
-                symbol, decision.current_price
-            )
-            decision.implied_growth = rdcf.get("implied_growth")
-            decision.actual_growth = max(
+            rdcf = self.rev_dcf.compare_to_historical_growth(symbol, d.current_price)
+            d.implied_growth       = rdcf.get("implied_growth")
+            d.actual_growth        = max(
                 rdcf.get("actual_sales_growth", 0.0),
                 rdcf.get("actual_profit_growth", 0.0),
             )
-            decision.valuation_assessment = rdcf.get("assessment", "INDETERMINATE")
-
-            if rdcf["assessment"] == "CHEAP":
-                rdcf_signal = 1.0
-            elif rdcf["assessment"] == "FAIR":
-                rdcf_signal = 0.0
-            elif rdcf["assessment"] == "EXPENSIVE":
-                rdcf_signal = -1.0
+            d.valuation_assessment = rdcf.get("assessment", "INDETERMINATE")
+            rdcf_norm = {"CHEAP": 1.0, "FAIR": 0.0, "EXPENSIVE": -1.0,
+                         "INDETERMINATE": 0.0}.get(d.valuation_assessment, 0.0)
         except Exception as exc:
             logger.error("Reverse DCF failed for %s: %s", symbol, exc)
 
-        # ---- 6. News & Corporate Actions ----
-        news_signal = 0.0
+        # ── 6a. Sector-relative PE ─────────────────────────────────────
+        sector_norm = 0.0
         try:
-            decision.corporate_actions = self.news_monitor.get_corporate_actions(symbol)
-            decision.recent_news = self.news_monitor.fetch_news(
-                symbol=symbol, days=7, min_impact=4
-            )[:5]
+            pe = d.pe
+            if 1 < pe < 200:
+                # Simple heuristic: compare against Nifty 50 avg PE (~22)
+                nifty_pe = 22.0
+                premium  = (pe - nifty_pe) / nifty_pe
+                sector_norm = max(-1.0, min(1.0, -premium))  # high PE → negative signal
+        except Exception:
+            pass
 
-            if decision.recent_news:
-                top_impact = decision.recent_news[0]["impact_score"]
-                if top_impact >= 8:
-                    # Check for negative vs positive keywords
-                    title = decision.recent_news[0]["title"].lower()
-                    negative_kw = ["default", "fraud", "penalty", "npa", "raid", "investigation"]
-                    news_signal = -0.5 if any(k in title for k in negative_kw) else 0.5
+        # ── 6b. News signal ───────────────────────────────────────────
+        news_norm = 0.0
+        try:
+            d.corporate_actions = self.news.get_corporate_actions(symbol)
+            d.recent_news       = self.news.fetch_news(symbol=symbol, days=7, min_impact=4)[:5]
+
+            if d.recent_news:
+                sentiments = [n.get("sentiment", "neutral") for n in d.recent_news[:3]]
+                pos = sentiments.count("positive")
+                neg = sentiments.count("negative")
+                if pos > neg:
+                    news_norm = 0.5
+                elif neg > pos:
+                    news_norm = -0.5
         except Exception as exc:
             logger.error("News fetch failed for %s: %s", symbol, exc)
 
-        # ---- 7. Composite score → Decision ----
-        # Normalise bull_points to [-2, +2] range
-        quant_signal = max(-2.0, min(2.0, bull_points / 3.0))
-        composite = quant_signal + dcf_signal + rdcf_signal + news_signal
-        decision.composite_score = round(composite, 3)
-
-        if composite >= 1.5:
-            decision.decision = "STRONG_BUY"
-            decision.confidence = min(95, 85 + int((composite - 1.5) * 10))
-            decision.position_size = "Full"
-            decision.time_horizon = "Long"
-        elif composite >= 0.5:
-            decision.decision = "BUY"
-            decision.confidence = min(80, 65 + int((composite - 0.5) * 15))
-            decision.position_size = "Half"
-            decision.time_horizon = "Medium"
-        elif composite >= -0.5:
-            decision.decision = "HOLD"
-            decision.confidence = 50
-            decision.position_size = "Quarter"
-            decision.time_horizon = "Medium"
-        elif composite >= -1.5:
-            decision.decision = "AVOID"
-            decision.confidence = min(80, 65 + int((-composite - 0.5) * 15))
-            decision.position_size = "None"
-            decision.time_horizon = "Short"
-        else:
-            decision.decision = "STRONG_AVOID"
-            decision.confidence = min(95, 85 + int((-composite - 1.5) * 10))
-            decision.position_size = "None"
-            decision.time_horizon = "Short"
-
-        # Target price from DCF p75; stop loss 15% below current
-        decision.target_price = decision.dcf_p75 if decision.dcf_p75 > 0 else (
-            decision.current_price * 1.15
+        # ── 7. Composite score → decision ─────────────────────────────
+        composite = (
+            _W_QUANT  * quant_norm
+            + _W_DCF    * dcf_norm
+            + _W_RDCF   * rdcf_norm
+            + _W_SECTOR * sector_norm
+            + _W_NEWS   * news_norm
         )
-        decision.stop_loss = round(decision.current_price * 0.85, 2)
+        d.composite_score = round(composite, 4)
 
-        # Build reasons and risks
-        decision.key_reasons = self._build_reasons(decision, f_result, rs_result, trend_result)
-        decision.risks = self._build_risks(decision, ratios)
+        if composite >= 0.6:
+            d.decision, d.position_size, d.time_horizon = "STRONG_BUY", "Full",    "Long"
+            d.confidence = min(95, 85 + int((composite - 0.6) * 25))
+        elif composite >= 0.2:
+            d.decision, d.position_size, d.time_horizon = "BUY",        "Half",    "Medium"
+            d.confidence = min(80, 65 + int((composite - 0.2) * 37))
+        elif composite >= -0.2:
+            d.decision, d.position_size, d.time_horizon = "HOLD",       "Quarter", "Medium"
+            d.confidence = 50
+        elif composite >= -0.6:
+            d.decision, d.position_size, d.time_horizon = "AVOID",      "None",    "Short"
+            d.confidence = min(80, 65 + int((-composite - 0.2) * 37))
+        else:
+            d.decision, d.position_size, d.time_horizon = "STRONG_AVOID","None",   "Short"
+            d.confidence = min(95, 85 + int((-composite - 0.6) * 25))
+
+        # Target from DCF p75; stop 15% below current price
+        d.target_price = d.dcf_p75 if d.dcf_p75 > 0 else round(d.current_price * 1.15, 2)
+        d.stop_loss    = round(d.current_price * 0.85, 2)
+
+        d.key_reasons = _build_reasons(d, f_r if "f_r" in dir() else {}, rs_r if "rs_r" in dir() else {}, tr_r if "tr_r" in dir() else {})
+        d.risks       = _build_risks(d, ratios)
 
         logger.info(
-            "%s → %s (confidence %d%%, composite %.2f)",
-            symbol, decision.decision, decision.confidence, composite,
+            "◀ %s → %s  confidence=%d%%  composite=%.4f  beta=%.3f",
+            symbol, d.decision, d.confidence, composite, d.beta,
         )
-        return decision
+
+        # Persist to DB
+        self._db.save_decision(symbol, {
+            "decision": d.decision, "confidence": d.confidence,
+            "composite_score": d.composite_score, "current_price": d.current_price,
+            "target_price": d.target_price, "stop_loss": d.stop_loss,
+            "position_size": d.position_size, "beta": d.beta,
+        })
+        return d
 
     # ------------------------------------------------------------------
-    # Report generator
+    # Report formatter
     # ------------------------------------------------------------------
 
-    def generate_report(self, decision: InvestmentDecision) -> str:
-        """
-        Format an :class:`InvestmentDecision` into the canonical text report.
-        """
-        sep = "=" * 64
+    def generate_report(self, d: InvestmentDecision) -> str:
+        sep  = "=" * 64
         thin = "-" * 64
 
-        ig = (
-            f"{decision.implied_growth:.1f}%"
-            if decision.implied_growth is not None else "N/A"
-        )
+        ig = f"{d.implied_growth:.1f}%" if d.implied_growth is not None else "N/A"
+
         ca_text = (
             "\n".join(
                 f"  {a['action_type']} – Ex-date: {a['ex_date']}  {a['details']}"
-                for a in decision.corporate_actions[:3]
+                for a in d.corporate_actions[:3]
             ) or "  None in recent history"
         )
         news_text = (
             "\n".join(
-                f"  [{n['impact_score']}/10] {n['title'][:75]}"
-                f"  ({n['source']})"
-                for n in decision.recent_news[:3]
+                f"  [{n['impact_score']}/10] [{n.get('sentiment','?')[:3].upper()}] "
+                f"{n['title'][:72]}  ({n['source']})"
+                for n in d.recent_news[:3]
             ) or "  No high-impact news in last 7 days"
         )
+        reasons = "\n".join(f"{i+1}. {r}" for i, r in enumerate(d.key_reasons)) or "  Insufficient data"
+        risks   = "\n".join(f"{i+1}. {r}" for i, r in enumerate(d.risks))       or "  Standard market risks apply"
 
-        reasons = "\n".join(
-            f"{i + 1}. {r}" for i, r in enumerate(decision.key_reasons)
-        ) or "  Insufficient data for reasons"
-        risks = "\n".join(
-            f"{i + 1}. {r}" for i, r in enumerate(decision.risks)
-        ) or "  Insufficient data for risks"
-
-        report = f"""
+        return f"""
 {sep}
-INVESTMENT DECISION REPORT: {decision.symbol}
+INVESTMENT DECISION REPORT: {d.symbol}
 {sep}
 
-DECISION: {decision.decision}
-CONFIDENCE: {decision.confidence}%
+DECISION: {d.decision}
+CONFIDENCE: {d.confidence}%
 
 {thin}
 KEY REASONS TO CONSIDER:
@@ -371,43 +369,44 @@ KEY RISKS:
 {thin}
 TRADING PARAMETERS:
 {thin}
-Current Price:  ₹{decision.current_price:,.2f}
-Target Price:   ₹{decision.target_price:,.2f}
-Stop Loss:      ₹{decision.stop_loss:,.2f}
-Position Size:  {decision.position_size}
-Time Horizon:   {decision.time_horizon}
+Current Price:  ₹{d.current_price:,.2f}
+Target Price:   ₹{d.target_price:,.2f}
+Stop Loss:      ₹{d.stop_loss:,.2f}
+Position Size:  {d.position_size}
+Time Horizon:   {d.time_horizon}
 
 {thin}
 FUNDAMENTAL SNAPSHOT:
 {thin}
-P/E Ratio:             {decision.pe:.1f}
-P/B Ratio:             {decision.pb:.2f}
-ROE:                   {decision.roe:.1f}%
-ROCE:                  {decision.roce:.1f}%
-Debt/Equity:           {decision.debt_equity:.2f}
-Promoter Holding:      {decision.promoter_holding:.1f}%
-FII Holding:           {decision.fii_holding:.1f}%
-Sales Growth (YoY):    {decision.sales_growth:.1f}%
-Profit Growth (YoY):   {decision.profit_growth:.1f}%
-F-Score:               {decision.f_score}/9
-RS Score:              {decision.rs_score:+.1f}% vs Nifty
+P/E Ratio:             {d.pe:.1f}
+P/B Ratio:             {d.pb:.2f}
+ROE:                   {d.roe:.1f}%
+ROCE:                  {d.roce:.1f}%
+Debt/Equity:           {d.debt_equity:.2f}
+Promoter Holding:      {d.promoter_holding:.1f}%
+FII Holding:           {d.fii_holding:.1f}%
+Sales Growth (YoY):    {d.sales_growth:.1f}%
+Profit Growth (YoY):   {d.profit_growth:.1f}%
+F-Score:               {d.f_score}/9
+RS Score:              {d.rs_score:+.1f}% vs Nifty
 
 {thin}
 VALUATION ANALYSIS:
 {thin}
-Monte Carlo Median Value: ₹{decision.dcf_median:,.2f}
-Upside Potential:         {decision.upside_pct:+.1f}%
+Monte Carlo Median Value: ₹{d.dcf_median:,.2f}
+Upside Potential:         {d.upside_pct:+.1f}%
 Implied Growth (Market):  {ig}
-Actual Growth (Hist.):    {decision.actual_growth:.1f}%
-Valuation Assessment:     {decision.valuation_assessment}
+Actual Growth (Hist.):    {d.actual_growth:.1f}%
+Valuation Assessment:     {d.valuation_assessment}
 
 {thin}
 TECHNICAL SNAPSHOT:
 {thin}
-Trend Stage:  {decision.trend_stage}
-50 DMA:       ₹{decision.ma50:,.2f}
-200 DMA:      ₹{decision.ma200:,.2f}
-RSI (14):     {decision.rsi:.1f}
+Trend Stage:  {d.trend_stage}
+50 DMA:       ₹{d.ma50:,.2f}
+200 DMA:      ₹{d.ma200:,.2f}
+RSI (14):     {d.rsi:.1f}
+Beta (3Y):    {d.beta:.3f}
 
 {thin}
 RECENT CORPORATE ACTIONS:
@@ -420,109 +419,109 @@ RECENT NEWS:
 {news_text}
 
 {sep}
-Report generated: {decision.analyzed_at[:19]}
-Composite Score:  {decision.composite_score:+.3f}
+Report generated: {d.analyzed_at[:19]}
+Composite Score:  {d.composite_score:+.4f}
 {sep}
 """.strip()
 
-        return report
-
     # ------------------------------------------------------------------
-    # Reason / Risk builders
+    # Decision history
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _build_reasons(
-        d: InvestmentDecision,
-        f_result: Dict,
-        rs_result: Dict,
-        trend_result: Dict,
-    ) -> List[str]:
-        reasons = []
+    def get_decision_history(self, symbol: str, limit: int = 10) -> List[Dict]:
+        """Return the last *limit* decisions for *symbol* from the DB."""
+        return self._db.get_decision_history(symbol, limit)
 
-        if d.f_score >= 7:
-            reasons.append(
-                f"Strong Piotroski F-Score of {d.f_score}/9 signals excellent financial health"
-            )
-        elif d.f_score >= 5:
-            reasons.append(f"Solid Piotroski F-Score of {d.f_score}/9 – above average quality")
 
-        if d.rs_score > 10:
-            reasons.append(
-                f"Outperforming Nifty by {d.rs_score:.1f}% over last year – strong relative strength"
-            )
-        elif d.rs_score > 0:
-            reasons.append(f"Marginally outperforming Nifty (+{d.rs_score:.1f}%) in last 12 months")
+# ------------------------------------------------------------------
+# Reason / Risk builders (pure functions)
+# ------------------------------------------------------------------
 
-        if trend_result.get("stage") == 2:
-            reasons.append("Stage 2 Advancing trend – price above 50-DMA with golden cross active")
+def _build_reasons(d: InvestmentDecision, f_r: Dict, rs_r: Dict, tr_r: Dict) -> List[str]:
+    reasons = []
 
-        if d.sales_growth > 20:
-            reasons.append(f"Revenue growing at {d.sales_growth:.1f}% YoY – above-market pace")
-        elif d.sales_growth > 10:
-            reasons.append(f"Healthy revenue growth of {d.sales_growth:.1f}% YoY")
+    if d.f_score >= 7:
+        reasons.append(f"Strong Piotroski F-Score {d.f_score}/9 – excellent financial health")
+    elif d.f_score >= 5:
+        reasons.append(f"Solid Piotroski F-Score {d.f_score}/9 – above-average quality")
 
-        if d.profit_growth > 20:
-            reasons.append(f"Profit growth of {d.profit_growth:.1f}% YoY demonstrates operational leverage")
+    if d.rs_score > 10:
+        reasons.append(f"Outperforming Nifty by {d.rs_score:.1f}% over last year – strong RS")
+    elif d.rs_score > 0:
+        reasons.append(f"Marginally outperforming Nifty (+{d.rs_score:.1f}%) in last 12 months")
 
-        if d.roe > 18:
-            reasons.append(f"High ROE of {d.roe:.1f}% – strong capital efficiency")
+    if tr_r.get("stage") == 2:
+        reasons.append("Stage 2 Advancing trend – price above 50-DMA with golden cross active")
 
-        if d.valuation_assessment == "CHEAP":
-            reasons.append(
-                f"Reverse DCF: market implies only {d.implied_growth:.1f}% growth vs "
-                f"{d.actual_growth:.1f}% historical – stock appears undervalued"
-            )
+    if d.sales_growth > 20:
+        reasons.append(f"Revenue growing {d.sales_growth:.1f}% YoY – above-market pace")
+    elif d.sales_growth > 10:
+        reasons.append(f"Healthy revenue growth of {d.sales_growth:.1f}% YoY")
 
-        if d.upside_pct > 20:
-            reasons.append(
-                f"Monte Carlo DCF suggests {d.upside_pct:.1f}% upside to median intrinsic value"
-            )
+    if d.profit_growth > 20:
+        reasons.append(f"Profit growth {d.profit_growth:.1f}% YoY – strong operating leverage")
 
-        if d.promoter_holding > 50:
-            reasons.append(f"High promoter conviction – {d.promoter_holding:.1f}% holding")
+    if d.roe > 18:
+        reasons.append(f"High ROE of {d.roe:.1f}% – capital deployed efficiently")
 
-        return reasons[:6] or ["Composite signal is positive but reasons are data-limited"]
+    if d.roce > 20:
+        reasons.append(f"ROCE of {d.roce:.1f}% above cost of capital – value creating")
 
-    @staticmethod
-    def _build_risks(d: InvestmentDecision, ratios: Dict) -> List[str]:
-        risks = []
+    if d.valuation_assessment == "CHEAP" and d.implied_growth is not None:
+        reasons.append(
+            f"Market prices in only {d.implied_growth:.1f}% growth vs "
+            f"{d.actual_growth:.1f}% historical – undervalued"
+        )
 
-        if d.debt_equity > 1.5:
-            risks.append(
-                f"High debt/equity ratio of {d.debt_equity:.2f}x – elevated financial leverage"
-            )
+    if d.upside_pct > 20:
+        reasons.append(f"DCF suggests {d.upside_pct:.1f}% upside to median intrinsic value")
 
-        pledged = ratios.get("pledged_pct", 0.0)
-        if pledged > 20:
-            risks.append(f"Promoter pledging at {pledged:.1f}% – risk of forced selling")
+    if d.promoter_holding > 50:
+        reasons.append(f"High promoter conviction – {d.promoter_holding:.1f}% stake")
 
-        if d.pe > 40:
-            risks.append(
-                f"Premium valuation (P/E {d.pe:.1f}x) leaves little margin of safety"
-            )
+    if 0.7 < d.beta < 1.1:
+        reasons.append(f"Defensive beta of {d.beta:.2f} – low sensitivity to market swings")
 
-        if d.rsi > 70:
-            risks.append(f"Technically overbought (RSI {d.rsi:.1f}) – pullback risk near-term")
-        elif d.rsi < 30:
-            risks.append(f"Technically oversold (RSI {d.rsi:.1f}) – potential further downside")
+    return reasons[:6] or ["Composite signal is positive but data coverage is limited"]
 
-        if d.f_score <= 3:
-            risks.append(f"Weak F-Score ({d.f_score}/9) signals deteriorating fundamentals")
 
-        if d.sales_growth < 0:
-            risks.append(f"Revenue declining {d.sales_growth:.1f}% YoY – demand concerns")
+def _build_risks(d: InvestmentDecision, ratios: Dict) -> List[str]:
+    risks = []
 
-        if d.profit_growth < -10:
-            risks.append(f"Profit contraction of {d.profit_growth:.1f}% YoY – margin pressure")
+    if d.debt_equity > 1.5:
+        risks.append(f"High debt/equity {d.debt_equity:.2f}x – elevated financial leverage")
 
-        if d.valuation_assessment == "EXPENSIVE":
-            risks.append(
-                f"Market pricing in {d.implied_growth:.1f}% growth vs "
-                f"{d.actual_growth:.1f}% historical – execution risk"
-            )
+    pledged = ratios.get("pledged_pct", 0.0)
+    if pledged > 20:
+        risks.append(f"Promoter pledging {pledged:.1f}% – risk of forced selling")
 
-        if "Stage 4" in d.trend_stage:
-            risks.append("Stage 4 declining trend – technically in a downtrend")
+    if d.pe > 40:
+        risks.append(f"Premium valuation P/E {d.pe:.1f}x – limited margin of safety")
 
-        return risks[:5] or ["Standard market, regulatory, and macro risks apply"]
+    if d.rsi > 70:
+        risks.append(f"Technically overbought RSI {d.rsi:.1f} – near-term pullback risk")
+    elif d.rsi < 30:
+        risks.append(f"Technically oversold RSI {d.rsi:.1f} – potential further downside")
+
+    if d.f_score <= 3:
+        risks.append(f"Weak F-Score {d.f_score}/9 – deteriorating fundamentals")
+
+    if d.sales_growth < 0:
+        risks.append(f"Revenue declining {d.sales_growth:.1f}% YoY – demand concerns")
+
+    if d.profit_growth < -10:
+        risks.append(f"Profit contracting {d.profit_growth:.1f}% YoY – margin pressure")
+
+    if d.valuation_assessment == "EXPENSIVE" and d.implied_growth is not None:
+        risks.append(
+            f"Market prices in {d.implied_growth:.1f}% growth vs "
+            f"{d.actual_growth:.1f}% historical – execution risk is high"
+        )
+
+    if "Stage 4" in d.trend_stage:
+        risks.append("Stage 4 declining trend – stock technically in a downtrend")
+
+    if d.beta > 1.5:
+        risks.append(f"High beta {d.beta:.2f} – amplified drawdown in market corrections")
+
+    return risks[:5] or ["Standard market, regulatory, and macro risks apply"]

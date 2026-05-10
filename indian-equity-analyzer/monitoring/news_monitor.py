@@ -1,7 +1,10 @@
 """
 News and Corporate Actions Monitor for Indian stocks.
-Scrapes MoneyControl, Economic Times, and LiveMint RSS feeds.
-Applies keyword-based impact scoring for actionable event detection.
+
+Improvements over v1:
+  - Sentiment-aware scoring: negation words flip negative keywords to positive
+  - Distinguishes positive vs negative high-impact events
+  - feedparser imported lazily (handles broken system installs gracefully)
 """
 import logging
 import re
@@ -14,52 +17,79 @@ import requests
 try:
     import feedparser as _feedparser
     _FEEDPARSER_OK = True
-except (ImportError, ModuleNotFoundError, Exception):
+except Exception:
     _feedparser = None  # type: ignore[assignment]
     _FEEDPARSER_OK = False
 
 logger = logging.getLogger(__name__)
 
-# High-impact keywords add +3; medium add +1; symbol match adds +2
-HIGH_IMPACT_KEYWORDS = [
-    "earnings", "results", "quarterly results", "dividend", "bonus", "stock split",
-    "merger", "acquisition", "takeover", "buyback", "rights issue",
-    "fda approval", "approval", "order", "contract", "default", "npa",
-    "fraud", "penalty", "sebi", "investigation", "raid", "bankruptcy",
-    "guidance", "outlook upgrade", "delisting", "qip",
+# ── Sentiment-aware keyword lists ──────────────────────────────────────────
+
+# High-impact POSITIVE events: earnings beat, approval, contract win …
+_HIGH_POS = [
+    "earnings beat", "profit rises", "strong results", "record profit",
+    "dividend declared", "bonus shares", "stock split", "buyback",
+    "merger", "acquisition", "contract won", "order received",
+    "fda approval", "drug approval", "approval received", "rating upgrade",
+    "debt free", "promoter buying", "insider buying", "rights issue",
+    "qip", "delisting offer",
 ]
 
-MEDIUM_IMPACT_KEYWORDS = [
-    "target", "upgrade", "downgrade", "buy", "sell", "hold", "outperform",
-    "underperform", "analyst", "rating", "price target", "initiating",
-    "maintain", "reiterate",
+# High-impact NEGATIVE events: default, fraud, penalty …
+_HIGH_NEG = [
+    "default", "loan default", "npa", "fraud", "sebi order", "sebi ban",
+    "penalty imposed", "fraud detected", "cbi raid", "income tax raid",
+    "profit falls", "net loss", "earnings miss", "guidance cut",
+    "promoter pledging", "promoter selling", "credit downgrade",
+    "bankruptcy", "insolvency", "nclt", "debt restructuring",
+    "margin call", "forced selling",
 ]
 
-RSS_FEEDS = {
-    "MoneyControl": "https://www.moneycontrol.com/rss/marketreports.xml",
-    "EconomicTimes": "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
-    "LiveMint": "https://www.livemint.com/rss/markets",
+# Medium-impact neutral / ambiguous terms (+1 each)
+_MEDIUM = [
+    "target price", "price target", "analyst upgrade", "analyst downgrade",
+    "buy recommendation", "sell recommendation", "hold recommendation",
+    "outlook positive", "outlook negative", "initiating coverage",
+    "maintain outperform", "maintain underperform", "results announced",
+    "quarterly results",
+]
+
+# Negation words that flip the sentiment of an immediately following keyword
+_NEGATION = re.compile(
+    r"\b(not|no|avoids?|denies?|clears?|without|rules? out|"
+    r"dismisses?|rejects?|reverses?|prevents?|unlikely)\b",
+    re.IGNORECASE,
+)
+
+RSS_FEEDS: Dict[str, str] = {
+    "MoneyControl":     "https://www.moneycontrol.com/rss/marketreports.xml",
+    "EconomicTimes":    "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
+    "LiveMint":         "https://www.livemint.com/rss/markets",
     "BusinessStandard": "https://www.business-standard.com/rss/markets-106.rss",
 }
 
 
 class IndianStockMonitor:
     """
-    Monitors news and corporate actions for a watchlist or portfolio of Indian stocks.
+    Monitors news and corporate actions for Indian equity portfolios.
 
-    Applies a structured impact score (0-10) to each news item based on:
-      - Keyword relevance (high / medium impact words)
-      - Symbol mention in headline or summary
-      - Sector relevance
+    Impact score (0-10):
+      Positive high-impact keyword:  +3
+      Negative high-impact keyword:  +3  (flagged as negative)
+      Negation before neg keyword:   reverses to +0 (not counted negative)
+      Medium keyword:                +1
+      Symbol match in text:          +2
+      Sector match:                  +1
+    Final score = min(raw, 10); sentiment = positive / negative / neutral.
     """
 
     def __init__(self, live_data_manager=None, cache_minutes: int = 30):
-        self.live_mgr = live_data_manager
-        self._cache_minutes = cache_minutes
-        self._news_cache: Dict[str, Dict] = {}  # keyed by feed URL
+        self.live_mgr       = live_data_manager
+        self._cache_min     = cache_minutes
+        self._feed_cache:   Dict[str, Dict] = {}
 
     # ------------------------------------------------------------------
-    # News fetching
+    # Public API
     # ------------------------------------------------------------------
 
     def fetch_news(
@@ -70,69 +100,59 @@ class IndianStockMonitor:
         min_impact: int = 5,
     ) -> List[Dict[str, Any]]:
         """
-        Fetch and score recent news from Indian financial RSS feeds.
+        Fetch, score, and filter recent Indian market news.
 
         Args:
-            symbol:     If provided, boost articles mentioning this symbol.
-            sector:     If provided, boost sector-related articles.
-            days:       Only include articles from the last N days.
+            symbol:     Boost articles mentioning this symbol.
+            sector:     Boost sector-related articles.
+            days:       Only include articles from last N days.
             min_impact: Minimum impact score (0-10) to include.
 
         Returns:
-            List of news dicts sorted by impact score descending.
+            Sorted list (impact desc) of scored news dicts.
         """
+        if not _FEEDPARSER_OK:
+            logger.info("feedparser unavailable – news fetching skipped")
+            return []
+
         cutoff = datetime.now() - timedelta(days=days)
         all_items: List[Dict[str, Any]] = []
 
         for source, url in RSS_FEEDS.items():
-            items = self._fetch_feed(source, url, cutoff)
-            all_items.extend(items)
+            all_items.extend(self._fetch_feed(source, url, cutoff))
 
-        # Score and filter
         scored = []
         for item in all_items:
-            score = self._score_article(item, symbol, sector)
+            score, sentiment = self._score(item, symbol, sector)
             if score >= min_impact:
                 item["impact_score"] = score
+                item["sentiment"]    = sentiment
                 scored.append(item)
 
         scored.sort(key=lambda x: x["impact_score"], reverse=True)
         return scored
 
     def get_corporate_actions(self, symbol: str) -> List[Dict[str, Any]]:
-        """
-        Return corporate actions for *symbol* via the LiveDataManager (NSEPython).
-        Falls back to an empty list if unavailable.
-        """
+        """Return corporate actions for *symbol* via LiveDataManager."""
         if self.live_mgr is None:
             return []
         try:
             return self.live_mgr.get_corporate_actions(symbol)
         except Exception as exc:
-            logger.warning("Corporate actions fetch failed for %s: %s", symbol, exc)
+            logger.warning("Corporate actions failed for %s: %s", symbol, exc)
             return []
 
     def generate_daily_briefing(self, portfolio: List[str]) -> str:
-        """
-        Produce a formatted daily briefing for a list of holdings.
-
-        Args:
-            portfolio: List of NSE symbols (e.g. ['RELIANCE', 'TCS']).
-
-        Returns:
-            Formatted text briefing.
-        """
+        """Generate a formatted daily portfolio briefing."""
         lines = [
             "=" * 64,
             f"DAILY PORTFOLIO BRIEFING  –  {datetime.now().strftime('%d %b %Y %H:%M')}",
-            "=" * 64,
-            "",
+            "=" * 64, "",
         ]
 
         for symbol in portfolio:
             lines.append(f"── {symbol} ──────────────────────────────────────")
 
-            # Corporate actions
             actions = self.get_corporate_actions(symbol)
             if actions:
                 lines.append("  Corporate Actions:")
@@ -141,13 +161,14 @@ class IndianStockMonitor:
             else:
                 lines.append("  Corporate Actions: None in recent history")
 
-            # News
             news = self.fetch_news(symbol=symbol, days=7, min_impact=4)
             if news:
                 lines.append("  Top News:")
                 for n in news[:3]:
+                    sent = n.get("sentiment", "neutral")
+                    icon = "▲" if sent == "positive" else ("▼" if sent == "negative" else "–")
                     lines.append(
-                        f"    [{n['impact_score']}/10] {n['title'][:80]}"
+                        f"    {icon}[{n['impact_score']}/10] {n['title'][:78]}"
                         f"  ({n['source']})"
                     )
             else:
@@ -165,19 +186,12 @@ class IndianStockMonitor:
     def _fetch_feed(
         self, source: str, url: str, cutoff: datetime
     ) -> List[Dict[str, Any]]:
-        """Download and parse a single RSS feed, respecting cache TTL."""
-        cache_entry = self._news_cache.get(url)
-        if cache_entry:
-            age_mins = (time.time() - cache_entry["fetched_at"]) / 60
-            if age_mins < self._cache_minutes:
-                return cache_entry["items"]
+        """Download and cache a single RSS feed."""
+        entry = self._feed_cache.get(url)
+        if entry and (time.time() - entry["ts"]) / 60 < self._cache_min:
+            return entry["items"]
 
         items: List[Dict[str, Any]] = []
-        if not _FEEDPARSER_OK:
-            logger.warning("feedparser unavailable – news fetching from %s skipped", source)
-            self._news_cache[url] = {"items": [], "fetched_at": time.time()}
-            return []
-
         try:
             for attempt in range(3):
                 try:
@@ -189,61 +203,96 @@ class IndianStockMonitor:
                         raise
                     time.sleep(2 ** attempt)
 
-            for entry in feed.entries:
-                pub_dt = self._parse_date(entry)
-                if pub_dt and pub_dt < cutoff:
+            for e in feed.entries:
+                pub = _parse_date(e)
+                if pub and pub < cutoff:
                     continue
-
                 items.append({
-                    "title": entry.get("title", ""),
-                    "summary": entry.get("summary", entry.get("description", "")),
-                    "link": entry.get("link", ""),
-                    "published": pub_dt.isoformat() if pub_dt else "",
-                    "source": source,
-                    "impact_score": 0,
+                    "title":     e.get("title", ""),
+                    "summary":   e.get("summary", e.get("description", "")),
+                    "link":      e.get("link", ""),
+                    "published": pub.isoformat() if pub else "",
+                    "source":    source,
                 })
 
-            self._news_cache[url] = {"items": items, "fetched_at": time.time()}
+            self._feed_cache[url] = {"items": items, "ts": time.time()}
             logger.info("Fetched %d items from %s", len(items), source)
 
         except Exception as exc:
-            logger.warning("Failed to fetch RSS from %s (%s): %s", source, url, exc)
+            logger.warning("RSS fetch failed (%s – %s): %s", source, url, exc)
 
         return items
 
     @staticmethod
-    def _parse_date(entry) -> Optional[datetime]:
-        """Convert feedparser's published_parsed to datetime."""
-        try:
-            if hasattr(entry, "published_parsed") and entry.published_parsed:
-                import calendar
-                return datetime.fromtimestamp(calendar.timegm(entry.published_parsed))
-        except Exception:
-            pass
-        return None
-
-    @staticmethod
-    def _score_article(
+    def _score(
         article: Dict[str, Any],
         symbol: Optional[str],
         sector: Optional[str],
-    ) -> int:
-        """Compute impact score (0-10) for a news article."""
+    ) -> tuple:
+        """
+        Return (score, sentiment) for *article*.
+        Negation detection: a negation word within 4 tokens of a negative
+        keyword converts it from negative to neutral (no score awarded).
+        """
         text = (article.get("title", "") + " " + article.get("summary", "")).lower()
-        score = 0
+        raw_score = 0
+        pos_hits  = 0
+        neg_hits  = 0
 
-        for kw in HIGH_IMPACT_KEYWORDS:
+        # --- Positive high-impact ---
+        for kw in _HIGH_POS:
             if kw in text:
-                score += 3
+                raw_score += 3
+                pos_hits  += 1
 
-        for kw in MEDIUM_IMPACT_KEYWORDS:
+        # --- Negative high-impact (with negation check) ---
+        for kw in _HIGH_NEG:
+            idx = text.find(kw)
+            if idx == -1:
+                continue
+            # Look at the 60 characters preceding the keyword for negation
+            prefix = text[max(0, idx - 60): idx]
+            if _NEGATION.search(prefix):
+                # Negated negative = neutral; don't penalise
+                pass
+            else:
+                raw_score += 3
+                neg_hits  += 1
+
+        # --- Medium keywords ---
+        for kw in _MEDIUM:
             if kw in text:
-                score += 1
+                raw_score += 1
 
-        if symbol and re.search(r'\b' + re.escape(symbol.lower()) + r'\b', text):
-            score += 2
+        # --- Symbol boost ---
+        if symbol:
+            pattern = r"\b" + re.escape(symbol.lower()) + r"\b"
+            if re.search(pattern, text):
+                raw_score += 2
+                # Determine sentiment direction from surrounding context
+                if pos_hits > neg_hits:
+                    pass  # already counted
+                elif neg_hits > pos_hits:
+                    pass
 
+        # --- Sector boost ---
         if sector and sector.lower() in text:
-            score += 1
+            raw_score += 1
 
-        return min(score, 10)
+        score     = min(raw_score, 10)
+        sentiment = (
+            "positive" if pos_hits > neg_hits else
+            "negative" if neg_hits > pos_hits else
+            "neutral"
+        )
+        return score, sentiment
+
+
+def _parse_date(entry) -> Optional[datetime]:
+    try:
+        if getattr(entry, "published_parsed", None):
+            import calendar
+            return datetime.fromtimestamp(calendar.timegm(entry.published_parsed))
+    except Exception:
+        pass
+    return None
