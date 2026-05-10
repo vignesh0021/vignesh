@@ -1,0 +1,28 @@
+{
+  "india": {
+    "risk_free_rate": 0.07,
+    "market_risk_premium": 0.08,
+    "tax_rate": 0.25,
+    "circuit_limits": [0.02, 0.05, 0.10, 0.20],
+    "trading_hours": "09:15-15:30 IST",
+    "settlement": "T+1",
+    "indices": ["NIFTY 50", "NIFTY 200", "NIFTY 500", "SENSEX"],
+    "terminal_growth_rate": 0.04,
+    "min_growth_rate": -0.30,
+    "max_growth_rate": 0.50,
+    "monte_carlo_simulations": 10000,
+    "projection_years": 10,
+    "high_conviction_threshold": 4,
+    "f_score_strong": 7,
+    "roe_threshold": 15,
+    "growth_threshold": 20,
+    "pe_high": 30,
+    "pe_low": 10,
+    "debt_equity_high": 1.5,
+    "promoter_holding_min": 40,
+    "news_impact_keywords": {
+      "high": ["earnings", "results", "dividend", "bonus", "split", "merger", "acquisition", "FDA", "approval", "default", "fraud", "penalty", "order", "contract"],
+      "medium": ["target", "upgrade", "downgrade", "buy", "sell", "hold", "rating", "guidance", "outlook"]
+    }
+  }
+}
