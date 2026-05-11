@@ -523,6 +523,556 @@ class TestInvestmentDecision(unittest.TestCase):
         for label in ["STRONG_BUY", "BUY", "HOLD", "AVOID", "STRONG_AVOID"]:
             self.assertIn(label, DECISION_LABELS)
 
+    def test_new_fields_present(self):
+        from decision_engine.investment_decision import InvestmentDecision
+        d = InvestmentDecision(symbol="TEST")
+        # New fields added in expanded decision engine
+        self.assertFalse(d.on_asm)
+        self.assertFalse(d.on_gsm)
+        self.assertEqual(d.altman_zone, "SAFE")
+        self.assertEqual(d.wc_trend, "STABLE")
+        self.assertEqual(d.tech_signal, "NEUTRAL")
+        self.assertIsInstance(d.sub_scores, dict)
+
+
+# ── 10. TechnicalAnalyzer ──────────────────────────────────────────────────
+
+class TestTechnicalAnalyzer(unittest.TestCase):
+
+    def _df(self, n: int = 300) -> pd.DataFrame:
+        rng    = np.random.default_rng(7)
+        prices = 1000 + np.cumsum(rng.standard_normal(n) * 5)
+        return pd.DataFrame({
+            "Open":   prices * 0.99,
+            "High":   prices * 1.015,
+            "Low":    prices * 0.985,
+            "Close":  prices,
+            "Volume": np.abs(rng.integers(100_000, 500_000, n)).astype(float),
+        })
+
+    def test_atr_positive(self):
+        from analysis.technical_indicators import TechnicalAnalyzer
+        ta  = TechnicalAnalyzer()
+        res = ta.analyze("X", df=self._df())
+        self.assertGreater(res["atr"], 0)
+
+    def test_macd_signal_valid(self):
+        from analysis.technical_indicators import TechnicalAnalyzer
+        ta  = TechnicalAnalyzer()
+        res = ta.analyze("X", df=self._df())
+        self.assertIn(res["macd_signal"], [
+            "BULLISH_STRONG", "BULLISH_WEAKENING", "BEARISH_STRONG", "BEARISH_WEAKENING"
+        ])
+
+    def test_bb_signal_valid(self):
+        from analysis.technical_indicators import TechnicalAnalyzer
+        ta  = TechnicalAnalyzer()
+        res = ta.analyze("X", df=self._df())
+        self.assertIn(res["bb_signal"], ["OVERBOUGHT", "OVERSOLD", "SQUEEZE", "NEUTRAL"])
+
+    def test_stoch_bounds(self):
+        from analysis.technical_indicators import TechnicalAnalyzer
+        ta  = TechnicalAnalyzer()
+        res = ta.analyze("X", df=self._df())
+        self.assertGreaterEqual(res["stoch_k"], 0)
+        self.assertLessEqual(res["stoch_k"], 100)
+
+    def test_composite_signal_bounded(self):
+        from analysis.technical_indicators import TechnicalAnalyzer
+        ta  = TechnicalAnalyzer()
+        res = ta.analyze("X", df=self._df())
+        self.assertGreaterEqual(res["composite_signal"], -1.0)
+        self.assertLessEqual(res["composite_signal"], 1.0)
+
+    def test_empty_df_returns_defaults(self):
+        from analysis.technical_indicators import TechnicalAnalyzer
+        ta  = TechnicalAnalyzer()
+        res = ta.analyze("X", df=pd.DataFrame())
+        self.assertEqual(res["atr"], 0.0)
+        self.assertEqual(res["composite_signal"], 0.0)
+
+    def test_obv_trend_valid(self):
+        from analysis.technical_indicators import TechnicalAnalyzer
+        ta  = TechnicalAnalyzer()
+        res = ta.analyze("X", df=self._df())
+        self.assertIn(res["obv_trend"], ["BULLISH", "BEARISH"])
+
+
+# ── 11. AccountingQualityAnalyzer ─────────────────────────────────────────
+
+def _pl_stmts():
+    return [
+        {"sales": 500_000, "expenses": 350_000, "net_profit": 60_000,
+         "depreciation": 20_000, "interest": 10_000, "tax": 15_000,
+         "ebit": 85_000, "year": "FY21"},
+        {"sales": 600_000, "expenses": 400_000, "net_profit": 72_000,
+         "depreciation": 22_000, "interest": 10_000, "tax": 18_000,
+         "ebit": 100_000, "year": "FY22"},
+        {"sales": 750_000, "expenses": 480_000, "net_profit": 90_000,
+         "depreciation": 25_000, "interest": 9_000, "tax": 22_000,
+         "ebit": 121_000, "year": "FY23"},
+    ]
+
+def _bs_stmts():
+    return [
+        {"total_assets": 2_000_000, "total_equity": 800_000, "reserves": 700_000,
+         "current_assets": 300_000, "current_liabilities": 150_000, "cash": 50_000,
+         "fixed_assets": 1_000_000, "long_term_debt": 400_000, "total_debt": 500_000,
+         "borrowings": 500_000, "share_capital": 100_000, "year": "FY21"},
+        {"total_assets": 2_200_000, "total_equity": 950_000, "reserves": 850_000,
+         "current_assets": 350_000, "current_liabilities": 160_000, "cash": 60_000,
+         "fixed_assets": 1_100_000, "long_term_debt": 390_000, "total_debt": 480_000,
+         "borrowings": 480_000, "share_capital": 100_000, "year": "FY22"},
+        {"total_assets": 2_500_000, "total_equity": 1_200_000, "reserves": 1_100_000,
+         "current_assets": 400_000, "current_liabilities": 170_000, "cash": 70_000,
+         "fixed_assets": 1_200_000, "long_term_debt": 370_000, "total_debt": 460_000,
+         "borrowings": 460_000, "share_capital": 100_000, "year": "FY23"},
+    ]
+
+def _cf_stmts():
+    return [
+        {"operating_cash_flow": 80_000, "capex": -30_000, "free_cash_flow": 50_000, "year": "FY21"},
+        {"operating_cash_flow": 95_000, "capex": -35_000, "free_cash_flow": 60_000, "year": "FY22"},
+        {"operating_cash_flow": 120_000, "capex": -40_000, "free_cash_flow": 80_000, "year": "FY23"},
+    ]
+
+
+class TestAccountingQuality(unittest.TestCase):
+
+    def _stmts(self):
+        return {
+            "profit_loss":   _pl_stmts(),
+            "balance_sheet": _bs_stmts(),
+            "cash_flow":     _cf_stmts(),
+        }
+
+    def test_beneish_returns_float(self):
+        from analysis.accounting_quality import AccountingQualityAnalyzer
+        aq  = AccountingQualityAnalyzer()
+        res = aq.analyze("TEST", self._stmts())
+        self.assertIsInstance(res["beneish_m_score"], float)
+
+    def test_altman_positive(self):
+        from analysis.accounting_quality import AccountingQualityAnalyzer
+        aq  = AccountingQualityAnalyzer()
+        res = aq.analyze("TEST", self._stmts())
+        self.assertGreater(res["altman_z_score"], 0)
+
+    def test_altman_zone_valid(self):
+        from analysis.accounting_quality import AccountingQualityAnalyzer
+        aq  = AccountingQualityAnalyzer()
+        res = aq.analyze("TEST", self._stmts())
+        self.assertIn(res["altman_zone"], ["SAFE", "GREY", "DISTRESS"])
+
+    def test_dupont_roe_consistent(self):
+        from analysis.accounting_quality import AccountingQualityAnalyzer
+        aq    = AccountingQualityAnalyzer()
+        res   = aq.analyze("TEST", self._stmts())
+        dp    = res["dupont"]
+        # DuPont ROE = NM × AT × EM (as percentage)
+        computed = dp["net_margin"] * dp["asset_turnover"] * dp["equity_multiplier"]
+        self.assertAlmostEqual(computed, dp["roe"], places=0)
+
+    def test_quality_score_bounded(self):
+        from analysis.accounting_quality import AccountingQualityAnalyzer
+        aq  = AccountingQualityAnalyzer()
+        res = aq.analyze("TEST", self._stmts())
+        self.assertGreaterEqual(res["quality_score"], -1.0)
+        self.assertLessEqual(res["quality_score"], 1.0)
+
+    def test_empty_returns_defaults(self):
+        from analysis.accounting_quality import AccountingQualityAnalyzer
+        aq  = AccountingQualityAnalyzer()
+        res = aq.analyze("TEST", {})
+        self.assertFalse(res["beneish_flag"])
+        self.assertEqual(res["altman_zone"], "SAFE")
+
+    def test_high_z_score_marks_safe(self):
+        from analysis.accounting_quality import AccountingQualityAnalyzer
+        aq = AccountingQualityAnalyzer()
+        # Use a balance sheet with zero debt → high Z-score
+        stmts = {
+            "profit_loss":   [{"sales": 1_000_000, "expenses": 600_000, "net_profit": 200_000,
+                               "ebit": 250_000, "tax": 50_000, "interest": 0, "year": "FY23"}],
+            "balance_sheet": [{"total_assets": 500_000, "total_equity": 500_000,
+                               "reserves": 450_000, "current_assets": 200_000,
+                               "current_liabilities": 50_000, "cash": 100_000,
+                               "fixed_assets": 200_000, "long_term_debt": 0,
+                               "total_debt": 0, "borrowings": 0, "share_capital": 50_000}],
+            "cash_flow":     [{"operating_cash_flow": 180_000, "capex": -20_000,
+                               "free_cash_flow": 160_000}],
+        }
+        res = aq.analyze("TEST", stmts)
+        self.assertEqual(res["altman_zone"], "SAFE")
+
+
+# ── 12. WorkingCapitalAnalyzer ────────────────────────────────────────────
+
+class TestWorkingCapital(unittest.TestCase):
+
+    def _stmts(self):
+        pl = [
+            {"sales": 500_000, "expenses": 350_000, "year": "FY21"},
+            {"sales": 600_000, "expenses": 400_000, "year": "FY22"},
+            {"sales": 750_000, "expenses": 480_000, "year": "FY23"},
+        ]
+        bs = [
+            {"trade_receivables": 60_000, "inventories": 50_000,
+             "trade_payables": 40_000, "year": "FY21"},
+            {"trade_receivables": 65_000, "inventories": 55_000,
+             "trade_payables": 42_000, "year": "FY22"},
+            {"trade_receivables": 70_000, "inventories": 60_000,
+             "trade_payables": 44_000, "year": "FY23"},
+        ]
+        return {"profit_loss": pl, "balance_sheet": bs, "cash_flow": []}
+
+    def test_ccc_computed(self):
+        from analysis.working_capital import WorkingCapitalAnalyzer
+        wca = WorkingCapitalAnalyzer()
+        res = wca.analyze("TEST", self._stmts())
+        self.assertIn("ccc", res["latest"])
+        self.assertIsInstance(res["latest"]["ccc"], float)
+
+    def test_trend_valid(self):
+        from analysis.working_capital import WorkingCapitalAnalyzer
+        wca = WorkingCapitalAnalyzer()
+        res = wca.analyze("TEST", self._stmts())
+        self.assertIn(res["trend"], ["IMPROVING", "STABLE", "DETERIORATING"])
+
+    def test_wc_score_bounded(self):
+        from analysis.working_capital import WorkingCapitalAnalyzer
+        wca = WorkingCapitalAnalyzer()
+        res = wca.analyze("TEST", self._stmts())
+        self.assertGreaterEqual(res["wc_score"], -1.0)
+        self.assertLessEqual(res["wc_score"], 1.0)
+
+    def test_dso_positive(self):
+        from analysis.working_capital import WorkingCapitalAnalyzer
+        wca = WorkingCapitalAnalyzer()
+        res = wca.analyze("TEST", self._stmts())
+        self.assertGreaterEqual(res["latest"]["dso"], 0)
+
+    def test_negative_ccc_gets_high_score(self):
+        from analysis.working_capital import WorkingCapitalAnalyzer
+        # Large payables → DPO > DSO + DIO → negative CCC
+        pl = [{"sales": 1_000_000, "expenses": 600_000}, {"sales": 1_100_000, "expenses": 650_000}]
+        bs = [
+            {"trade_receivables": 10_000, "inventories": 5_000, "trade_payables": 200_000},
+            {"trade_receivables": 11_000, "inventories": 5_500, "trade_payables": 210_000},
+        ]
+        stmts = {"profit_loss": pl, "balance_sheet": bs, "cash_flow": []}
+        wca   = WorkingCapitalAnalyzer()
+        res   = wca.analyze("TEST", stmts)
+        self.assertLess(res["latest"]["ccc"], 0)
+        self.assertGreater(res["wc_score"], 0)
+
+
+# ── 13. CapitalAllocationAnalyzer ─────────────────────────────────────────
+
+class TestCapitalAllocation(unittest.TestCase):
+
+    def _stmts(self):
+        return {
+            "profit_loss":   _pl_stmts(),
+            "balance_sheet": _bs_stmts(),
+            "cash_flow":     _cf_stmts(),
+        }
+
+    def test_roic_positive(self):
+        from analysis.capital_allocation import CapitalAllocationAnalyzer
+        ca  = CapitalAllocationAnalyzer()
+        res = ca.analyze("TEST", self._stmts(), wacc=0.12)
+        self.assertGreaterEqual(res["roic"], 0)
+
+    def test_roic_wacc_spread_computed(self):
+        from analysis.capital_allocation import CapitalAllocationAnalyzer
+        ca  = CapitalAllocationAnalyzer()
+        res = ca.analyze("TEST", self._stmts(), wacc=0.12)
+        expected_spread = round(res["roic"] - 12.0, 2)
+        self.assertAlmostEqual(res["roic_wacc_spread"], expected_spread, places=1)
+
+    def test_ca_score_bounded(self):
+        from analysis.capital_allocation import CapitalAllocationAnalyzer
+        ca  = CapitalAllocationAnalyzer()
+        res = ca.analyze("TEST", self._stmts(), wacc=0.12)
+        self.assertGreaterEqual(res["ca_score"], -1.0)
+        self.assertLessEqual(res["ca_score"], 1.0)
+
+    def test_high_roic_positive_score(self):
+        from analysis.capital_allocation import CapitalAllocationAnalyzer
+        # Build statements where EBIT/IC is very high
+        pl = [{"sales": 1_000_000, "expenses": 400_000, "net_profit": 300_000,
+               "ebit": 500_000, "tax": 120_000, "interest": 0, "year": "FY23"}]
+        bs = [{"total_equity": 500_000, "reserves": 450_000, "total_debt": 0,
+               "cash": 50_000, "total_assets": 600_000, "current_assets": 100_000,
+               "current_liabilities": 50_000}]
+        cf = [{"operating_cash_flow": 280_000, "capex": -30_000, "free_cash_flow": 250_000}]
+        stmts = {"profit_loss": pl, "balance_sheet": bs, "cash_flow": cf}
+        ca  = CapitalAllocationAnalyzer()
+        res = ca.analyze("TEST", stmts, wacc=0.10)
+        self.assertGreater(res["roic_wacc_spread"], 0)
+        self.assertGreater(res["ca_score"], 0)
+
+    def test_fcf_conversion_computed(self):
+        from analysis.capital_allocation import CapitalAllocationAnalyzer
+        ca  = CapitalAllocationAnalyzer()
+        res = ca.analyze("TEST", self._stmts(), wacc=0.12)
+        self.assertIsInstance(res["fcf_conversion"], float)
+
+    def test_empty_stmts_returns_defaults(self):
+        from analysis.capital_allocation import CapitalAllocationAnalyzer
+        ca  = CapitalAllocationAnalyzer()
+        res = ca.analyze("TEST", {}, wacc=0.12)
+        self.assertEqual(res["roic"], 0.0)
+        self.assertEqual(res["ca_score"], 0.0)
+
+
+# ── 14. PortfolioRiskManager ──────────────────────────────────────────────
+
+class TestPortfolioRisk(unittest.TestCase):
+
+    def test_kelly_positive_edge(self):
+        from risk.portfolio_risk import PortfolioRiskManager
+        pm = PortfolioRiskManager()
+        f  = pm.kelly_position_size(win_probability=0.6, win_return=0.2, loss_return=-0.1)
+        self.assertGreater(f, 0)
+        self.assertLessEqual(f, 1.0)
+
+    def test_kelly_negative_edge_returns_zero(self):
+        from risk.portfolio_risk import PortfolioRiskManager
+        pm = PortfolioRiskManager()
+        f  = pm.kelly_position_size(win_probability=0.3, win_return=0.1, loss_return=-0.3)
+        self.assertEqual(f, 0.0)
+
+    def test_kelly_capped_at_one(self):
+        from risk.portfolio_risk import PortfolioRiskManager
+        pm = PortfolioRiskManager()
+        # Very high edge – still capped
+        f  = pm.kelly_position_size(win_probability=0.99, win_return=5.0, loss_return=-0.01)
+        self.assertLessEqual(f, 1.0)
+
+    def test_atr_position_size(self):
+        from risk.portfolio_risk import PortfolioRiskManager
+        pm  = PortfolioRiskManager()
+        pos = pm.atr_position_size(
+            capital=1_000_000, current_price=500.0, atr=10.0,
+            risk_per_trade_pct=1.0, atr_multiplier=2.0,
+        )
+        # risk = 1_000_000 * 0.01 = 10_000; stop_dist = 20; shares = 500
+        self.assertEqual(pos["shares"], 500)
+        self.assertAlmostEqual(pos["stop_price"], 480.0)
+
+    def test_atr_position_zero_price(self):
+        from risk.portfolio_risk import PortfolioRiskManager
+        pm  = PortfolioRiskManager()
+        pos = pm.atr_position_size(capital=1_000_000, current_price=0, atr=0)
+        self.assertEqual(pos["shares"], 0)
+
+    def test_single_stock_risk_keys(self):
+        from risk.portfolio_risk import PortfolioRiskManager
+        pm  = PortfolioRiskManager()
+        res = pm.single_stock_risk(
+            "TEST", current_price=1000.0, atr=20.0,
+            win_prob=0.55, upside_pct=15.0, stop_pct=8.0, capital=500_000,
+        )
+        for k in ["kelly_fraction", "kelly_capital", "kelly_shares",
+                  "atr_position", "recommended_pct", "risk_reward"]:
+            self.assertIn(k, res)
+
+    def test_portfolio_analytics_with_mock_data(self):
+        from risk.portfolio_risk import PortfolioRiskManager
+
+        rng    = np.random.default_rng(0)
+        n      = 252
+        prices = 1000 + np.cumsum(rng.standard_normal(n) * 5)
+        mock_df = pd.DataFrame({
+            "Date": pd.date_range("2023-01-01", periods=n, freq="B"),
+            "Close": prices, "Open": prices, "High": prices * 1.01,
+            "Low": prices * 0.99, "Volume": 100_000.0,
+        })
+
+        dm = MagicMock()
+        dm.get_stock_history.return_value = mock_df
+
+        pm  = PortfolioRiskManager(data_manager=dm)
+        res = pm.portfolio_analytics(["A", "B", "C"], years=1)
+        self.assertIn("sharpe_ratio", res)
+        self.assertIn("var_95_pct", res)
+        self.assertIn("max_drawdown_pct", res)
+        self.assertLessEqual(res["max_drawdown_pct"], 0)   # drawdown is always negative
+
+
+# ── 15. StrategyBacktester ────────────────────────────────────────────────
+
+class TestStrategyBacktester(unittest.TestCase):
+
+    def _mock_dm(self, n: int = 800):
+        rng    = np.random.default_rng(42)
+        prices = 1000 + np.cumsum(rng.standard_normal(n) * 6)
+        df = pd.DataFrame({
+            "Date":   pd.date_range("2020-01-01", periods=n, freq="B"),
+            "Open":   prices * 0.99,
+            "High":   prices * 1.015,
+            "Low":    prices * 0.985,
+            "Close":  prices,
+            "Volume": np.abs(rng.integers(100_000, 500_000, n)).astype(float),
+        })
+        dm = MagicMock()
+        dm.get_stock_history.return_value = df
+        return dm
+
+    def test_backtest_returns_metrics(self):
+        from backtesting.strategy_backtester import StrategyBacktester
+        bt  = StrategyBacktester(data_manager=self._mock_dm())
+        res = bt.backtest("TEST", years=3)
+        self.assertIn("metrics", res)
+        self.assertIn("summary", res)
+
+    def test_backtest_hit_rate_in_range(self):
+        from backtesting.strategy_backtester import StrategyBacktester
+        bt  = StrategyBacktester(data_manager=self._mock_dm())
+        res = bt.backtest("TEST", years=3)
+        if res.get("metrics"):
+            hr = res["metrics"]["hit_rate"]
+            self.assertGreaterEqual(hr, 0)
+            self.assertLessEqual(hr, 100)
+
+    def test_no_data_manager_returns_empty(self):
+        from backtesting.strategy_backtester import StrategyBacktester
+        bt  = StrategyBacktester(data_manager=None)
+        res = bt.backtest("TEST")
+        self.assertEqual(res["total_trades"], 0)
+        self.assertIn("unavailable", res["summary"].lower())
+
+    def test_walk_forward_list(self):
+        from backtesting.strategy_backtester import StrategyBacktester
+        bt  = StrategyBacktester(data_manager=self._mock_dm(n=1500))
+        res = bt.backtest("TEST", years=5)
+        self.assertIsInstance(res["walk_forward_results"], list)
+
+    def test_portfolio_backtest_aggregates(self):
+        from backtesting.strategy_backtester import StrategyBacktester
+        bt  = StrategyBacktester(data_manager=self._mock_dm())
+        res = bt.backtest_portfolio(["A", "B"], years=3)
+        self.assertIn("portfolio_metrics", res)
+        self.assertIn("individual", res)
+
+    def test_profit_factor_non_negative(self):
+        from backtesting.strategy_backtester import StrategyBacktester
+        bt  = StrategyBacktester(data_manager=self._mock_dm())
+        res = bt.backtest("TEST", years=4)
+        if res.get("metrics"):
+            self.assertGreaterEqual(res["metrics"]["profit_factor"], 0)
+
+
+# ── 16. EarningsCalendar ──────────────────────────────────────────────────
+
+class TestEarningsCalendar(unittest.TestCase):
+
+    def _stmts_with_growth(self):
+        pl = [
+            {"net_profit": 100, "year": "FY20"},
+            {"net_profit": 120, "year": "FY21"},
+            {"net_profit": 150, "year": "FY22"},
+            {"net_profit": 185, "year": "FY23"},
+        ]
+        return {"profit_loss": pl, "balance_sheet": [], "cash_flow": []}
+
+    def test_surprise_history_computed(self):
+        from monitoring.earnings_calendar import EarningsCalendar
+        ec  = EarningsCalendar()
+        res = ec.analyze("TEST", self._stmts_with_growth())
+        self.assertIsInstance(res["earnings_surprise_history"], list)
+
+    def test_surprise_trend_valid(self):
+        from monitoring.earnings_calendar import EarningsCalendar
+        ec  = EarningsCalendar()
+        res = ec.analyze("TEST", self._stmts_with_growth())
+        self.assertIn(res["surprise_trend"], ["CONSISTENT_BEAT", "CONSISTENT_MISS", "MIXED", "UNKNOWN"])
+
+    def test_earnings_score_bounded(self):
+        from monitoring.earnings_calendar import EarningsCalendar
+        ec  = EarningsCalendar()
+        res = ec.analyze("TEST", self._stmts_with_growth())
+        self.assertGreaterEqual(res["earnings_score"], -1.0)
+        self.assertLessEqual(res["earnings_score"], 1.0)
+
+    def test_no_stmts_returns_unknown(self):
+        from monitoring.earnings_calendar import EarningsCalendar
+        ec  = EarningsCalendar()
+        res = ec.analyze("TEST", {})
+        self.assertEqual(res["surprise_trend"], "UNKNOWN")
+
+
+# ── 17. RegulatoryMonitor ─────────────────────────────────────────────────
+
+class TestRegulatoryMonitor(unittest.TestCase):
+
+    def test_clean_stock_returns_zero_score(self):
+        from monitoring.regulatory_monitor import RegulatoryMonitor
+        rm  = RegulatoryMonitor()
+        # Patch _fetch_surveillance to return empty lists
+        with patch.object(rm, "_fetch_surveillance", return_value=[]):
+            res = rm.analyze("RELIANCE")
+            self.assertFalse(res["on_asm"])
+            self.assertFalse(res["on_gsm"])
+            self.assertEqual(res["regulatory_score"], 0.0)
+
+    def test_asm_detection(self):
+        from monitoring.regulatory_monitor import RegulatoryMonitor
+        rm  = RegulatoryMonitor()
+        asm_list = [{"symbol": "TESTCO", "stage": "2"}]
+        with patch.object(rm, "_fetch_surveillance", side_effect=lambda t: asm_list if t == "asm" else []):
+            res = rm.analyze("TESTCO")
+            self.assertTrue(res["on_asm"])
+            self.assertEqual(res["asm_stage"], "2")
+            self.assertLess(res["regulatory_score"], 0)
+
+    def test_summary_contains_symbol(self):
+        from monitoring.regulatory_monitor import RegulatoryMonitor
+        rm  = RegulatoryMonitor()
+        with patch.object(rm, "_fetch_surveillance", return_value=[]):
+            res = rm.analyze("INFY")
+            self.assertIn("INFY", res["summary"])
+
+
+# ── 18. InstitutionalActivityTracker ──────────────────────────────────────
+
+class TestInstitutionalActivity(unittest.TestCase):
+
+    def test_signal_bounded(self):
+        from analysis.institutional_activity import InstitutionalActivityTracker
+        iat = InstitutionalActivityTracker()
+        with patch.object(iat, "_get_deals", return_value=[]):
+            res = iat.analyze("TEST", {"fii_holding": 20.0, "dii_holding": 8.0})
+            self.assertGreaterEqual(res["net_institutional_signal"], -1.0)
+            self.assertLessEqual(res["net_institutional_signal"], 1.0)
+
+    def test_high_fii_holding_positive(self):
+        from analysis.institutional_activity import InstitutionalActivityTracker
+        iat = InstitutionalActivityTracker()
+        with patch.object(iat, "_get_deals", return_value=[]):
+            res = iat.analyze("TEST", {"fii_holding": 30.0, "dii_holding": 20.0})
+            self.assertEqual(res["fii_trend"], "BUYING")
+
+    def test_low_fii_holding_selling(self):
+        from analysis.institutional_activity import InstitutionalActivityTracker
+        iat = InstitutionalActivityTracker()
+        with patch.object(iat, "_get_deals", return_value=[]):
+            res = iat.analyze("TEST", {"fii_holding": 2.0, "dii_holding": 1.0})
+            self.assertEqual(res["fii_trend"], "SELLING")
+
+    def test_institutional_buying_deals_positive(self):
+        from analysis.institutional_activity import InstitutionalActivityTracker
+        iat = InstitutionalActivityTracker()
+        deals = [
+            {"client": "HDFC Mutual Fund", "buy_sell": "BUY",
+             "value_cr": 200.0, "quantity": 100_000, "price": 200_000},
+        ]
+        with patch.object(iat, "_get_deals", side_effect=lambda s, t: deals if t == "bulk" else []):
+            res = iat.analyze("TEST", {"fii_holding": 15.0, "dii_holding": 8.0})
+            self.assertGreater(res["net_institutional_signal"], 0)
+
 
 # ── Runner ─────────────────────────────────────────────────────────────────
 
