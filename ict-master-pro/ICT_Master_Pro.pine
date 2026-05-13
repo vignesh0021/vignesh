@@ -147,6 +147,18 @@ i_trackPerf     = input.bool(true, "Track Signal Performance", group = grpPerf, 
 i_perfWindow    = input.int(30, "Performance Window (signals)", minval = 5, maxval = 200, group = grpPerf)
 i_showPerfLines = input.bool(false, "Mark Closed Trades on Chart", group = grpPerf, tooltip = "Drop a tiny WIN/LOSS marker on past signals once they resolve. Off by default to keep the chart clean.")
 
+// ── Chart & Candle Patterns ─────────────────────────────────────────────────────────
+// All pattern signals are rendered DIRECTLY on the chart (no dashboard rows).
+// Candle patterns use plotshape so they have no max-objects budget. The chart-
+// pattern detector (Double Top / Bottom) uses the existing pivot system.
+grpPat            = "═══ Chart & Candle Patterns ═══"
+i_showCandlePat   = input.bool(false, "Show Candle Pattern Markers", group = grpPat, tooltip = "Tiny letter markers above/below each bar that prints a classical candle pattern: Engulfing, Hammer, Shooting Star, Doji, Marubozu, Inside/Outside Bar, Harami, Tweezer, Three-Soldiers/Crows, Morning/Evening Star, Pin Bar.")
+i_patReversalOnly = input.bool(true,  "Reversal Patterns Only (filter noise)", group = grpPat, tooltip = "Show only bullish-after-downtrend / bearish-after-uptrend patterns. Filters dojis/engulfings firing mid-trend without context.")
+i_showDoubleTops  = input.bool(false, "Show Double Top / Double Bottom", group = grpPat, tooltip = "Marks two consecutive swing highs/lows within 0.2% of each other as DT/DB.")
+i_colorHighVol    = input.bool(true,  "Color High-Volume Bars", group = grpPat, tooltip = "Tint bars where volume exceeds the High-Volume Multiplier. Bars beyond the Extreme-Volume Multiplier get a brighter shade.")
+i_highVolMult     = input.float(2.0, "High-Volume Multiplier (x avg)", minval = 1.2, maxval = 10.0, step = 0.1, group = grpPat)
+i_extremeVolMult  = input.float(3.5, "Extreme-Volume Multiplier (x avg)", minval = 1.5, maxval = 20.0, step = 0.1, group = grpPat)
+
 // ── Dashboard ───────────────────────────────────────────────────────────────────────
 i_showDash      = input.bool(true, "Show Dashboard", group = grpDash)
 i_dashPos       = input.string("Top Right", "Dashboard Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group = grpDash)
@@ -1607,6 +1619,146 @@ f_perfStats() =>
 [winsW, lossesW, rSumW, countedW] = f_perfStats()
 winRatePct = countedW > 0 ? 100.0 * winsW / countedW : 0.0
 avgRWin    = countedW > 0 ? rSumW / countedW : 0.0
+
+// ════════════════════════════════════════════════════════════════════════════════════
+//   13c. CHART & CANDLE PATTERNS
+//   Classical candle-pattern detection (14 patterns) + Double Top / Bottom +
+//   high-volume bar coloring. Patterns plot as plotshape markers (no label
+//   budget overhead). Double Top / Bottom uses the existing swing pivots.
+//   High-volume bars use barcolor() with two tiers: high vs extreme.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+// Body / wick metrics
+patBody    = math.abs(close - open)
+patRange   = high - low
+patUpWick  = high - math.max(open, close)
+patDnWick  = math.min(open, close) - low
+patGreen   = close > open
+patRed     = close < open
+patBodyR   = patRange > 0 ? patBody / patRange : 0.0
+
+// Trend context for "reversal only" filter (use EMA20 vs EMA50 already computed in HTF section is HTF-only;
+// here we recompute a local fast/slow EMA for chart-timeframe context)
+patEmaF = ta.ema(close, 20)
+patEmaS = ta.ema(close, 50)
+patUpTrend = patEmaF > patEmaS and close > patEmaF
+patDnTrend = patEmaF < patEmaS and close < patEmaF
+
+// Single-bar patterns
+cp_doji       = patRange > 0 and patBody <= patRange * 0.1
+cp_dragonfly  = cp_doji and patUpWick <= patRange * 0.1 and patDnWick >= patRange * 0.6
+cp_gravestone = cp_doji and patDnWick <= patRange * 0.1 and patUpWick >= patRange * 0.6
+cp_hammer     = patGreen and patBody > 0 and patDnWick >= patBody * 2 and patUpWick <= patBody * 0.5
+cp_invHammer  = patGreen and patBody > 0 and patUpWick >= patBody * 2 and patDnWick <= patBody * 0.5
+cp_shootStar  = patRed   and patBody > 0 and patUpWick >= patBody * 2 and patDnWick <= patBody * 0.5
+cp_hangMan    = patRed   and patBody > 0 and patDnWick >= patBody * 2 and patUpWick <= patBody * 0.5
+cp_bullMarub  = patGreen and patBodyR >= 0.95
+cp_bearMarub  = patRed   and patBodyR >= 0.95
+cp_bullPin    = patGreen and patBody > 0 and patDnWick >= patBody * 2 and patDnWick >= patRange * 0.6
+cp_bearPin    = patRed   and patBody > 0 and patUpWick >= patBody * 2 and patUpWick >= patRange * 0.6
+
+// 2-bar patterns
+prevBody  = math.abs(close[1] - open[1])
+prevGreen = close[1] > open[1]
+prevRed   = close[1] < open[1]
+cp_bullEngulf = patGreen and prevRed   and close > open[1] and open <= close[1] and patBody > prevBody
+cp_bearEngulf = patRed   and prevGreen and close < open[1] and open >= close[1] and patBody > prevBody
+cp_insideBar  = high <= high[1] and low >= low[1]
+cp_outsideBar = high > high[1] and low < low[1]
+cp_bullHarami = prevRed   and patGreen and high <= high[1] and low >= low[1] and patBody < prevBody
+cp_bearHarami = prevGreen and patRed   and high <= high[1] and low >= low[1] and patBody < prevBody
+cp_tweezerTop = prevGreen and patRed   and math.abs(high - high[1]) <= syminfo.mintick * 3
+cp_tweezerBot = prevRed   and patGreen and math.abs(low  - low[1])  <= syminfo.mintick * 3
+
+// 3-bar patterns
+cp_3WSoldiers = patGreen and close[1] > open[1] and close[2] > open[2] and close > close[1] and close[1] > close[2] and open >= open[1] and open[1] >= open[2]
+cp_3BCrows    = patRed   and close[1] < open[1] and close[2] < open[2] and close < close[1] and close[1] < close[2] and open <= open[1] and open[1] <= open[2]
+cp_morningStar = close[2] < open[2] and math.abs(close[1] - open[1]) <= math.abs(close[2] - open[2]) * 0.5 and patGreen and close > (open[2] + close[2]) / 2
+cp_eveningStar = close[2] > open[2] and math.abs(close[1] - open[1]) <= math.abs(close[2] - open[2]) * 0.5 and patRed   and close < (open[2] + close[2]) / 2
+
+// Reversal-only filter: bullish patterns require a downtrend context; bearish require uptrend
+revOK_bull = i_patReversalOnly ? patDnTrend : true
+revOK_bear = i_patReversalOnly ? patUpTrend : true
+
+// Effective fire conditions (master toggle + reversal filter)
+pat_on = i_showCandlePat
+fire_bullEngulf = pat_on and cp_bullEngulf and revOK_bull
+fire_bearEngulf = pat_on and cp_bearEngulf and revOK_bear
+fire_hammer     = pat_on and cp_hammer     and revOK_bull
+fire_invHammer  = pat_on and cp_invHammer  and revOK_bull
+fire_shootStar  = pat_on and cp_shootStar  and revOK_bear
+fire_hangMan    = pat_on and cp_hangMan    and revOK_bear
+fire_doji       = pat_on and cp_doji       and not cp_dragonfly and not cp_gravestone
+fire_dragonfly  = pat_on and cp_dragonfly  and revOK_bull
+fire_gravestone = pat_on and cp_gravestone and revOK_bear
+fire_bullMarub  = pat_on and cp_bullMarub
+fire_bearMarub  = pat_on and cp_bearMarub
+fire_bullPin    = pat_on and cp_bullPin    and revOK_bull and not cp_hammer
+fire_bearPin    = pat_on and cp_bearPin    and revOK_bear and not cp_shootStar
+fire_inside     = pat_on and cp_insideBar
+fire_outside    = pat_on and cp_outsideBar
+fire_bullHar    = pat_on and cp_bullHarami and revOK_bull
+fire_bearHar    = pat_on and cp_bearHarami and revOK_bear
+fire_twTop      = pat_on and cp_tweezerTop and revOK_bear
+fire_twBot      = pat_on and cp_tweezerBot and revOK_bull
+fire_3WS        = pat_on and cp_3WSoldiers
+fire_3BC        = pat_on and cp_3BCrows
+fire_morning    = pat_on and cp_morningStar
+fire_evening    = pat_on and cp_eveningStar
+
+// Plotshape markers — bullish patterns below the bar, bearish above. Each one
+// uses a 2-3 letter tag so they read at a glance without clutter.
+plotshape(fire_bullEngulf, "Bull Engulfing", location = location.belowbar, color = c_bull, style = shape.labelup,   text = "BE", textcolor = color.white, size = size.tiny)
+plotshape(fire_bearEngulf, "Bear Engulfing", location = location.abovebar, color = c_bear, style = shape.labeldown, text = "BE", textcolor = color.white, size = size.tiny)
+plotshape(fire_hammer,     "Hammer",         location = location.belowbar, color = c_bull, style = shape.labelup,   text = "H",  textcolor = color.white, size = size.tiny)
+plotshape(fire_invHammer,  "Inv Hammer",     location = location.belowbar, color = c_bull, style = shape.labelup,   text = "iH", textcolor = color.white, size = size.tiny)
+plotshape(fire_shootStar,  "Shooting Star",  location = location.abovebar, color = c_bear, style = shape.labeldown, text = "SS", textcolor = color.white, size = size.tiny)
+plotshape(fire_hangMan,    "Hanging Man",    location = location.abovebar, color = c_bear, style = shape.labeldown, text = "HM", textcolor = color.white, size = size.tiny)
+plotshape(fire_doji,       "Doji",           location = location.abovebar, color = color.new(color.gray, 30), style = shape.labeldown, text = "Dj", textcolor = color.white, size = size.tiny)
+plotshape(fire_dragonfly,  "Dragonfly Doji", location = location.belowbar, color = c_bull, style = shape.labelup,   text = "Df", textcolor = color.white, size = size.tiny)
+plotshape(fire_gravestone, "Gravestone Doji",location = location.abovebar, color = c_bear, style = shape.labeldown, text = "Gv", textcolor = color.white, size = size.tiny)
+plotshape(fire_bullMarub,  "Bull Marubozu",  location = location.belowbar, color = c_bull, style = shape.labelup,   text = "M",  textcolor = color.white, size = size.tiny)
+plotshape(fire_bearMarub,  "Bear Marubozu",  location = location.abovebar, color = c_bear, style = shape.labeldown, text = "M",  textcolor = color.white, size = size.tiny)
+plotshape(fire_bullPin,    "Bull Pin Bar",   location = location.belowbar, color = c_bull, style = shape.labelup,   text = "P",  textcolor = color.white, size = size.tiny)
+plotshape(fire_bearPin,    "Bear Pin Bar",   location = location.abovebar, color = c_bear, style = shape.labeldown, text = "P",  textcolor = color.white, size = size.tiny)
+plotshape(fire_inside,     "Inside Bar",     location = location.abovebar, color = color.new(#1565c0, 30), style = shape.labeldown, text = "IB", textcolor = color.white, size = size.tiny)
+plotshape(fire_outside,    "Outside Bar",    location = location.abovebar, color = color.new(#ef6c00, 30), style = shape.labeldown, text = "OB", textcolor = color.white, size = size.tiny)
+plotshape(fire_bullHar,    "Bull Harami",    location = location.belowbar, color = c_bull, style = shape.labelup,   text = "BH", textcolor = color.white, size = size.tiny)
+plotshape(fire_bearHar,    "Bear Harami",    location = location.abovebar, color = c_bear, style = shape.labeldown, text = "BH", textcolor = color.white, size = size.tiny)
+plotshape(fire_twTop,      "Tweezer Top",    location = location.abovebar, color = c_bear, style = shape.labeldown, text = "Tw", textcolor = color.white, size = size.tiny)
+plotshape(fire_twBot,      "Tweezer Bottom", location = location.belowbar, color = c_bull, style = shape.labelup,   text = "Tw", textcolor = color.white, size = size.tiny)
+plotshape(fire_3WS,        "3 White Soldiers", location = location.belowbar, color = c_bull, style = shape.labelup,   text = "3S", textcolor = color.white, size = size.tiny)
+plotshape(fire_3BC,        "3 Black Crows",  location = location.abovebar, color = c_bear, style = shape.labeldown, text = "3C", textcolor = color.white, size = size.tiny)
+plotshape(fire_morning,    "Morning Star",   location = location.belowbar, color = c_bull, style = shape.labelup,   text = "MS", textcolor = color.white, size = size.tiny)
+plotshape(fire_evening,    "Evening Star",   location = location.abovebar, color = c_bear, style = shape.labeldown, text = "ES", textcolor = color.white, size = size.tiny)
+
+// Double Top / Double Bottom — drawn at the second matching swing pivot.
+// Uses the prevSH/prevSL captured by the swing-classifier so the comparison
+// is between two CONSECUTIVE swing highs (or lows). Tolerance 0.2% of price.
+var float patPrevSH = na
+var float patPrevSL = na
+var int   patPrevSHBar = na
+var int   patPrevSLBar = na
+
+if not na(phRaw)
+    if not na(patPrevSH) and math.abs(phRaw - patPrevSH) / phRaw <= 0.002 and i_showDoubleTops
+        label.new(bar_index - pivotLen_modeEff, phRaw, "DT", color = color.new(c_bear, 20), textcolor = color.white, style = label.style_label_down, size = size.small)
+    patPrevSH    := phRaw
+    patPrevSHBar := bar_index - pivotLen_modeEff
+
+if not na(plRaw)
+    if not na(patPrevSL) and math.abs(plRaw - patPrevSL) / plRaw <= 0.002 and i_showDoubleTops
+        label.new(bar_index - pivotLen_modeEff, plRaw, "DB", color = color.new(c_bull, 20), textcolor = color.white, style = label.style_label_up, size = size.small)
+    patPrevSL    := plRaw
+    patPrevSLBar := bar_index - pivotLen_modeEff
+
+// High-volume bar coloring — barcolor() applied bar-by-bar. Two tiers:
+//   high     volume >= volMA * i_highVolMult     → tinted bull/bear
+//   extreme  volume >= volMA * i_extremeVolMult  → bright bull/bear
+isHighVol    = i_colorHighVol and not na(volMA) and volMA > 0 and volume >= volMA * i_highVolMult
+isExtremeVol = i_colorHighVol and not na(volMA) and volMA > 0 and volume >= volMA * i_extremeVolMult
+volBarCol = isExtremeVol ? (patGreen ? color.new(#00e676, 0) : color.new(#ff1744, 0)) : isHighVol ? (patGreen ? color.new(c_bull, 30) : color.new(c_bear, 30)) : na
+barcolor(volBarCol, title = "High-Volume Bar Color")
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   14. DASHBOARD — at-a-glance ICT context

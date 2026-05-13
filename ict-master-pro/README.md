@@ -216,6 +216,47 @@ trades would have made.
 
 ---
 
+## Chart & Candle Patterns + High-Volume Bars
+
+Beyond the ICT engine, the indicator also surfaces **classical price-action
+context** directly on the chart (no dashboard rows). Settings live under
+**═══ Chart & Candle Patterns ═══**.
+
+### Candle patterns (23 supported)
+
+When **Show Candle Pattern Markers** is on, every bar that prints one of the
+following classical patterns gets a tiny 2-letter tag above (bearish) or
+below (bullish) the bar:
+
+| Reversal (bullish) | Reversal (bearish) | Neutral / continuation |
+|---|---|---|
+| Bull Engulfing (BE), Hammer (H), Inv Hammer (iH), Dragonfly Doji (Df), Bull Marubozu (M), Bull Pin Bar (P), Bull Harami (BH), Tweezer Bottom (Tw), Morning Star (MS), 3 White Soldiers (3S) | Bear Engulfing (BE), Shooting Star (SS), Hanging Man (HM), Gravestone Doji (Gv), Bear Marubozu (M), Bear Pin Bar (P), Bear Harami (BH), Tweezer Top (Tw), Evening Star (ES), 3 Black Crows (3C) | Doji (Dj), Inside Bar (IB), Outside Bar (OB) |
+
+Toggle **Reversal Patterns Only** to hide patterns that fire mid-move
+without trend context — bullish patterns then require a local downtrend
+(EMA20 < EMA50, close < EMA20) and vice versa for bearish.
+
+### Chart patterns
+
+**Show Double Top / Double Bottom** marks any two consecutive swing
+high/low pivots within 0.2% of each other as `DT` / `DB`, drawn at the
+second pivot. Combined with the ICT swing labels (HH/HL/LL/LH/EH/EL) it
+gives a complete view of where structure is repeating vs breaking.
+
+### High-volume bar coloring
+
+**Color High-Volume Bars** tints any bar whose volume exceeds the
+multiplier x the 20-bar SMA:
+
+- **High** (`volume ≥ 2.0x avg`) — bar tinted bull-green or bear-red.
+- **Extreme** (`volume ≥ 3.5x avg`) — bar painted bright neon green or red.
+
+Both multipliers are configurable. Use this to spot institutional
+accumulation/distribution at structure points (sweep highs/lows, OB
+mitigations) instantly without staring at the volume pane.
+
+---
+
 ## Setting Alerts
 
 After loading the indicator, click the **Alarm clock icon** → Create Alert:
