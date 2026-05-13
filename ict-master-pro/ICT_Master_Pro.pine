@@ -154,7 +154,7 @@ i_showPerfLines = input.bool(false, "Mark Closed Trades on Chart", group = grpPe
 grpPat            = "═══ Chart & Candle Patterns ═══"
 i_showCandlePat   = input.bool(false, "Show Candle Pattern Markers", group = grpPat, tooltip = "Tiny letter markers above/below each bar that prints a classical candle pattern: Engulfing, Hammer, Shooting Star, Doji, Marubozu, Inside/Outside Bar, Harami, Tweezer, Three-Soldiers/Crows, Morning/Evening Star, Pin Bar.")
 i_patReversalOnly = input.bool(true,  "Reversal Patterns Only (filter noise)", group = grpPat, tooltip = "Show only bullish-after-downtrend / bearish-after-uptrend patterns. Filters dojis/engulfings firing mid-trend without context.")
-i_showDoubleTops  = input.bool(false, "Show Double Top / Double Bottom", group = grpPat, tooltip = "Marks two consecutive swing highs/lows within 0.2% of each other as DT/DB.")
+i_showDoubleTops  = input.bool(false, "Show Chart Patterns", group = grpPat, tooltip = "Detects and draws: Double Top / Double Bottom, Triple Top / Triple Bottom, Head & Shoulders + Inverse, Ascending / Descending / Symmetric Triangles, Rising / Falling Wedges. Uses the existing swing pivots.")
 i_colorHighVol    = input.bool(true,  "Color High-Volume Bars", group = grpPat, tooltip = "Tint bars where volume exceeds the High-Volume Multiplier. Bars beyond the Extreme-Volume Multiplier get a brighter shade.")
 i_highVolMult     = input.float(2.0, "High-Volume Multiplier (x avg)", minval = 1.2, maxval = 10.0, step = 0.1, group = grpPat)
 i_extremeVolMult  = input.float(3.5, "Extreme-Volume Multiplier (x avg)", minval = 1.5, maxval = 20.0, step = 0.1, group = grpPat)
@@ -1732,25 +1732,175 @@ plotshape(fire_3BC,        "3 Black Crows",  location = location.abovebar, color
 plotshape(fire_morning,    "Morning Star",   location = location.belowbar, color = c_bull, style = shape.labelup,   text = "MS", textcolor = color.white, size = size.tiny)
 plotshape(fire_evening,    "Evening Star",   location = location.abovebar, color = c_bear, style = shape.labeldown, text = "ES", textcolor = color.white, size = size.tiny)
 
-// Double Top / Double Bottom — drawn at the second matching swing pivot.
-// Uses the prevSH/prevSL captured by the swing-classifier so the comparison
-// is between two CONSECUTIVE swing highs (or lows). Tolerance 0.2% of price.
-var float patPrevSH = na
-var float patPrevSL = na
-var int   patPrevSHBar = na
-var int   patPrevSLBar = na
+// Chart pattern detection — Double / Triple Top & Bottom, Head & Shoulders +
+// Inverse, Ascending / Descending / Symmetric Triangles, Rising / Falling
+// Wedges. Each pattern fires once when its defining swings line up; lines and
+// labels are recycled via small bounded arrays so we never exceed object caps.
+type SwingPt
+    int   bar
+    float price
 
+var array<SwingPt> shArrPat  = array.new<SwingPt>()
+var array<SwingPt> slArrPat  = array.new<SwingPt>()
+var array<line>    patLines  = array.new<line>()
+var array<label>   patLabels = array.new<label>()
+
+// Helpers — array.* mutation is allowed from inside Pine v6 user functions
+// (unlike direct global :=). We use them so multiple patterns can share the
+// same bounded line/label pool.
+f_keepPatLine(_ln) =>
+    if not na(_ln)
+        array.push(patLines, _ln)
+        if array.size(patLines) > 50
+            line.delete(array.shift(patLines))
+    0
+
+f_keepPatLabel(_lb) =>
+    if not na(_lb)
+        array.push(patLabels, _lb)
+        if array.size(patLabels) > 25
+            label.delete(array.shift(patLabels))
+    0
+
+// Maintain the last 5 swing highs / lows
 if not na(phRaw)
-    if not na(patPrevSH) and math.abs(phRaw - patPrevSH) / phRaw <= 0.002 and i_showDoubleTops
-        label.new(bar_index - pivotLen_modeEff, phRaw, "DT", color = color.new(c_bear, 20), textcolor = color.white, style = label.style_label_down, size = size.small)
-    patPrevSH    := phRaw
-    patPrevSHBar := bar_index - pivotLen_modeEff
+    array.push(shArrPat, SwingPt.new(bar_index - pivotLen_modeEff, phRaw))
+    if array.size(shArrPat) > 5
+        array.shift(shArrPat)
 
 if not na(plRaw)
-    if not na(patPrevSL) and math.abs(plRaw - patPrevSL) / plRaw <= 0.002 and i_showDoubleTops
-        label.new(bar_index - pivotLen_modeEff, plRaw, "DB", color = color.new(c_bull, 20), textcolor = color.white, style = label.style_label_up, size = size.small)
-    patPrevSL    := plRaw
-    patPrevSLBar := bar_index - pivotLen_modeEff
+    array.push(slArrPat, SwingPt.new(bar_index - pivotLen_modeEff, plRaw))
+    if array.size(slArrPat) > 5
+        array.shift(slArrPat)
+
+patTol   = 0.003   // 0.3% — strict equality (DT/TT/H&S sides)
+patTolHi = 0.006   // 0.6% — looser equality (H&S shoulders allow more drift)
+
+// ── Patterns triggered by a fresh swing HIGH (Double / Triple Top, H&S) ─────────────
+if i_showDoubleTops and not na(phRaw) and array.size(shArrPat) >= 2
+    nH = array.size(shArrPat)
+    sh1 = array.get(shArrPat, nH - 2)
+    sh2 = array.get(shArrPat, nH - 1)
+    dtEq = math.abs(sh1.price - sh2.price) / sh2.price <= 0.002
+    // Double Top — two consecutive highs within 0.2%
+    if dtEq
+        ln  = line.new(sh1.bar, sh1.price, sh2.bar, sh2.price, color = color.new(c_bear, 30), width = 2, style = line.style_dotted)
+        lb  = label.new(sh2.bar, sh2.price, "DT", color = color.new(c_bear, 20), textcolor = color.white, style = label.style_label_down, size = size.small)
+        f_keepPatLine(ln)
+        f_keepPatLabel(lb)
+    // Triple Top + Head & Shoulders need 3 highs
+    if array.size(shArrPat) >= 3
+        sh0 = array.get(shArrPat, nH - 3)
+        eq01 = math.abs(sh0.price - sh1.price) / sh1.price <= patTol
+        eq12 = math.abs(sh1.price - sh2.price) / sh2.price <= patTol
+        eq02 = math.abs(sh0.price - sh2.price) / sh2.price <= patTolHi
+        // Triple Top
+        if eq01 and eq12
+            lnA = line.new(sh0.bar, sh0.price, sh2.bar, sh2.price, color = color.new(c_bear, 20), width = 2, style = line.style_dotted)
+            lbA = label.new(sh2.bar, sh2.price, "TRIPLE TOP", color = color.new(c_bear, 10), textcolor = color.white, style = label.style_label_down, size = size.small)
+            f_keepPatLine(lnA)
+            f_keepPatLabel(lbA)
+        // Head & Shoulders — middle highest, shoulders roughly equal & lower
+        if sh1.price > sh0.price and sh1.price > sh2.price and eq02 and (sh1.price - sh0.price) / sh0.price >= 0.005 and (sh1.price - sh2.price) / sh2.price >= 0.005
+            ln1 = line.new(sh0.bar, sh0.price, sh1.bar, sh1.price, color = color.new(c_bear, 30), width = 1)
+            ln2 = line.new(sh1.bar, sh1.price, sh2.bar, sh2.price, color = color.new(c_bear, 30), width = 1)
+            lbH = label.new(sh1.bar, sh1.price, "H&S", color = color.new(c_bear, 10), textcolor = color.white, style = label.style_label_down, size = size.small)
+            f_keepPatLine(ln1)
+            f_keepPatLine(ln2)
+            f_keepPatLabel(lbH)
+
+// ── Patterns triggered by a fresh swing LOW (Double / Triple Bottom, Inv H&S) ───────
+if i_showDoubleTops and not na(plRaw) and array.size(slArrPat) >= 2
+    nL = array.size(slArrPat)
+    sl1 = array.get(slArrPat, nL - 2)
+    sl2 = array.get(slArrPat, nL - 1)
+    dbEq = math.abs(sl1.price - sl2.price) / sl2.price <= 0.002
+    if dbEq
+        ln = line.new(sl1.bar, sl1.price, sl2.bar, sl2.price, color = color.new(c_bull, 30), width = 2, style = line.style_dotted)
+        lb = label.new(sl2.bar, sl2.price, "DB", color = color.new(c_bull, 20), textcolor = color.white, style = label.style_label_up, size = size.small)
+        f_keepPatLine(ln)
+        f_keepPatLabel(lb)
+    if array.size(slArrPat) >= 3
+        sl0 = array.get(slArrPat, nL - 3)
+        eq01 = math.abs(sl0.price - sl1.price) / sl1.price <= patTol
+        eq12 = math.abs(sl1.price - sl2.price) / sl2.price <= patTol
+        eq02 = math.abs(sl0.price - sl2.price) / sl2.price <= patTolHi
+        if eq01 and eq12
+            lnA = line.new(sl0.bar, sl0.price, sl2.bar, sl2.price, color = color.new(c_bull, 20), width = 2, style = line.style_dotted)
+            lbA = label.new(sl2.bar, sl2.price, "TRIPLE BOT", color = color.new(c_bull, 10), textcolor = color.white, style = label.style_label_up, size = size.small)
+            f_keepPatLine(lnA)
+            f_keepPatLabel(lbA)
+        // Inverse H&S — middle lowest, shoulders roughly equal & higher
+        if sl1.price < sl0.price and sl1.price < sl2.price and eq02 and (sl0.price - sl1.price) / sl0.price >= 0.005 and (sl2.price - sl1.price) / sl2.price >= 0.005
+            ln1 = line.new(sl0.bar, sl0.price, sl1.bar, sl1.price, color = color.new(c_bull, 30), width = 1)
+            ln2 = line.new(sl1.bar, sl1.price, sl2.bar, sl2.price, color = color.new(c_bull, 30), width = 1)
+            lbH = label.new(sl1.bar, sl1.price, "Inv H&S", color = color.new(c_bull, 10), textcolor = color.white, style = label.style_label_up, size = size.small)
+            f_keepPatLine(ln1)
+            f_keepPatLine(ln2)
+            f_keepPatLabel(lbH)
+
+// ── Triangles & Wedges — fire when EITHER a new high OR new low extends a setup ─────
+if i_showDoubleTops and (not na(phRaw) or not na(plRaw)) and array.size(shArrPat) >= 2 and array.size(slArrPat) >= 2
+    nH = array.size(shArrPat)
+    nL = array.size(slArrPat)
+    H1 = array.get(shArrPat, nH - 2)
+    H2 = array.get(shArrPat, nH - 1)
+    L1 = array.get(slArrPat, nL - 2)
+    L2 = array.get(slArrPat, nL - 1)
+    eqH = math.abs(H1.price - H2.price) / H2.price <= patTol
+    eqL = math.abs(L1.price - L2.price) / L2.price <= patTol
+    hUp = H2.price > H1.price * (1 + patTol)
+    hDn = H2.price < H1.price * (1 - patTol)
+    lUp = L2.price > L1.price * (1 + patTol)
+    lDn = L2.price < L1.price * (1 - patTol)
+    hSlope = H2.bar > H1.bar ? (H2.price - H1.price) / (H2.bar - H1.bar) : 0.0
+    lSlope = L2.bar > L1.bar ? (L2.price - L1.price) / (L2.bar - L1.bar) : 0.0
+    rb = bar_index
+
+    // Ascending Triangle (bullish): flat tops + rising bottoms
+    if eqH and lUp
+        ln1 = line.new(H1.bar, H1.price, H2.bar, H2.price, color = color.new(c_bull, 20), width = 1, extend = extend.right)
+        ln2 = line.new(L1.bar, L1.price, L2.bar, L2.price, color = color.new(c_bull, 20), width = 1, extend = extend.right)
+        lb  = label.new(rb, H2.price, "Asc Tri", color = color.new(c_bull, 10), textcolor = color.white, style = label.style_label_left, size = size.small)
+        f_keepPatLine(ln1)
+        f_keepPatLine(ln2)
+        f_keepPatLabel(lb)
+
+    // Descending Triangle (bearish): falling tops + flat bottoms
+    if eqL and hDn
+        ln1 = line.new(H1.bar, H1.price, H2.bar, H2.price, color = color.new(c_bear, 20), width = 1, extend = extend.right)
+        ln2 = line.new(L1.bar, L1.price, L2.bar, L2.price, color = color.new(c_bear, 20), width = 1, extend = extend.right)
+        lb  = label.new(rb, L2.price, "Desc Tri", color = color.new(c_bear, 10), textcolor = color.white, style = label.style_label_left, size = size.small)
+        f_keepPatLine(ln1)
+        f_keepPatLine(ln2)
+        f_keepPatLabel(lb)
+
+    // Symmetric Triangle: falling tops + rising bottoms
+    if hDn and lUp
+        ln1 = line.new(H1.bar, H1.price, H2.bar, H2.price, color = color.new(#1565c0, 20), width = 1, extend = extend.right)
+        ln2 = line.new(L1.bar, L1.price, L2.bar, L2.price, color = color.new(#1565c0, 20), width = 1, extend = extend.right)
+        lb  = label.new(rb, (H2.price + L2.price) / 2, "Sym Tri", color = color.new(#1565c0, 10), textcolor = color.white, style = label.style_label_left, size = size.small)
+        f_keepPatLine(ln1)
+        f_keepPatLine(ln2)
+        f_keepPatLabel(lb)
+
+    // Rising Wedge (bearish): both rising, lows rising faster than highs
+    if hUp and lUp and lSlope > hSlope * 1.2
+        ln1 = line.new(H1.bar, H1.price, H2.bar, H2.price, color = color.new(c_bear, 30), width = 1, extend = extend.right)
+        ln2 = line.new(L1.bar, L1.price, L2.bar, L2.price, color = color.new(c_bear, 30), width = 1, extend = extend.right)
+        lb  = label.new(rb, H2.price, "Rising Wedge", color = color.new(c_bear, 10), textcolor = color.white, style = label.style_label_left, size = size.small)
+        f_keepPatLine(ln1)
+        f_keepPatLine(ln2)
+        f_keepPatLabel(lb)
+
+    // Falling Wedge (bullish): both falling, highs falling faster than lows
+    if hDn and lDn and math.abs(hSlope) > math.abs(lSlope) * 1.2
+        ln1 = line.new(H1.bar, H1.price, H2.bar, H2.price, color = color.new(c_bull, 30), width = 1, extend = extend.right)
+        ln2 = line.new(L1.bar, L1.price, L2.bar, L2.price, color = color.new(c_bull, 30), width = 1, extend = extend.right)
+        lb  = label.new(rb, L2.price, "Falling Wedge", color = color.new(c_bull, 10), textcolor = color.white, style = label.style_label_left, size = size.small)
+        f_keepPatLine(ln1)
+        f_keepPatLine(ln2)
+        f_keepPatLabel(lb)
 
 // High-volume bar coloring — barcolor() applied bar-by-bar. Two tiers:
 //   high     volume >= volMA * i_highVolMult     → tinted bull/bear

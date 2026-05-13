@@ -238,10 +238,27 @@ without trend context — bullish patterns then require a local downtrend
 
 ### Chart patterns
 
-**Show Double Top / Double Bottom** marks any two consecutive swing
-high/low pivots within 0.2% of each other as `DT` / `DB`, drawn at the
-second pivot. Combined with the ICT swing labels (HH/HL/LL/LH/EH/EL) it
-gives a complete view of where structure is repeating vs breaking.
+Turn on **Show Chart Patterns** to draw the following classical chart
+patterns directly from the swing pivots:
+
+| Pattern | Trigger | Drawing |
+|---|---|---|
+| **Double Top / Double Bottom** | Two consecutive swings ≤ 0.2% apart | Dotted line + `DT` / `DB` |
+| **Triple Top / Triple Bottom** | Three consecutive swings ≤ 0.3% apart | Dotted line + `TRIPLE TOP` / `TRIPLE BOT` |
+| **Head & Shoulders** | Mid swing-high > both sides, sides ≤ 0.6% apart | Two trendlines + `H&S` |
+| **Inverse Head & Shoulders** | Mid swing-low < both sides, sides ≤ 0.6% apart | Two trendlines + `Inv H&S` |
+| **Ascending Triangle** | Flat tops + rising bottoms | Two trendlines (extend right) + `Asc Tri` |
+| **Descending Triangle** | Falling tops + flat bottoms | Two trendlines (extend right) + `Desc Tri` |
+| **Symmetric Triangle** | Falling tops + rising bottoms | Two trendlines (extend right) + `Sym Tri` |
+| **Rising Wedge** (bearish) | Both lines up, bottoms rising faster | Two trendlines + `Rising Wedge` |
+| **Falling Wedge** (bullish) | Both lines down, tops falling faster | Two trendlines + `Falling Wedge` |
+
+Patterns fire once when the defining swings line up; line / label
+objects are recycled via a bounded pool (max 50 lines, 25 labels) so the
+chart never hits TV's object cap regardless of how long the indicator
+runs. Combined with the ICT swing labels (HH/HL/LL/LH/EH/EL) the chart
+gives a complete view of structure: which swings are forming familiar
+classical patterns versus building fresh ICT levels.
 
 ### High-volume bar coloring
 
