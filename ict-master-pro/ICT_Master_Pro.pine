@@ -140,6 +140,9 @@ i_showKeyLevels = input.bool(false, "Show Key Levels (PDH/PDL/PWH/PWL)", group =
 i_useKeyAsTP    = input.bool(true,  "Use Key Levels as TP destinations", group = grpKey, tooltip = "When Adaptive Targets is ON, also project to PDH/PDL/PWH/PWL.")
 i_showMTF       = input.bool(false, "Show MTF Liquidity Pools (1H/4H)", group = grpKey, tooltip = "Plot the most recent 1H and 4H pivot highs and lows on the chart. They tag where institutional traders are watching the next BSL/SSL grab.")
 i_useMTFAsTP    = input.bool(true,  "Use MTF Pools as TP destinations", group = grpKey)
+i_showVWAP      = input.bool(true,  "Show VWAP (session-anchored)", group = grpKey, tooltip = "Volume-weighted average price, anchored to session open. The single most important institutional reference for intraday — price reverts to VWAP, then bounces off it.")
+i_useVWAPAsTP   = input.bool(true,  "Use VWAP as TP destination",   group = grpKey)
+i_showORB       = input.bool(false, "Show Opening Range (first 15m)", group = grpKey, tooltip = "Plots the high and low of the first 15 minutes of the session as horizontal lines. Classical Opening Range Breakout / Reversal levels.")
 
 // ── Performance Tracker ─────────────────────────────────────────────────────────────
 grpPerf         = "═══ Performance ═══"
@@ -152,12 +155,30 @@ i_showPerfLines = input.bool(false, "Mark Closed Trades on Chart", group = grpPe
 // Candle patterns use plotshape so they have no max-objects budget. The chart-
 // pattern detector (Double Top / Bottom) uses the existing pivot system.
 grpPat            = "═══ Chart & Candle Patterns ═══"
-i_showCandlePat   = input.bool(false, "Show Candle Pattern Markers", group = grpPat, tooltip = "Tiny letter markers above/below each bar that prints a classical candle pattern: Engulfing, Hammer, Shooting Star, Doji, Marubozu, Inside/Outside Bar, Harami, Tweezer, Three-Soldiers/Crows, Morning/Evening Star, Pin Bar.")
-i_patReversalOnly = input.bool(true,  "Reversal Patterns Only (filter noise)", group = grpPat, tooltip = "Show only bullish-after-downtrend / bearish-after-uptrend patterns. Filters dojis/engulfings firing mid-trend without context.")
-i_showDoubleTops  = input.bool(false, "Show Chart Patterns", group = grpPat, tooltip = "Detects and draws: Double Top / Double Bottom, Triple Top / Triple Bottom, Head & Shoulders + Inverse, Ascending / Descending / Symmetric Triangles, Rising / Falling Wedges. Uses the existing swing pivots.")
-i_colorHighVol    = input.bool(true,  "Color High-Volume Bars", group = grpPat, tooltip = "Tint bars where volume exceeds the High-Volume Multiplier. Bars beyond the Extreme-Volume Multiplier get a brighter shade.")
-i_highVolMult     = input.float(2.0, "High-Volume Multiplier (x avg)", minval = 1.2, maxval = 10.0, step = 0.1, group = grpPat)
-i_extremeVolMult  = input.float(3.5, "Extreme-Volume Multiplier (x avg)", minval = 1.5, maxval = 20.0, step = 0.1, group = grpPat)
+i_showCandlePat   = input.bool(false, "Show Candle Pattern Markers", group = grpPat, tooltip = "Tiny letter markers above/below each bar that prints a classical candle pattern.")
+i_patReversalOnly = input.bool(true,  "Reversal Patterns Only (filter noise)", group = grpPat, tooltip = "Show only bullish-after-down / bearish-after-up patterns (EMA20 vs EMA50 context). Filters mid-move dojis/engulfings.")
+i_patStrongOnly   = input.bool(true,  "Strong Patterns Only (drop Doji/Inside/Outside)", group = grpPat, tooltip = "When ON, skips noisy markers (Doji, Inside Bar, Outside Bar, Inv Hammer, Hanging Man, Harami). Keeps the 12 most-actionable: Engulfing, Hammer, Shooting Star, Marubozu, Pin Bar, Dragonfly/Gravestone, Tweezer, 3 Soldiers/Crows, Morning/Evening Star.")
+i_patContextOnly  = input.bool(true,  "ICT Context Only (in OB/FVG/sweep zone)", group = grpPat, tooltip = "When ON, candle patterns only print when the bar is inside a fresh OB, an unmitigated FVG, or right after a liquidity sweep. Massively cuts noise — patterns only appear at structurally meaningful moments.")
+i_patCooldown     = input.int(4,      "Pattern Cooldown (bars)", minval = 0, maxval = 30, group = grpPat, tooltip = "Suppress same-side patterns within N bars of a previous pattern. 0 = no cooldown.")
+i_showDoubleTops  = input.bool(false, "Show Chart Patterns", group = grpPat, tooltip = "Detects and draws: Double / Triple Top & Bottom, Head & Shoulders + Inverse, Ascending / Descending / Symmetric Triangles, Rising / Falling Wedges.")
+i_chartPatCooldown = input.int(15,    "Chart-Pattern Cooldown (bars)", minval = 0, maxval = 100, group = grpPat, tooltip = "Suppress the SAME chart-pattern type from re-drawing within N bars. Stops triangle/wedge spam when consecutive pivots keep retriggering the same shape.")
+i_colorHighVol    = input.bool(true,  "Color High-Volume Bars", group = grpPat, tooltip = "Tint bars where volume exceeds the multiplier. Two tiers: high (tinted) and extreme (neon).")
+i_highVolMult     = input.float(2.5, "High-Volume Multiplier (x avg)", minval = 1.2, maxval = 10.0, step = 0.1, group = grpPat)
+i_extremeVolMult  = input.float(5.0, "Extreme-Volume Multiplier (x avg)", minval = 1.5, maxval = 20.0, step = 0.1, group = grpPat)
+i_volMA_long      = input.int(50,    "Volume Average Length (for coloring)", minval = 10, maxval = 500, group = grpPat, tooltip = "Length of the moving average used for the high/extreme volume thresholds. Longer = stabler baseline, fewer false-positive neon bars.")
+
+// ── Fyers Auto-Trading ──────────────────────────────────────────────────────────────
+// When ON, the JSON alert payload is formatted for the Fyers REST/Web API
+// (via a webhook bridge). Index symbols (NIFTY/BANKNIFTY/SENSEX) auto-route
+// to OPTIONS — BUY signal => Call (CE), SELL signal => Put (PE). Stock and
+// futures symbols route to EQUITY/FUTURES with side = BUY/SELL.
+grpFyers          = "═══ Fyers Auto-Trading ═══"
+i_fyersMode       = input.bool(false, "Fyers JSON Webhook (overrides plain JSON)", group = grpFyers, tooltip = "When ON, every signal alert emits a Fyers-API-ready JSON payload. Route it to your bridge server which calls Fyers /orders. Auto-detects index vs stock and builds the right order shape.")
+i_fyersProduct    = input.string("INTRADAY", "Product", options = ["INTRADAY", "MARGIN", "CNC", "BO", "CO"], group = grpFyers, tooltip = "Fyers product type: INTRADAY (MIS), MARGIN, CNC (delivery), BO (bracket), CO (cover). For options BO/CO can attach SL+TP server-side.")
+i_optionStrikeOff = input.int(0, "Option Strike Offset (steps from ATM)", minval = -10, maxval = 10, group = grpFyers, tooltip = "0 = ATM, -1 = one strike ITM, +1 = one strike OTM, etc. Bridge resolves the strike from live LTP at trade time.")
+i_optionExpiry    = input.string("WEEKLY", "Option Expiry", options = ["WEEKLY", "MONTHLY"], group = grpFyers)
+i_stockExchange   = input.string("NSE", "Stock Exchange", options = ["NSE", "BSE"], group = grpFyers)
+i_fyersOrderType  = input.string("MARKET", "Order Type", options = ["MARKET", "LIMIT"], group = grpFyers, tooltip = "MARKET = enter at signal close, LIMIT = enter at signal close as a limit order (bridge sets price).")
 
 // ── Dashboard ───────────────────────────────────────────────────────────────────────
 i_showDash      = input.bool(true, "Show Dashboard", group = grpDash)
@@ -376,6 +397,29 @@ plot(i_showMTFEff ? htf60H_last  : na, "1H Pivot High",  color = color.new(#ff52
 plot(i_showMTFEff ? htf60L_last  : na, "1H Pivot Low",   color = color.new(#69f0ae, 30), style = plot.style_linebr, linewidth = 1)
 plot(i_showMTFEff ? htf240H_last : na, "4H Pivot High",  color = color.new(#ff5252, 0),  style = plot.style_linebr, linewidth = 2)
 plot(i_showMTFEff ? htf240L_last : na, "4H Pivot Low",   color = color.new(#69f0ae, 0),  style = plot.style_linebr, linewidth = 2)
+
+// VWAP — session-anchored. The single most important institutional reference
+// for intraday traders. Price gravitates to it; bounces off it act as entries.
+vwapVal = ta.vwap(hlc3)
+i_showVWAPEff = i_cleanMode ? false : i_showVWAP
+plot(i_showVWAPEff ? vwapVal : na, "VWAP", color = color.new(#ff6f00, 0), linewidth = 2, style = plot.style_line)
+
+// Opening Range — first 15 minutes of the session. Classical ORB levels.
+var float orbHigh = na
+var float orbLow  = na
+var int   orbDay  = na
+inOpenRange = hour == 9 and minute < 30   // 09:15-09:30 IST
+isNewDay    = ta.change(dayofmonth) != 0
+if isNewDay
+    orbHigh := na
+    orbLow  := na
+    orbDay  := dayofmonth
+if inOpenRange
+    orbHigh := na(orbHigh) ? high : math.max(orbHigh, high)
+    orbLow  := na(orbLow)  ? low  : math.min(orbLow,  low)
+i_showORBEff = i_cleanMode ? false : i_showORB
+plot(i_showORBEff and not inOpenRange ? orbHigh : na, "ORB High", color = color.new(#1de9b6, 0), linewidth = 2, style = plot.style_linebr)
+plot(i_showORBEff and not inOpenRange ? orbLow  : na, "ORB Low",  color = color.new(#ff5252, 0), linewidth = 2, style = plot.style_linebr)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   4. MARKET STRUCTURE — Swings, BOS, CHoCH
@@ -1032,6 +1076,71 @@ f_positionSize(_entry, _sl) =>
     [_l, q, _ar, _ur] = f_calcPosition(_entry, _sl)
     float(q)
 
+// ── Fyers webhook payload helper ────────────────────────────────────────────────────
+// Returns a Fyers-API-ready JSON string. Auto-routes:
+//   index symbol  → OPTIONS payload (BUY signal = CE, SELL signal = PE — you
+//                   always BUY the option regardless of direction)
+//   stock symbol  → EQUITY  payload (BUY/SELL as-is)
+//   other         → FUTURES payload (BUY/SELL as-is on the future)
+// Your bridge server reads this JSON, resolves the option symbol (strike from
+// LTP, expiry from i_optionExpiry) and submits to Fyers /orders.
+f_fyersInstr() =>
+    string ins = "EQUITY"
+    if syminfo.type == "index" or syminfo.type == "fund"
+        ins := "OPTIONS"
+    else if syminfo.type == "futures"
+        ins := "FUTURES"
+    else
+        ins := "EQUITY"
+    ins
+
+f_fyersUnderlying() =>
+    string u = syminfo.ticker
+    if str.contains(u, "BANKNIFTY")
+        u := "BANKNIFTY"
+    else if str.contains(u, "FINNIFTY")
+        u := "FINNIFTY"
+    else if str.contains(u, "MIDCPNIFTY")
+        u := "MIDCPNIFTY"
+    else if str.contains(u, "SENSEX")
+        u := "SENSEX"
+    else if str.contains(u, "BANKEX")
+        u := "BANKEX"
+    else if str.contains(u, "NIFTY")
+        u := "NIFTY"
+    u
+
+f_fyersPayload(_isBuy, _qty, _lots, _lotSize, _entry, _sl, _tp1, _tp2, _tp3, _score) =>
+    instr  = f_fyersInstr()
+    optTyp = instr == "OPTIONS" ? (_isBuy ? "CE" : "PE") : ""
+    sideStr = instr == "OPTIONS" ? "BUY" : (_isBuy ? "BUY" : "SELL")
+    sideNum = instr == "OPTIONS" ? 1 : (_isBuy ? 1 : -1)
+    underlying = f_fyersUnderlying()
+    sym = instr == "EQUITY" ? (i_stockExchange + ":" + syminfo.ticker + "-EQ") : syminfo.ticker
+    "{\"broker\":\"fyers\","
+      + "\"action\":\""    + sideStr + "\","
+      + "\"side\":"        + str.tostring(sideNum) + ","
+      + "\"instrument\":\"" + instr + "\","
+      + "\"underlying\":\"" + underlying + "\","
+      + "\"optionType\":\"" + optTyp + "\","
+      + "\"expiry\":\""    + i_optionExpiry + "\","
+      + "\"strikeOffset\":" + str.tostring(i_optionStrikeOff) + ","
+      + "\"symbol\":\""    + sym + "\","
+      + "\"exchange\":\""  + i_stockExchange + "\","
+      + "\"qty\":"         + str.tostring(_qty) + ","
+      + "\"lots\":"        + str.tostring(_lots) + ","
+      + "\"lotSize\":"     + str.tostring(_lotSize) + ","
+      + "\"productType\":\"" + i_fyersProduct + "\","
+      + "\"orderType\":\"" + i_fyersOrderType + "\","
+      + "\"entryPrice\":"  + str.tostring(_entry, format.mintick) + ","
+      + "\"sl\":"          + str.tostring(_sl,    format.mintick) + ","
+      + "\"tp1\":"         + str.tostring(_tp1,   format.mintick) + ","
+      + "\"tp2\":"         + str.tostring(_tp2,   format.mintick) + ","
+      + "\"tp3\":"         + str.tostring(_tp3,   format.mintick) + ","
+      + "\"score\":"       + str.tostring(_score) + ","
+      + "\"ticker\":\"{{ticker}}\","
+      + "\"time\":\"{{timenow}}\"}"
+
 // ════════════════════════════════════════════════════════════════════════════════════
 //   12b. ADAPTIVE TARGETS — project TP1 / TP2 / TP3 to actual price-action levels
 //   For BUYS: scan above entry for unswept BSL pools, opposing (bear) OBs / FVGs,
@@ -1073,6 +1182,8 @@ f_collectBuyTargets(_entry) =>
             array.push(arr, htf60H_last)
         if not na(htf240H_last) and htf240H_last > _entry
             array.push(arr, htf240H_last)
+    if i_useVWAPAsTP and not na(vwapVal) and vwapVal > _entry
+        array.push(arr, vwapVal)
     if not na(pdMid) and pdMid > _entry
         array.push(arr, pdMid)
     array.sort(arr, order.ascending)
@@ -1112,6 +1223,8 @@ f_collectSellTargets(_entry) =>
             array.push(arr, htf60L_last)
         if not na(htf240L_last) and htf240L_last < _entry
             array.push(arr, htf240L_last)
+    if i_useVWAPAsTP and not na(vwapVal) and vwapVal < _entry
+        array.push(arr, vwapVal)
     if not na(pdMid) and pdMid < _entry
         array.push(arr, pdMid)
     array.sort(arr, order.descending)
@@ -1354,7 +1467,9 @@ if buySignal
     // JSON Webhook Alerts is ON, emit a structured payload that drops
     // straight into broker webhooks (Zerodha Kite / Dhan / Fyers).
     msgB = ""
-    if i_jsonAlerts
+    if i_fyersMode
+        msgB := f_fyersPayload(true, tpQty, tpLots, tpLotSize, tpEntry, tpSL, tpTP1, tpTP2, tpTP3, tpScore)
+    else if i_jsonAlerts
         msgB := "{\"action\":\"BUY\",\"symbol\":\"" + syminfo.ticker + "\",\"entry\":" + str.tostring(tpEntry, format.mintick) + ",\"sl\":" + str.tostring(tpSL, format.mintick) + ",\"tp1\":" + str.tostring(tpTP1, format.mintick) + ",\"tp2\":" + str.tostring(tpTP2, format.mintick) + ",\"tp3\":" + str.tostring(tpTP3, format.mintick) + ",\"qty\":" + str.tostring(tpQty) + ",\"lots\":" + str.tostring(tpLots) + ",\"lotSize\":" + str.tostring(tpLotSize) + ",\"instrument\":\"" + tpInstrCls + "\",\"actualRisk\":" + str.tostring(tpActualRisk, "#.##") + ",\"unusedRisk\":" + str.tostring(tpUnusedRisk, "#.##") + ",\"score\":" + str.tostring(tpScore) + ",\"time\":\"{{timenow}}\"}"
     else
         string posLineB = ""
@@ -1408,7 +1523,9 @@ if sellSignal
     tpInstrCls   := f_instrClass()
     tpLotSize    := f_lotSizeEff()
     msgS = ""
-    if i_jsonAlerts
+    if i_fyersMode
+        msgS := f_fyersPayload(false, tpQty, tpLots, tpLotSize, tpEntry, tpSL, tpTP1, tpTP2, tpTP3, tpScore)
+    else if i_jsonAlerts
         msgS := "{\"action\":\"SELL\",\"symbol\":\"" + syminfo.ticker + "\",\"entry\":" + str.tostring(tpEntry, format.mintick) + ",\"sl\":" + str.tostring(tpSL, format.mintick) + ",\"tp1\":" + str.tostring(tpTP1, format.mintick) + ",\"tp2\":" + str.tostring(tpTP2, format.mintick) + ",\"tp3\":" + str.tostring(tpTP3, format.mintick) + ",\"qty\":" + str.tostring(tpQty) + ",\"lots\":" + str.tostring(tpLots) + ",\"lotSize\":" + str.tostring(tpLotSize) + ",\"instrument\":\"" + tpInstrCls + "\",\"actualRisk\":" + str.tostring(tpActualRisk, "#.##") + ",\"unusedRisk\":" + str.tostring(tpUnusedRisk, "#.##") + ",\"score\":" + str.tostring(tpScore) + ",\"time\":\"{{timenow}}\"}"
     else
         string posLineS = ""
@@ -1680,31 +1797,65 @@ cp_eveningStar = close[2] > open[2] and math.abs(close[1] - open[1]) <= math.abs
 revOK_bull = i_patReversalOnly ? patDnTrend : true
 revOK_bear = i_patReversalOnly ? patUpTrend : true
 
-// Effective fire conditions (master toggle + reversal filter)
+// Context filter — only fire patterns when bar sits in a meaningful ICT zone
+// (inside fresh OB / unmitigated FVG / immediately after a liquidity sweep).
+// Cuts >80% of mid-trend pattern noise.
+patBullCtx = f_inBullOB() or f_inBullFVG() or recentSSLSweep
+patBearCtx = f_inBearOB() or f_inBearFVG() or recentBSLSweep
+ctxBullOK  = i_patContextOnly ? patBullCtx : true
+ctxBearOK  = i_patContextOnly ? patBearCtx : true
+
+// Cooldown — track last bar each SIDE printed a pattern; suppress same side
+// for i_patCooldown bars after.
+var int lastPatBullBar = -1000
+var int lastPatBearBar = -1000
+var int lastPatNeutBar = -1000
+cdBullOK = (bar_index - lastPatBullBar) >= i_patCooldown
+cdBearOK = (bar_index - lastPatBearBar) >= i_patCooldown
+cdNeutOK = (bar_index - lastPatNeutBar) >= i_patCooldown
+
+// Strong-only filter: when ON, suppress the noisy / low-edge patterns
+strict = i_patStrongOnly
 pat_on = i_showCandlePat
-fire_bullEngulf = pat_on and cp_bullEngulf and revOK_bull
-fire_bearEngulf = pat_on and cp_bearEngulf and revOK_bear
-fire_hammer     = pat_on and cp_hammer     and revOK_bull
-fire_invHammer  = pat_on and cp_invHammer  and revOK_bull
-fire_shootStar  = pat_on and cp_shootStar  and revOK_bear
-fire_hangMan    = pat_on and cp_hangMan    and revOK_bear
-fire_doji       = pat_on and cp_doji       and not cp_dragonfly and not cp_gravestone
-fire_dragonfly  = pat_on and cp_dragonfly  and revOK_bull
-fire_gravestone = pat_on and cp_gravestone and revOK_bear
-fire_bullMarub  = pat_on and cp_bullMarub
-fire_bearMarub  = pat_on and cp_bearMarub
-fire_bullPin    = pat_on and cp_bullPin    and revOK_bull and not cp_hammer
-fire_bearPin    = pat_on and cp_bearPin    and revOK_bear and not cp_shootStar
-fire_inside     = pat_on and cp_insideBar
-fire_outside    = pat_on and cp_outsideBar
-fire_bullHar    = pat_on and cp_bullHarami and revOK_bull
-fire_bearHar    = pat_on and cp_bearHarami and revOK_bear
-fire_twTop      = pat_on and cp_tweezerTop and revOK_bear
-fire_twBot      = pat_on and cp_tweezerBot and revOK_bull
-fire_3WS        = pat_on and cp_3WSoldiers
-fire_3BC        = pat_on and cp_3BCrows
-fire_morning    = pat_on and cp_morningStar
-fire_evening    = pat_on and cp_eveningStar
+allowB = pat_on and cdBullOK and ctxBullOK
+allowS = pat_on and cdBearOK and ctxBearOK
+allowN = pat_on and cdNeutOK
+
+// Effective fire conditions
+fire_bullEngulf = allowB and cp_bullEngulf and revOK_bull
+fire_bearEngulf = allowS and cp_bearEngulf and revOK_bear
+fire_hammer     = allowB and cp_hammer     and revOK_bull
+fire_invHammer  = allowB and cp_invHammer  and revOK_bull and not strict
+fire_shootStar  = allowS and cp_shootStar  and revOK_bear
+fire_hangMan    = allowS and cp_hangMan    and revOK_bear and not strict
+fire_doji       = allowN and cp_doji       and not cp_dragonfly and not cp_gravestone and not strict
+fire_dragonfly  = allowB and cp_dragonfly  and revOK_bull
+fire_gravestone = allowS and cp_gravestone and revOK_bear
+fire_bullMarub  = allowB and cp_bullMarub
+fire_bearMarub  = allowS and cp_bearMarub
+fire_bullPin    = allowB and cp_bullPin    and revOK_bull and not cp_hammer
+fire_bearPin    = allowS and cp_bearPin    and revOK_bear and not cp_shootStar
+fire_inside     = allowN and cp_insideBar  and not strict
+fire_outside    = allowN and cp_outsideBar and not strict
+fire_bullHar    = allowB and cp_bullHarami and revOK_bull and not strict
+fire_bearHar    = allowS and cp_bearHarami and revOK_bear and not strict
+fire_twTop      = allowS and cp_tweezerTop and revOK_bear
+fire_twBot      = allowB and cp_tweezerBot and revOK_bull
+fire_3WS        = allowB and cp_3WSoldiers
+fire_3BC        = allowS and cp_3BCrows
+fire_morning    = allowB and cp_morningStar
+fire_evening    = allowS and cp_eveningStar
+
+// Update cooldown markers when ANY pattern of that side fired this bar
+anyBullPat = fire_bullEngulf or fire_hammer or fire_invHammer or fire_dragonfly or fire_bullMarub or fire_bullPin or fire_bullHar or fire_twBot or fire_3WS or fire_morning
+anyBearPat = fire_bearEngulf or fire_shootStar or fire_hangMan or fire_gravestone or fire_bearMarub or fire_bearPin or fire_bearHar or fire_twTop or fire_3BC or fire_evening
+anyNeutPat = fire_doji or fire_inside or fire_outside
+if anyBullPat
+    lastPatBullBar := bar_index
+if anyBearPat
+    lastPatBearBar := bar_index
+if anyNeutPat
+    lastPatNeutBar := bar_index
 
 // Plotshape markers — bullish patterns below the bar, bearish above. Each one
 // uses a 2-3 letter tag so they read at a glance without clutter.
@@ -1751,14 +1902,14 @@ var array<label>   patLabels = array.new<label>()
 f_keepPatLine(_ln) =>
     if not na(_ln)
         array.push(patLines, _ln)
-        if array.size(patLines) > 50
+        if array.size(patLines) > 20
             line.delete(array.shift(patLines))
     0
 
 f_keepPatLabel(_lb) =>
     if not na(_lb)
         array.push(patLabels, _lb)
-        if array.size(patLabels) > 25
+        if array.size(patLabels) > 10
             label.delete(array.shift(patLabels))
     0
 
@@ -1776,6 +1927,21 @@ if not na(plRaw)
 patTol   = 0.003   // 0.3% — strict equality (DT/TT/H&S sides)
 patTolHi = 0.006   // 0.6% — looser equality (H&S shoulders allow more drift)
 
+// Per-type cooldown so the same pattern doesn't redraw every time a new
+// swing prints and re-tests the same shape.
+var int lastDTBar      = -1000
+var int lastDBBar      = -1000
+var int lastTTBar      = -1000
+var int lastTBBar      = -1000
+var int lastHSBar      = -1000
+var int lastIHSBar     = -1000
+var int lastAscTriBar  = -1000
+var int lastDescTriBar = -1000
+var int lastSymTriBar  = -1000
+var int lastRWedgeBar  = -1000
+var int lastFWedgeBar  = -1000
+chartCD = i_chartPatCooldown
+
 // ── Patterns triggered by a fresh swing HIGH (Double / Triple Top, H&S) ─────────────
 if i_showDoubleTops and not na(phRaw) and array.size(shArrPat) >= 2
     nH = array.size(shArrPat)
@@ -1783,11 +1949,12 @@ if i_showDoubleTops and not na(phRaw) and array.size(shArrPat) >= 2
     sh2 = array.get(shArrPat, nH - 1)
     dtEq = math.abs(sh1.price - sh2.price) / sh2.price <= 0.002
     // Double Top — two consecutive highs within 0.2%
-    if dtEq
+    if dtEq and (bar_index - lastDTBar) >= chartCD
         ln  = line.new(sh1.bar, sh1.price, sh2.bar, sh2.price, color = color.new(c_bear, 30), width = 2, style = line.style_dotted)
         lb  = label.new(sh2.bar, sh2.price, "DT", color = color.new(c_bear, 20), textcolor = color.white, style = label.style_label_down, size = size.small)
         f_keepPatLine(ln)
         f_keepPatLabel(lb)
+        lastDTBar := bar_index
     // Triple Top + Head & Shoulders need 3 highs
     if array.size(shArrPat) >= 3
         sh0 = array.get(shArrPat, nH - 3)
@@ -1795,19 +1962,21 @@ if i_showDoubleTops and not na(phRaw) and array.size(shArrPat) >= 2
         eq12 = math.abs(sh1.price - sh2.price) / sh2.price <= patTol
         eq02 = math.abs(sh0.price - sh2.price) / sh2.price <= patTolHi
         // Triple Top
-        if eq01 and eq12
+        if eq01 and eq12 and (bar_index - lastTTBar) >= chartCD
             lnA = line.new(sh0.bar, sh0.price, sh2.bar, sh2.price, color = color.new(c_bear, 20), width = 2, style = line.style_dotted)
             lbA = label.new(sh2.bar, sh2.price, "TRIPLE TOP", color = color.new(c_bear, 10), textcolor = color.white, style = label.style_label_down, size = size.small)
             f_keepPatLine(lnA)
             f_keepPatLabel(lbA)
+            lastTTBar := bar_index
         // Head & Shoulders — middle highest, shoulders roughly equal & lower
-        if sh1.price > sh0.price and sh1.price > sh2.price and eq02 and (sh1.price - sh0.price) / sh0.price >= 0.005 and (sh1.price - sh2.price) / sh2.price >= 0.005
+        if sh1.price > sh0.price and sh1.price > sh2.price and eq02 and (sh1.price - sh0.price) / sh0.price >= 0.005 and (sh1.price - sh2.price) / sh2.price >= 0.005 and (bar_index - lastHSBar) >= chartCD
             ln1 = line.new(sh0.bar, sh0.price, sh1.bar, sh1.price, color = color.new(c_bear, 30), width = 1)
             ln2 = line.new(sh1.bar, sh1.price, sh2.bar, sh2.price, color = color.new(c_bear, 30), width = 1)
             lbH = label.new(sh1.bar, sh1.price, "H&S", color = color.new(c_bear, 10), textcolor = color.white, style = label.style_label_down, size = size.small)
             f_keepPatLine(ln1)
             f_keepPatLine(ln2)
             f_keepPatLabel(lbH)
+            lastHSBar := bar_index
 
 // ── Patterns triggered by a fresh swing LOW (Double / Triple Bottom, Inv H&S) ───────
 if i_showDoubleTops and not na(plRaw) and array.size(slArrPat) >= 2
@@ -1815,29 +1984,32 @@ if i_showDoubleTops and not na(plRaw) and array.size(slArrPat) >= 2
     sl1 = array.get(slArrPat, nL - 2)
     sl2 = array.get(slArrPat, nL - 1)
     dbEq = math.abs(sl1.price - sl2.price) / sl2.price <= 0.002
-    if dbEq
+    if dbEq and (bar_index - lastDBBar) >= chartCD
         ln = line.new(sl1.bar, sl1.price, sl2.bar, sl2.price, color = color.new(c_bull, 30), width = 2, style = line.style_dotted)
         lb = label.new(sl2.bar, sl2.price, "DB", color = color.new(c_bull, 20), textcolor = color.white, style = label.style_label_up, size = size.small)
         f_keepPatLine(ln)
         f_keepPatLabel(lb)
+        lastDBBar := bar_index
     if array.size(slArrPat) >= 3
         sl0 = array.get(slArrPat, nL - 3)
         eq01 = math.abs(sl0.price - sl1.price) / sl1.price <= patTol
         eq12 = math.abs(sl1.price - sl2.price) / sl2.price <= patTol
         eq02 = math.abs(sl0.price - sl2.price) / sl2.price <= patTolHi
-        if eq01 and eq12
+        if eq01 and eq12 and (bar_index - lastTBBar) >= chartCD
             lnA = line.new(sl0.bar, sl0.price, sl2.bar, sl2.price, color = color.new(c_bull, 20), width = 2, style = line.style_dotted)
             lbA = label.new(sl2.bar, sl2.price, "TRIPLE BOT", color = color.new(c_bull, 10), textcolor = color.white, style = label.style_label_up, size = size.small)
             f_keepPatLine(lnA)
             f_keepPatLabel(lbA)
+            lastTBBar := bar_index
         // Inverse H&S — middle lowest, shoulders roughly equal & higher
-        if sl1.price < sl0.price and sl1.price < sl2.price and eq02 and (sl0.price - sl1.price) / sl0.price >= 0.005 and (sl2.price - sl1.price) / sl2.price >= 0.005
+        if sl1.price < sl0.price and sl1.price < sl2.price and eq02 and (sl0.price - sl1.price) / sl0.price >= 0.005 and (sl2.price - sl1.price) / sl2.price >= 0.005 and (bar_index - lastIHSBar) >= chartCD
             ln1 = line.new(sl0.bar, sl0.price, sl1.bar, sl1.price, color = color.new(c_bull, 30), width = 1)
             ln2 = line.new(sl1.bar, sl1.price, sl2.bar, sl2.price, color = color.new(c_bull, 30), width = 1)
             lbH = label.new(sl1.bar, sl1.price, "Inv H&S", color = color.new(c_bull, 10), textcolor = color.white, style = label.style_label_up, size = size.small)
             f_keepPatLine(ln1)
             f_keepPatLine(ln2)
             f_keepPatLabel(lbH)
+            lastIHSBar := bar_index
 
 // ── Triangles & Wedges — fire when EITHER a new high OR new low extends a setup ─────
 if i_showDoubleTops and (not na(phRaw) or not na(plRaw)) and array.size(shArrPat) >= 2 and array.size(slArrPat) >= 2
@@ -1858,55 +2030,63 @@ if i_showDoubleTops and (not na(phRaw) or not na(plRaw)) and array.size(shArrPat
     rb = bar_index
 
     // Ascending Triangle (bullish): flat tops + rising bottoms
-    if eqH and lUp
+    if eqH and lUp and (bar_index - lastAscTriBar) >= chartCD
         ln1 = line.new(H1.bar, H1.price, H2.bar, H2.price, color = color.new(c_bull, 20), width = 1, extend = extend.right)
         ln2 = line.new(L1.bar, L1.price, L2.bar, L2.price, color = color.new(c_bull, 20), width = 1, extend = extend.right)
         lb  = label.new(rb, H2.price, "Asc Tri", color = color.new(c_bull, 10), textcolor = color.white, style = label.style_label_left, size = size.small)
         f_keepPatLine(ln1)
         f_keepPatLine(ln2)
         f_keepPatLabel(lb)
+        lastAscTriBar := bar_index
 
     // Descending Triangle (bearish): falling tops + flat bottoms
-    if eqL and hDn
+    if eqL and hDn and (bar_index - lastDescTriBar) >= chartCD
         ln1 = line.new(H1.bar, H1.price, H2.bar, H2.price, color = color.new(c_bear, 20), width = 1, extend = extend.right)
         ln2 = line.new(L1.bar, L1.price, L2.bar, L2.price, color = color.new(c_bear, 20), width = 1, extend = extend.right)
         lb  = label.new(rb, L2.price, "Desc Tri", color = color.new(c_bear, 10), textcolor = color.white, style = label.style_label_left, size = size.small)
         f_keepPatLine(ln1)
         f_keepPatLine(ln2)
         f_keepPatLabel(lb)
+        lastDescTriBar := bar_index
 
     // Symmetric Triangle: falling tops + rising bottoms
-    if hDn and lUp
+    if hDn and lUp and (bar_index - lastSymTriBar) >= chartCD
         ln1 = line.new(H1.bar, H1.price, H2.bar, H2.price, color = color.new(#1565c0, 20), width = 1, extend = extend.right)
         ln2 = line.new(L1.bar, L1.price, L2.bar, L2.price, color = color.new(#1565c0, 20), width = 1, extend = extend.right)
         lb  = label.new(rb, (H2.price + L2.price) / 2, "Sym Tri", color = color.new(#1565c0, 10), textcolor = color.white, style = label.style_label_left, size = size.small)
         f_keepPatLine(ln1)
         f_keepPatLine(ln2)
         f_keepPatLabel(lb)
+        lastSymTriBar := bar_index
 
     // Rising Wedge (bearish): both rising, lows rising faster than highs
-    if hUp and lUp and lSlope > hSlope * 1.2
+    if hUp and lUp and lSlope > hSlope * 1.2 and (bar_index - lastRWedgeBar) >= chartCD
         ln1 = line.new(H1.bar, H1.price, H2.bar, H2.price, color = color.new(c_bear, 30), width = 1, extend = extend.right)
         ln2 = line.new(L1.bar, L1.price, L2.bar, L2.price, color = color.new(c_bear, 30), width = 1, extend = extend.right)
         lb  = label.new(rb, H2.price, "Rising Wedge", color = color.new(c_bear, 10), textcolor = color.white, style = label.style_label_left, size = size.small)
         f_keepPatLine(ln1)
         f_keepPatLine(ln2)
         f_keepPatLabel(lb)
+        lastRWedgeBar := bar_index
 
     // Falling Wedge (bullish): both falling, highs falling faster than lows
-    if hDn and lDn and math.abs(hSlope) > math.abs(lSlope) * 1.2
+    if hDn and lDn and math.abs(hSlope) > math.abs(lSlope) * 1.2 and (bar_index - lastFWedgeBar) >= chartCD
         ln1 = line.new(H1.bar, H1.price, H2.bar, H2.price, color = color.new(c_bull, 30), width = 1, extend = extend.right)
         ln2 = line.new(L1.bar, L1.price, L2.bar, L2.price, color = color.new(c_bull, 30), width = 1, extend = extend.right)
         lb  = label.new(rb, L2.price, "Falling Wedge", color = color.new(c_bull, 10), textcolor = color.white, style = label.style_label_left, size = size.small)
         f_keepPatLine(ln1)
         f_keepPatLine(ln2)
         f_keepPatLabel(lb)
+        lastFWedgeBar := bar_index
 
 // High-volume bar coloring — barcolor() applied bar-by-bar. Two tiers:
 //   high     volume >= volMA * i_highVolMult     → tinted bull/bear
 //   extreme  volume >= volMA * i_extremeVolMult  → bright bull/bear
-isHighVol    = i_colorHighVol and not na(volMA) and volMA > 0 and volume >= volMA * i_highVolMult
-isExtremeVol = i_colorHighVol and not na(volMA) and volMA > 0 and volume >= volMA * i_extremeVolMult
+// Volume coloring uses a LONGER MA so a single big spike doesn't pull the
+// baseline up and trigger neon on every adjacent bar.
+volMA_long = ta.sma(volume, i_volMA_long)
+isHighVol    = i_colorHighVol and not na(volMA_long) and volMA_long > 0 and volume >= volMA_long * i_highVolMult
+isExtremeVol = i_colorHighVol and not na(volMA_long) and volMA_long > 0 and volume >= volMA_long * i_extremeVolMult
 volBarCol = isExtremeVol ? (patGreen ? color.new(#00e676, 0) : color.new(#ff1744, 0)) : isHighVol ? (patGreen ? color.new(c_bull, 30) : color.new(c_bear, 30)) : na
 barcolor(volBarCol, title = "High-Volume Bar Color")
 

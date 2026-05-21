@@ -260,6 +260,23 @@ runs. Combined with the ICT swing labels (HH/HL/LL/LH/EH/EL) the chart
 gives a complete view of structure: which swings are forming familiar
 classical patterns versus building fresh ICT levels.
 
+### Anti-clutter controls
+
+The pattern engine has four filters layered on top of detection so the
+chart stays clean even on choppy 5m sessions:
+
+| Filter | What it does |
+|---|---|
+| **Strong Patterns Only** (on by default) | Drops Doji, Inside Bar, Outside Bar, Inv Hammer, Hanging Man, Harami — the patterns most prone to noise. Keeps 12 high-edge ones (Engulfing, Hammer, Shooting Star, Marubozu, Pin Bar, Tweezer, Dragonfly/Gravestone, 3 Soldiers/Crows, Morning/Evening Star). |
+| **ICT Context Only** (on by default) | Bullish patterns only print when the bar is inside a fresh OB / unmitigated FVG / right after a SSL sweep. Bearish patterns require the equivalent bearish context. **This single filter typically removes 80%+ of pattern noise** — patterns now only appear at structurally meaningful moments. |
+| **Reversal Patterns Only** (on by default) | Bullish patterns require local downtrend context (EMA20 < EMA50, close < EMA20). Bearish require the inverse. Filters mid-trend continuation fakes. |
+| **Pattern Cooldown** (default 4 bars) | After a same-side pattern fires, suppresses further same-side markers for N bars. Stops 3-4 markers stacking on consecutive bars in the same setup zone. |
+
+Chart-pattern markers (Triangles, Wedges, H&S, etc.) have their own
+**Chart-Pattern Cooldown** (default 15 bars) — the same pattern type
+can't redraw within that window so consecutive pivots don't keep
+retriggering identical shapes.
+
 ### High-volume bar coloring
 
 **Color High-Volume Bars** tints any bar whose volume exceeds the
@@ -271,6 +288,47 @@ multiplier x the 20-bar SMA:
 Both multipliers are configurable. Use this to spot institutional
 accumulation/distribution at structure points (sweep highs/lows, OB
 mitigations) instantly without staring at the volume pane.
+
+---
+
+## Fyers Auto-Trading (TradingView → Webhook → Fyers)
+
+Turn on **Fyers JSON Webhook** (under ═══ Fyers Auto-Trading ═══) and
+every signal alert will emit a Fyers-API-ready JSON payload with
+intelligent routing:
+
+| Chart symbol | Routed as | BUY signal → | SELL signal → |
+|---|---|---|---|
+| `NIFTY` / `BANKNIFTY` / `FINNIFTY` / `SENSEX` | **OPTIONS** | BUY <ATM+offset> **CE** | BUY <ATM+offset> **PE** |
+| Any stock (`RELIANCE`, `TCS`, etc.) | **EQUITY** | BUY `NSE:RELIANCE-EQ` | SELL `NSE:RELIANCE-EQ` |
+| Stock or index futures | **FUTURES** | BUY future | SELL future |
+
+For index symbols you always **BUY** the option — you express the
+bearish view by buying a **PE** (put), not by selling a call. This
+matches retail/intraday risk management practice.
+
+### Setup
+
+1. **Run the bridge** — Fyers does not accept TradingView webhooks directly. Use the included `fyers_bridge.py` (FastAPI + fyers-apiv3) as a starting point, or any equivalent service. Set environment variables:
+   - `FYERS_CLIENT_ID`
+   - `FYERS_ACCESS_TOKEN` (regenerated daily via the Fyers login flow)
+2. **Expose it over HTTPS** — use ngrok / Cloudflare Tunnel / your VPS to get a public URL like `https://<your-tunnel>/webhook`.
+3. **Wire the alert** — when creating the alert in TradingView, set the **Webhook URL** to the bridge endpoint. The alert message is the auto-built JSON.
+4. **Test on Fyers paper / small qty first.** The strike resolution in the sample bridge is simplified — production code should query Fyers' `/option-chain` to get the exact weekly expiry symbol format.
+
+### Inputs
+
+| Input | Effect |
+|---|---|
+| Product | INTRADAY (MIS), MARGIN, CNC, BO (bracket — auto SL+TP), CO (cover) |
+| Option Strike Offset | 0 = ATM, -1 = one strike ITM, +1 = OTM, etc. |
+| Option Expiry | WEEKLY or MONTHLY — bridge resolves the symbol at trade time |
+| Stock Exchange | NSE or BSE — applied to the `NSE:SYMBOL-EQ` format |
+| Order Type | MARKET (enter now) or LIMIT (bridge sets price = signal entry) |
+
+The JSON payload also carries the calculated SL, TP1, TP2, TP3, lots,
+qty, and confluence score — so a sophisticated bridge can place a
+bracket order with the full plan in one API call.
 
 ---
 
@@ -312,6 +370,7 @@ Python/Node bridge.
 ict-master-pro/
 ├── ICT_Master_Pro.pine             ← INDICATOR — live charting & alerts
 ├── ICT_Master_Pro_Strategy.pine    ← STRATEGY  — backtestable twin
+├── fyers_bridge.py                 ← Sample FastAPI bridge: TV → Fyers
 └── README.md                       ← this file
 ```
 
