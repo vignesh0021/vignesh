@@ -1,0 +1,5 @@
+-keep class com.loadshare.areaalert.** { *; }
+-keepattributes *Annotation*
+-keepattributes SourceFile,LineNumberTable
+-keep public class * extends java.lang.Exception
+-keep class androidx.datastore.** { *; }

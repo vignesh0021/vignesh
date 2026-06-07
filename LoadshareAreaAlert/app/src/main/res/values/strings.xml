@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Loadshare Area Alert</string>
+    <string name="accessibility_service_label">Loadshare Area Alert</string>
+    <string name="accessibility_service_description">Monitors screen content to detect Loadshare order locations and alert you when preferred areas are found.</string>
+    <string name="notification_channel_id">loadshare_monitoring</string>
+    <string name="notification_channel_name">Order Monitoring</string>
+    <string name="notification_channel_description">Foreground service for monitoring Loadshare orders</string>
+    <string name="alert_channel_id">loadshare_alerts</string>
+    <string name="alert_channel_name">Order Alerts</string>
+    <string name="alert_channel_description">Alerts when preferred area orders are detected</string>
+</resources>
