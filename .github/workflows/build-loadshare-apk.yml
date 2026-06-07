@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout app branch
         uses: actions/checkout@v4
         with:
           ref: claude/loadshare-area-alert-app-NPUJn
@@ -21,24 +21,17 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
-      - name: Grant execute permission for gradlew
-        working-directory: LoadshareAreaAlert
-        run: chmod +x gradlew
-
-      - name: Download Gradle wrapper jar
-        working-directory: LoadshareAreaAlert
-        run: |
-          mkdir -p gradle/wrapper
-          curl -L "https://github.com/gradle/gradle/raw/v8.7.0/gradle/wrapper/gradle-wrapper.jar" \
-            -o gradle/wrapper/gradle-wrapper.jar
+      - name: Setup Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
 
       - name: Build Debug APK
         working-directory: LoadshareAreaAlert
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: gradle assembleDebug --no-daemon --stacktrace
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: LoadshareAreaAlert-debug
