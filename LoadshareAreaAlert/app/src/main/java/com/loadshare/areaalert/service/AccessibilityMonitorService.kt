@@ -48,6 +48,12 @@ class AccessibilityMonitorService : AccessibilityService() {
             "com.motorola.launcher3",
             "com.oneplus.launcher"
         )
+
+        // Patterns that indicate an order-selection popup (not just background screen text)
+        private val ORDER_POPUP_PATTERNS = listOf(
+            "choose order", "accept order", "new order", "order request"
+        )
+        private val AMOUNT_PATTERN = Regex("""₹\s*\d+""")
     }
 
     private var lastProcessTime = 0L
@@ -82,13 +88,38 @@ class AccessibilityMonitorService : AccessibilityService() {
         if (packageName in BLOCKED_PACKAGES) return
 
         val enabledKeywords = activeKeywords.filter { it.isEnabled }.map { it.text }
-        if (enabledKeywords.isEmpty() && !alertManager.hasEnabledZones()) return
-
-        val now = System.currentTimeMillis()
-        if (now - lastProcessTime < PROCESS_DEBOUNCE_MS) return
-        lastProcessTime = now
 
         val rootNode = rootInActiveWindow ?: return
+
+        // Auto-dismiss: fires immediately on new popup windows, no debounce needed.
+        // Only active when keywords are defined (geo-zone check requires async geocoding
+        // so we can't use it for instant dismiss decisions).
+        if (currentSettings.autoDismissNonAreaOrders &&
+            enabledKeywords.isNotEmpty() &&
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        ) {
+            val fullText = extractTextFromNode(rootNode)
+            val hasKeyword = enabledKeywords.any { kw -> fullText.contains(kw, ignoreCase = true) }
+            if (!hasKeyword && looksLikeOrderPopup(fullText)) {
+                // This is a non-area order popup — click its dismiss button
+                findAndClickDismiss(rootNode)
+                rootNode.recycle()
+                return
+            }
+        }
+
+        if (enabledKeywords.isEmpty() && !alertManager.hasEnabledZones()) {
+            rootNode.recycle()
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        if (now - lastProcessTime < PROCESS_DEBOUNCE_MS) {
+            rootNode.recycle()
+            return
+        }
+        lastProcessTime = now
+
         val extractedText = extractTextFromNode(rootNode)
         rootNode.recycle()
 
@@ -97,6 +128,39 @@ class AccessibilityMonitorService : AccessibilityService() {
         serviceScope.launch(Dispatchers.Default) {
             alertManager.processScreenText(extractedText, enabledKeywords, currentSettings, packageName)
         }
+    }
+
+    // Returns true if the visible screen looks like a delivery order selection popup
+    private fun looksLikeOrderPopup(text: String): Boolean {
+        val lower = text.lowercase()
+        val hasAmount = AMOUNT_PATTERN.containsMatchIn(text)
+        val hasOrderPrompt = ORDER_POPUP_PATTERNS.any { lower.contains(it) }
+        return hasAmount && hasOrderPrompt
+    }
+
+    // Recursively finds the first clickable close/dismiss button and clicks it.
+    // Returns true if a button was found and clicked.
+    private fun findAndClickDismiss(node: AccessibilityNodeInfo, depth: Int = 0): Boolean {
+        if (depth > 20) return false
+
+        val text = node.text?.toString()?.trim() ?: ""
+        val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
+
+        val isCloseButton = text in setOf("×", "✕", "✗", "✖", "X") ||
+                desc.contains("close") || desc.contains("dismiss") || desc.contains("cancel")
+
+        if (isCloseButton && node.isClickable) {
+            node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            return true
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findAndClickDismiss(child, depth + 1)
+            child.recycle()
+            if (found) return true
+        }
+        return false
     }
 
     private fun extractTextFromNode(node: AccessibilityNodeInfo): String {

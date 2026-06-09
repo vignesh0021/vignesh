@@ -156,6 +156,11 @@ fun HomeScreen(
                 onRepeatAlertCountChange = { viewModel.setRepeatAlertCount(it) }
             )
 
+            SmartFilterCard(
+                autoDismissEnabled = settings.autoDismissNonAreaOrders,
+                onAutoDismissToggle = { viewModel.setAutoDismiss(it) }
+            )
+
             QuickActionsCard(
                 onNavigateToKeywords = onNavigateToKeywords,
                 onNavigateToZones = onNavigateToZones,
@@ -428,6 +433,65 @@ private fun AlertSettingsCard(
                         }
                     }
                     Spacer(modifier = Modifier.height(4.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SmartFilterCard(
+    autoDismissEnabled: Boolean,
+    onAutoDismissToggle: (Boolean) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "Smart Filter",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            SettingsToggleRow(
+                icon = Icons.Default.FilterAlt,
+                title = "Auto-dismiss Other Areas",
+                subtitle = "Instantly close non-preferred area order popups so only YOUR area orders need attention",
+                checked = autoDismissEnabled,
+                onCheckedChange = onAutoDismissToggle
+            )
+
+            AnimatedVisibility(visible = autoDismissEnabled) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = PrimaryGreen.copy(alpha = 0.08f)
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = null,
+                            tint = PrimaryGreen,
+                            modifier = Modifier.size(16.dp).padding(top = 2.dp)
+                        )
+                        Text(
+                            text = "Works based on your Location Keywords. When a Loadshare/delivery app order popup appears and none of your keywords match, it will be auto-closed.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                    }
                 }
             }
         }

@@ -54,6 +54,10 @@ class HomeViewModel @Inject constructor(
         settingsRepository.setRepeatAlertCount(count)
     }
 
+    fun setAutoDismiss(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.setAutoDismiss(enabled)
+    }
+
     fun triggerTestAlert() = viewModelScope.launch {
         val settings = settingsRepository.appSettings.first()
         alertManager.triggerTestAlert(settings)

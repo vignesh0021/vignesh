@@ -35,6 +35,7 @@ class DataStoreManager @Inject constructor(
         val HISTORY_JSON = stringPreferencesKey("alert_history_json")
         val OVERLAY_DURATION = intPreferencesKey("overlay_duration_secs")
         val REPEAT_ALERT_COUNT = intPreferencesKey("repeat_alert_count")
+        val AUTO_DISMISS = booleanPreferencesKey("auto_dismiss_non_area")
     }
 
     val appSettings: Flow<AppSettings> = context.dataStore.data
@@ -47,7 +48,8 @@ class DataStoreManager @Inject constructor(
                 alertVolume = prefs[Keys.ALERT_VOLUME] ?: 1.0f,
                 isMonitoringActive = prefs[Keys.IS_MONITORING_ACTIVE] ?: false,
                 overlayDurationSeconds = prefs[Keys.OVERLAY_DURATION] ?: 15,
-                repeatAlertCount = prefs[Keys.REPEAT_ALERT_COUNT] ?: 1
+                repeatAlertCount = prefs[Keys.REPEAT_ALERT_COUNT] ?: 1,
+                autoDismissNonAreaOrders = prefs[Keys.AUTO_DISMISS] ?: false
             )
         }
 
@@ -180,6 +182,10 @@ class DataStoreManager @Inject constructor(
 
     suspend fun updateRepeatAlertCount(count: Int) {
         context.dataStore.edit { it[Keys.REPEAT_ALERT_COUNT] = count }
+    }
+
+    suspend fun updateAutoDismiss(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.AUTO_DISMISS] = enabled }
     }
 
     suspend fun clearAlertHistory() {
