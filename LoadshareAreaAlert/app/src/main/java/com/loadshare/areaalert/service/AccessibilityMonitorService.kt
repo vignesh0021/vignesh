@@ -61,7 +61,9 @@ class AccessibilityMonitorService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
         if (!currentSettings.isMonitoringActive) return
-        if (activeKeywords.none { it.isEnabled }) return
+
+        val enabledKeywords = activeKeywords.filter { it.isEnabled }.map { it.text }
+        if (enabledKeywords.isEmpty() && !alertManager.hasEnabledZones()) return
 
         val now = System.currentTimeMillis()
         if (now - lastProcessTime < PROCESS_DEBOUNCE_MS) return
@@ -73,7 +75,6 @@ class AccessibilityMonitorService : AccessibilityService() {
 
         if (extractedText.isBlank()) return
 
-        val enabledKeywords = activeKeywords.filter { it.isEnabled }.map { it.text }
         serviceScope.launch(Dispatchers.Default) {
             alertManager.processScreenText(extractedText, enabledKeywords, currentSettings)
         }

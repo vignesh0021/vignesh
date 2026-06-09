@@ -33,6 +33,7 @@ import com.loadshare.areaalert.viewmodel.HomeViewModel
 @Composable
 fun HomeScreen(
     onNavigateToKeywords: () -> Unit,
+    onNavigateToZones: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val settings by viewModel.appSettings.collectAsState()
@@ -128,7 +129,10 @@ fun HomeScreen(
                 onVolumeChange = { viewModel.setAlertVolume(it) }
             )
 
-            QuickActionsCard(onNavigateToKeywords = onNavigateToKeywords)
+            QuickActionsCard(
+                onNavigateToKeywords = onNavigateToKeywords,
+                onNavigateToZones = onNavigateToZones
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
         }
@@ -397,7 +401,10 @@ private fun SettingsToggleRow(
 }
 
 @Composable
-private fun QuickActionsCard(onNavigateToKeywords: () -> Unit) {
+private fun QuickActionsCard(
+    onNavigateToKeywords: () -> Unit,
+    onNavigateToZones: () -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -421,6 +428,15 @@ private fun QuickActionsCard(onNavigateToKeywords: () -> Unit) {
                 Icon(Icons.Default.LocationOn, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Manage Location Keywords")
+            }
+            OutlinedButton(
+                onClick = onNavigateToZones,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(Icons.Default.MyLocation, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Manage GPS Geo Zones")
             }
         }
     }

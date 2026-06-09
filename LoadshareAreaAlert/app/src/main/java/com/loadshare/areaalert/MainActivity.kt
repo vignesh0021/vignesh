@@ -19,6 +19,7 @@ import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.loadshare.areaalert.ui.screens.HomeScreen
 import com.loadshare.areaalert.ui.screens.KeywordScreen
+import com.loadshare.areaalert.ui.screens.ZoneScreen
 import com.loadshare.areaalert.ui.theme.LoadshareAreaAlertTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -54,11 +55,17 @@ class MainActivity : ComponentActivity() {
                     ) {
                         composable("home") {
                             HomeScreen(
-                                onNavigateToKeywords = { navController.navigate("keywords") }
+                                onNavigateToKeywords = { navController.navigate("keywords") },
+                                onNavigateToZones = { navController.navigate("zones") }
                             )
                         }
                         composable("keywords") {
                             KeywordScreen(
+                                onNavigateBack = { navController.popBackStack() }
+                            )
+                        }
+                        composable("zones") {
+                            ZoneScreen(
                                 onNavigateBack = { navController.popBackStack() }
                             )
                         }

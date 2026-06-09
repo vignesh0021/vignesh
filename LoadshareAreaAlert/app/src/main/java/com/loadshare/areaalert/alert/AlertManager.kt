@@ -5,25 +5,33 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.*
 import androidx.core.app.NotificationCompat
 import com.loadshare.areaalert.MainActivity
 import com.loadshare.areaalert.R
+import com.loadshare.areaalert.data.GeoZoneRepository
 import com.loadshare.areaalert.model.AppSettings
+import com.loadshare.areaalert.model.GeoZone
 import com.loadshare.areaalert.model.OrderAlert
 import com.loadshare.areaalert.service.OverlayService
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.*
 
 @Singleton
 class AlertManager @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val geocodingService: GeocodingService,
+    private val geoZoneRepository: GeoZoneRepository
 ) {
     companion object {
         private const val ALERT_CHANNEL_ID = "loadshare_alerts"
@@ -33,27 +41,77 @@ class AlertManager @Inject constructor(
 
     private val recentHashes = ConcurrentHashMap<String, Long>()
     private var notificationCounter = NOTIFICATION_ID_BASE
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var cachedZones: List<GeoZone> = emptyList()
 
     init {
         createAlertNotificationChannel()
+        scope.launch {
+            geoZoneRepository.zones.collect { zones -> cachedZones = zones }
+        }
     }
+
+    fun hasEnabledZones(): Boolean = cachedZones.any { it.isEnabled }
 
     fun processScreenText(
         fullText: String,
         enabledKeywords: List<String>,
         settings: AppSettings
     ) {
+        // Keyword match: fast, no network required
         val matchedKeyword = enabledKeywords.firstOrNull { keyword ->
             fullText.contains(keyword, ignoreCase = true)
-        } ?: return
+        }
+        if (matchedKeyword != null) {
+            val orderAlert = extractOrderInfo(fullText, matchedKeyword)
+            val hash = computeHash(orderAlert.rawText)
+            if (!isDuplicate(hash)) {
+                recordHash(hash)
+                triggerAlert(orderAlert.copy(hash = hash), settings)
+            }
+            return
+        }
 
-        val orderAlert = extractOrderInfo(fullText, matchedKeyword)
-        val hash = computeHash(orderAlert.rawText)
+        // Geo zone match: async geocoding, only fires when no keyword matched
+        val enabledZones = cachedZones.filter { it.isEnabled }
+        if (enabledZones.isNotEmpty()) {
+            scope.launch { checkGeoZones(fullText, enabledZones, settings) }
+        }
+    }
 
-        if (isDuplicate(hash)) return
+    private suspend fun checkGeoZones(
+        fullText: String,
+        zones: List<GeoZone>,
+        settings: AppSettings
+    ) {
+        val orderInfo = extractOrderInfo(fullText, "")
+        val candidates = listOf(orderInfo.pickupLocation, orderInfo.dropLocation)
+            .filter { it != "N/A" && it.length > 3 }
+        if (candidates.isEmpty()) return
 
-        recordHash(hash)
-        triggerAlert(orderAlert.copy(hash = hash), settings)
+        for (address in candidates) {
+            val latLng = geocodingService.geocode(address) ?: continue
+            val matchedZone = zones.firstOrNull { zone ->
+                haversineKm(latLng.lat, latLng.lng, zone.lat, zone.lng) <= zone.radiusKm
+            } ?: continue
+
+            val hash = computeHash(fullText.take(500) + "_zone")
+            if (isDuplicate(hash)) return
+            recordHash(hash)
+
+            val alert = extractOrderInfo(fullText, "Zone: ${matchedZone.name}")
+            triggerAlert(alert.copy(hash = hash), settings)
+            return
+        }
+    }
+
+    private fun haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val r = 6371.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = sin(dLat / 2).pow(2) +
+                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
+        return r * 2 * asin(sqrt(a))
     }
 
     private fun extractOrderInfo(text: String, keyword: String): OrderAlert {
@@ -153,9 +211,7 @@ class AlertManager @Inject constructor(
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 toneGen.release()
             }, 1000)
-        } catch (e: Exception) {
-            // Device may not support ToneGenerator
-        }
+        } catch (_: Exception) {}
     }
 
     private fun showOverlay(alert: OrderAlert) {

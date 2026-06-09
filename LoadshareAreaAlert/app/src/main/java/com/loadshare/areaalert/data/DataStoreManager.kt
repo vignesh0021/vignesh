@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.loadshare.areaalert.model.AppSettings
+import com.loadshare.areaalert.model.GeoZone
 import com.loadshare.areaalert.model.Keyword
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -28,6 +29,7 @@ class DataStoreManager @Inject constructor(
         val ALERT_VOLUME = floatPreferencesKey("alert_volume")
         val IS_MONITORING_ACTIVE = booleanPreferencesKey("is_monitoring_active")
         val KEYWORDS_JSON = stringPreferencesKey("keywords_json")
+        val ZONES_JSON = stringPreferencesKey("zones_json")
     }
 
     val appSettings: Flow<AppSettings> = context.dataStore.data
@@ -95,6 +97,48 @@ class DataStoreManager @Inject constructor(
             }
         } catch (e: Exception) {
             getDefaultKeywords()
+        }
+    }
+
+    val geoZones: Flow<List<GeoZone>> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { prefs ->
+            val json = prefs[Keys.ZONES_JSON] ?: return@map emptyList()
+            parseGeoZones(json)
+        }
+
+    suspend fun saveGeoZones(zones: List<GeoZone>) {
+        val json = JSONArray().apply {
+            zones.forEach { zone ->
+                put(JSONObject().apply {
+                    put("id", zone.id)
+                    put("name", zone.name)
+                    put("lat", zone.lat)
+                    put("lng", zone.lng)
+                    put("radiusKm", zone.radiusKm)
+                    put("isEnabled", zone.isEnabled)
+                })
+            }
+        }.toString()
+        context.dataStore.edit { it[Keys.ZONES_JSON] = json }
+    }
+
+    private fun parseGeoZones(json: String): List<GeoZone> {
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { i ->
+                val obj = arr.getJSONObject(i)
+                GeoZone(
+                    id = obj.getString("id"),
+                    name = obj.getString("name"),
+                    lat = obj.getDouble("lat"),
+                    lng = obj.getDouble("lng"),
+                    radiusKm = obj.getDouble("radiusKm"),
+                    isEnabled = obj.getBoolean("isEnabled")
+                )
+            }
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 
