@@ -33,7 +33,21 @@ class AccessibilityMonitorService : AccessibilityService() {
     companion object {
         private const val FOREGROUND_NOTIFICATION_ID = 1001
         private const val MONITORING_CHANNEL_ID = "loadshare_monitoring"
-        private const val PROCESS_DEBOUNCE_MS = 300L
+        private const val PROCESS_DEBOUNCE_MS = 1000L
+
+        // These packages must never trigger alerts — system UI and our own app
+        // cause feedback loops (notification text re-read as new order content)
+        private val BLOCKED_PACKAGES = setOf(
+            "android",
+            "com.android.systemui",
+            "com.android.launcher",
+            "com.android.launcher3",
+            "com.google.android.apps.nexuslauncher",
+            "com.samsung.android.launcher",
+            "com.miui.home",
+            "com.motorola.launcher3",
+            "com.oneplus.launcher"
+        )
     }
 
     private var lastProcessTime = 0L
@@ -62,6 +76,11 @@ class AccessibilityMonitorService : AccessibilityService() {
         event ?: return
         if (!currentSettings.isMonitoringActive) return
 
+        val packageName = event.packageName?.toString() ?: ""
+        // Block our own app and system UI — they create notification feedback loops
+        if (packageName == applicationContext.packageName) return
+        if (packageName in BLOCKED_PACKAGES) return
+
         val enabledKeywords = activeKeywords.filter { it.isEnabled }.map { it.text }
         if (enabledKeywords.isEmpty() && !alertManager.hasEnabledZones()) return
 
@@ -75,7 +94,6 @@ class AccessibilityMonitorService : AccessibilityService() {
 
         if (extractedText.isBlank()) return
 
-        val packageName = event.packageName?.toString() ?: ""
         serviceScope.launch(Dispatchers.Default) {
             alertManager.processScreenText(extractedText, enabledKeywords, currentSettings, packageName)
         }

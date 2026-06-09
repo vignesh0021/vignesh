@@ -71,7 +71,10 @@ class AlertManager @Inject constructor(
         }
         if (matchedKeyword != null) {
             val orderAlert = extractOrderInfo(fullText, matchedKeyword, platform)
-            val hash = computeHash(orderAlert.rawText)
+            // Hash on stable order fields so the same order deduplicates reliably,
+            // and a genuinely new order (different amount/location) always alerts.
+            val stableKey = "${matchedKeyword}|${orderAlert.amount}|${orderAlert.pickupLocation.take(60)}"
+            val hash = computeHash(stableKey)
             if (!isDuplicate(hash)) {
                 recordHash(hash)
                 triggerAlert(orderAlert.copy(hash = hash), settings)
@@ -103,11 +106,11 @@ class AlertManager @Inject constructor(
                 haversineKm(latLng.lat, latLng.lng, zone.lat, zone.lng) <= zone.radiusKm
             } ?: continue
 
-            val hash = computeHash(fullText.take(500) + "_zone")
+            val alert = extractOrderInfo(fullText, "Zone: ${matchedZone.name}", platform)
+            val stableKey = "zone|${matchedZone.name}|${alert.amount}|${alert.pickupLocation.take(60)}"
+            val hash = computeHash(stableKey)
             if (isDuplicate(hash)) return
             recordHash(hash)
-
-            val alert = extractOrderInfo(fullText, "Zone: ${matchedZone.name}", platform)
             triggerAlert(alert.copy(hash = hash), settings)
             return
         }
