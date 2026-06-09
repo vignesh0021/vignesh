@@ -11,6 +11,7 @@ import com.loadshare.areaalert.model.Keyword
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject

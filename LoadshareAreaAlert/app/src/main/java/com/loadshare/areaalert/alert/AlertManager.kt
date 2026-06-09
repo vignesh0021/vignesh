@@ -71,7 +71,6 @@ class AlertManager @Inject constructor(
             platform = "Test Alert"
         )
         triggerAlert(test, settings)
-        scope.launch { saveHistory(test) }
     }
 
     fun processScreenText(
