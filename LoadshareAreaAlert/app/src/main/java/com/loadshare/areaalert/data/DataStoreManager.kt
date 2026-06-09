@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import com.loadshare.areaalert.model.AlertRecord
 import com.loadshare.areaalert.model.AppSettings
 import com.loadshare.areaalert.model.GeoZone
 import com.loadshare.areaalert.model.Keyword
@@ -30,6 +31,7 @@ class DataStoreManager @Inject constructor(
         val IS_MONITORING_ACTIVE = booleanPreferencesKey("is_monitoring_active")
         val KEYWORDS_JSON = stringPreferencesKey("keywords_json")
         val ZONES_JSON = stringPreferencesKey("zones_json")
+        val HISTORY_JSON = stringPreferencesKey("alert_history_json")
     }
 
     val appSettings: Flow<AppSettings> = context.dataStore.data
@@ -140,6 +142,54 @@ class DataStoreManager @Inject constructor(
         } catch (_: Exception) {
             emptyList()
         }
+    }
+
+    val alertHistory: Flow<List<AlertRecord>> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { prefs -> parseAlertHistory(prefs[Keys.HISTORY_JSON] ?: return@map emptyList()) }
+
+    suspend fun addAlertRecord(record: AlertRecord) {
+        val current = alertHistory.first().toMutableList()
+        current.add(0, record)
+        if (current.size > 100) current.subList(100, current.size).clear()
+        val json = JSONArray().apply {
+            current.forEach { r ->
+                put(JSONObject().apply {
+                    put("id", r.id)
+                    put("platform", r.platform)
+                    put("keyword", r.keyword)
+                    put("pickup", r.pickup)
+                    put("drop", r.drop)
+                    put("amount", r.amount)
+                    put("distance", r.distance)
+                    put("timestamp", r.timestamp)
+                })
+            }
+        }.toString()
+        context.dataStore.edit { it[Keys.HISTORY_JSON] = json }
+    }
+
+    suspend fun clearAlertHistory() {
+        context.dataStore.edit { it.remove(Keys.HISTORY_JSON) }
+    }
+
+    private fun parseAlertHistory(json: String): List<AlertRecord> {
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { i ->
+                val obj = arr.getJSONObject(i)
+                AlertRecord(
+                    id = obj.getString("id"),
+                    platform = obj.optString("platform", ""),
+                    keyword = obj.getString("keyword"),
+                    pickup = obj.getString("pickup"),
+                    drop = obj.getString("drop"),
+                    amount = obj.getString("amount"),
+                    distance = obj.getString("distance"),
+                    timestamp = obj.getLong("timestamp")
+                )
+            }
+        } catch (_: Exception) { emptyList() }
     }
 
     private fun getDefaultKeywords(): List<Keyword> = listOf(

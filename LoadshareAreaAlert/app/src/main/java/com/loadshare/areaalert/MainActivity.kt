@@ -17,6 +17,7 @@ import androidx.navigation.compose.rememberNavController
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
+import com.loadshare.areaalert.ui.screens.HistoryScreen
 import com.loadshare.areaalert.ui.screens.HomeScreen
 import com.loadshare.areaalert.ui.screens.KeywordScreen
 import com.loadshare.areaalert.ui.screens.ZoneScreen
@@ -56,18 +57,18 @@ class MainActivity : ComponentActivity() {
                         composable("home") {
                             HomeScreen(
                                 onNavigateToKeywords = { navController.navigate("keywords") },
-                                onNavigateToZones = { navController.navigate("zones") }
+                                onNavigateToZones = { navController.navigate("zones") },
+                                onNavigateToHistory = { navController.navigate("history") }
                             )
                         }
                         composable("keywords") {
-                            KeywordScreen(
-                                onNavigateBack = { navController.popBackStack() }
-                            )
+                            KeywordScreen(onNavigateBack = { navController.popBackStack() })
                         }
                         composable("zones") {
-                            ZoneScreen(
-                                onNavigateBack = { navController.popBackStack() }
-                            )
+                            ZoneScreen(onNavigateBack = { navController.popBackStack() })
+                        }
+                        composable("history") {
+                            HistoryScreen(onNavigateBack = { navController.popBackStack() })
                         }
                     }
                 }

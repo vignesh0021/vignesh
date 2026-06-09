@@ -6,11 +6,7 @@ import android.content.Intent
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-            val mainIntent = Intent(context, com.loadshare.areaalert.MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            context.startActivity(mainIntent)
-        }
+        // Accessibility service restarts automatically on boot when enabled by user.
+        // No action needed — launching MainActivity on boot would be disruptive.
     }
 }

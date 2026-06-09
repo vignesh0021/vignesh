@@ -14,6 +14,9 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -34,15 +37,22 @@ import com.loadshare.areaalert.viewmodel.HomeViewModel
 fun HomeScreen(
     onNavigateToKeywords: () -> Unit,
     onNavigateToZones: () -> Unit,
+    onNavigateToHistory: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val settings by viewModel.appSettings.collectAsState()
-    var accessibilityEnabled by remember { mutableStateOf(viewModel.isAccessibilityServiceEnabled()) }
-    var overlayPermissionGranted by remember { mutableStateOf(viewModel.canDrawOverlays()) }
+    var accessibilityEnabled by remember { mutableStateOf(false) }
+    var overlayPermissionGranted by remember { mutableStateOf(false) }
+    var batteryOptEnabled by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        accessibilityEnabled = viewModel.isAccessibilityServiceEnabled()
-        overlayPermissionGranted = viewModel.canDrawOverlays()
+    // Refresh permission states every time the screen becomes visible
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner.lifecycle) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            accessibilityEnabled = viewModel.isAccessibilityServiceEnabled()
+            overlayPermissionGranted = viewModel.canDrawOverlays()
+            batteryOptEnabled = viewModel.isBatteryOptimizationEnabled()
+        }
     }
 
     Scaffold(
@@ -118,6 +128,19 @@ fun HomeScreen(
                 )
             }
 
+            AnimatedVisibility(visible = batteryOptEnabled) {
+                PermissionWarningCard(
+                    title = "Battery Optimization Active",
+                    message = "Your phone may kill the monitoring service in background. Disable battery optimization for reliable alerts.",
+                    buttonText = "Disable Now",
+                    icon = Icons.Default.BatteryAlert,
+                    onAction = {
+                        viewModel.openBatteryOptimizationSettings()
+                        batteryOptEnabled = viewModel.isBatteryOptimizationEnabled()
+                    }
+                )
+            }
+
             AlertSettingsCard(
                 soundEnabled = settings.soundEnabled,
                 vibrationEnabled = settings.vibrationEnabled,
@@ -131,7 +154,9 @@ fun HomeScreen(
 
             QuickActionsCard(
                 onNavigateToKeywords = onNavigateToKeywords,
-                onNavigateToZones = onNavigateToZones
+                onNavigateToZones = onNavigateToZones,
+                onNavigateToHistory = onNavigateToHistory,
+                onTestAlert = { viewModel.triggerTestAlert() }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -403,7 +428,9 @@ private fun SettingsToggleRow(
 @Composable
 private fun QuickActionsCard(
     onNavigateToKeywords: () -> Unit,
-    onNavigateToZones: () -> Unit
+    onNavigateToZones: () -> Unit,
+    onNavigateToHistory: () -> Unit,
+    onTestAlert: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -437,6 +464,24 @@ private fun QuickActionsCard(
                 Icon(Icons.Default.MyLocation, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Manage GPS Geo Zones")
+            }
+            OutlinedButton(
+                onClick = onNavigateToHistory,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(Icons.Default.History, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Alert History")
+            }
+            Button(
+                onClick = onTestAlert,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(Icons.Default.NotificationsActive, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Test Alert")
             }
         }
     }

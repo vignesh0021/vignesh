@@ -11,7 +11,9 @@ import android.os.*
 import androidx.core.app.NotificationCompat
 import com.loadshare.areaalert.MainActivity
 import com.loadshare.areaalert.R
+import com.loadshare.areaalert.data.AlertHistoryRepository
 import com.loadshare.areaalert.data.GeoZoneRepository
+import com.loadshare.areaalert.model.AlertRecord
 import com.loadshare.areaalert.model.AppSettings
 import com.loadshare.areaalert.model.DeliveryPlatform
 import com.loadshare.areaalert.model.GeoZone
@@ -32,7 +34,8 @@ import kotlin.math.*
 class AlertManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val geocodingService: GeocodingService,
-    private val geoZoneRepository: GeoZoneRepository
+    private val geoZoneRepository: GeoZoneRepository,
+    private val alertHistoryRepository: AlertHistoryRepository
 ) {
     companion object {
         private const val ALERT_CHANNEL_ID = "loadshare_alerts"
@@ -55,6 +58,21 @@ class AlertManager @Inject constructor(
     }
 
     fun hasEnabledZones(): Boolean = cachedZones.any { it.isEnabled }
+
+    fun triggerTestAlert(settings: AppSettings) {
+        val test = OrderAlert(
+            hash = "test_${System.currentTimeMillis()}",
+            matchedKeyword = "TEST",
+            pickupLocation = "Sholinganallur, Chennai",
+            dropLocation = "ECR, Chennai",
+            distance = "5 km",
+            amount = "₹120",
+            rawText = "test",
+            platform = "Test Alert"
+        )
+        triggerAlert(test, settings)
+        scope.launch { saveHistory(test) }
+    }
 
     fun processScreenText(
         fullText: String,
@@ -283,6 +301,20 @@ class AlertManager @Inject constructor(
         if (settings.soundEnabled) playSound(settings.alertVolume)
         if (settings.overlayEnabled) showOverlay(alert)
         sendNotification(alert)
+        scope.launch { saveHistory(alert) }
+    }
+
+    private suspend fun saveHistory(alert: OrderAlert) {
+        alertHistoryRepository.addRecord(
+            AlertRecord(
+                platform = alert.platform,
+                keyword = alert.matchedKeyword,
+                pickup = alert.pickupLocation,
+                drop = alert.dropLocation,
+                amount = alert.amount,
+                distance = alert.distance
+            )
+        )
     }
 
     private fun vibrate() {

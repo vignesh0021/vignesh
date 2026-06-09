@@ -2,9 +2,12 @@ package com.loadshare.areaalert.viewmodel
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.loadshare.areaalert.alert.AlertManager
 import com.loadshare.areaalert.data.SettingsRepository
 import com.loadshare.areaalert.model.AppSettings
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -16,6 +19,7 @@ import javax.inject.Inject
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
+    private val alertManager: AlertManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -42,6 +46,11 @@ class HomeViewModel @Inject constructor(
         settingsRepository.setMonitoringActive(active)
     }
 
+    fun triggerTestAlert() = viewModelScope.launch {
+        val settings = settingsRepository.appSettings.first()
+        alertManager.triggerTestAlert(settings)
+    }
+
     fun isAccessibilityServiceEnabled(): Boolean {
         val serviceId = "${context.packageName}/.service.AccessibilityMonitorService"
         val enabledServices = Settings.Secure.getString(
@@ -51,22 +60,33 @@ class HomeViewModel @Inject constructor(
         return enabledServices.split(":").any { it.equals(serviceId, ignoreCase = true) }
     }
 
+    fun isBatteryOptimizationEnabled(): Boolean {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        return !pm.isIgnoringBatteryOptimizations(context.packageName)
+    }
+
     fun openAccessibilitySettings() {
-        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        }
-        context.startActivity(intent)
+        context.startActivity(
+            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                .apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+        )
     }
 
     fun canDrawOverlays(): Boolean = Settings.canDrawOverlays(context)
 
     fun openOverlaySettings() {
-        val intent = Intent(
-            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-            android.net.Uri.parse("package:${context.packageName}")
-        ).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        }
-        context.startActivity(intent)
+        context.startActivity(
+            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:${context.packageName}"))
+                .apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+        )
+    }
+
+    fun openBatteryOptimizationSettings() {
+        context.startActivity(
+            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:${context.packageName}"))
+                .apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+        )
     }
 }
