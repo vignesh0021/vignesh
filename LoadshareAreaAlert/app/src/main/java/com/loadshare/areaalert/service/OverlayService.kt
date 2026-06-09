@@ -21,7 +21,8 @@ class OverlayService : Service() {
         const val EXTRA_DROP = "extra_drop"
         const val EXTRA_DISTANCE = "extra_distance"
         const val EXTRA_AMOUNT = "extra_amount"
-        private const val AUTO_DISMISS_MS = 8000L
+        const val EXTRA_PACKAGE_NAME = "extra_package_name"
+        const val EXTRA_DURATION_MS = "extra_duration_ms"
     }
 
     private var windowManager: WindowManager? = null
@@ -40,8 +41,10 @@ class OverlayService : Service() {
         val drop = intent.getStringExtra(EXTRA_DROP) ?: "N/A"
         val distance = intent.getStringExtra(EXTRA_DISTANCE) ?: "N/A"
         val amount = intent.getStringExtra(EXTRA_AMOUNT) ?: "N/A"
+        val appPackage = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
+        val durationMs = intent.getLongExtra(EXTRA_DURATION_MS, 15_000L)
 
-        showOverlay(platform, keyword, pickup, drop, distance, amount)
+        showOverlay(platform, keyword, pickup, drop, distance, amount, appPackage, durationMs)
         return START_NOT_STICKY
     }
 
@@ -51,7 +54,9 @@ class OverlayService : Service() {
         pickup: String,
         drop: String,
         distance: String,
-        amount: String
+        amount: String,
+        appPackage: String,
+        durationMs: Long
     ) {
         dismissCurrentOverlay()
 
@@ -62,18 +67,15 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = 120
+            y = 100
         }
 
-        val view = createOverlayView(platform, keyword, pickup, drop, distance, amount)
+        val view = createOverlayView(platform, keyword, pickup, drop, distance, amount, appPackage)
         overlayView = view
-
-        view.setOnClickListener { dismissCurrentOverlay() }
 
         try {
             windowManager?.addView(view, params)
@@ -82,8 +84,11 @@ class OverlayService : Service() {
             return
         }
 
-        dismissRunnable = Runnable { dismissCurrentOverlay() }
-        handler.postDelayed(dismissRunnable!!, AUTO_DISMISS_MS)
+        // 0 = manual dismiss only — never auto-close
+        if (durationMs > 0) {
+            dismissRunnable = Runnable { dismissCurrentOverlay() }
+            handler.postDelayed(dismissRunnable!!, durationMs)
+        }
     }
 
     private fun createOverlayView(
@@ -92,18 +97,41 @@ class OverlayService : Service() {
         pickup: String,
         drop: String,
         distance: String,
-        amount: String
+        amount: String,
+        appPackage: String
     ): View {
         val inflater = LayoutInflater.from(this)
         val view = inflater.inflate(R.layout.overlay_alert, null)
 
-        view.findViewById<TextView>(R.id.tv_title).text = "$platform · Order Found"
+        view.findViewById<TextView>(R.id.tv_title).text = "$platform · YOUR AREA ORDER!"
         view.findViewById<TextView>(R.id.tv_keyword).text = "Area: $keyword"
-        view.findViewById<TextView>(R.id.tv_pickup).text = "Pickup: $pickup"
-        view.findViewById<TextView>(R.id.tv_drop).text = "Drop: $drop"
-        view.findViewById<TextView>(R.id.tv_distance).text = "Distance: $distance"
-        view.findViewById<TextView>(R.id.tv_amount).text = "Amount: $amount"
+        view.findViewById<TextView>(R.id.tv_pickup).text =
+            if (pickup != "N/A") "Pickup: $pickup" else ""
+        view.findViewById<TextView>(R.id.tv_drop).text =
+            if (drop != "N/A") "Drop: $drop" else ""
+        view.findViewById<TextView>(R.id.tv_distance).text =
+            if (distance != "N/A") distance else ""
+        view.findViewById<TextView>(R.id.tv_amount).text = amount
         view.findViewById<TextView>(R.id.tv_dismiss).setOnClickListener { dismissCurrentOverlay() }
+
+        val btnOpenApp = view.findViewById<TextView>(R.id.btn_open_app)
+        if (appPackage.isNotEmpty() && appPackage != packageName) {
+            val launchIntent = packageManager.getLaunchIntentForPackage(appPackage)
+            if (launchIntent != null) {
+                btnOpenApp.text = "TAP TO OPEN $platform →"
+                btnOpenApp.setOnClickListener {
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(launchIntent)
+                    dismissCurrentOverlay()
+                }
+            } else {
+                btnOpenApp.text = "DISMISS"
+                btnOpenApp.setOnClickListener { dismissCurrentOverlay() }
+            }
+        } else {
+            btnOpenApp.text = "DISMISS"
+            btnOpenApp.setOnClickListener { dismissCurrentOverlay() }
+        }
 
         return view
     }

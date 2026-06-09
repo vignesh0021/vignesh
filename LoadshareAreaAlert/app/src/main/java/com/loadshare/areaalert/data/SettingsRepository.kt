@@ -37,4 +37,6 @@ class SettingsRepository @Inject constructor(
     }
 
     suspend fun saveAllKeywords(keywords: List<Keyword>) = dataStoreManager.saveKeywords(keywords)
+    suspend fun setOverlayDuration(seconds: Int) = dataStoreManager.updateOverlayDuration(seconds)
+    suspend fun setRepeatAlertCount(count: Int) = dataStoreManager.updateRepeatAlertCount(count)
 }

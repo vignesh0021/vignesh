@@ -146,10 +146,14 @@ fun HomeScreen(
                 vibrationEnabled = settings.vibrationEnabled,
                 overlayEnabled = settings.overlayEnabled,
                 alertVolume = settings.alertVolume,
+                overlayDurationSeconds = settings.overlayDurationSeconds,
+                repeatAlertCount = settings.repeatAlertCount,
                 onSoundToggle = { viewModel.setSoundEnabled(it) },
                 onVibrationToggle = { viewModel.setVibrationEnabled(it) },
                 onOverlayToggle = { viewModel.setOverlayEnabled(it) },
-                onVolumeChange = { viewModel.setAlertVolume(it) }
+                onVolumeChange = { viewModel.setAlertVolume(it) },
+                onOverlayDurationChange = { viewModel.setOverlayDuration(it) },
+                onRepeatAlertCountChange = { viewModel.setRepeatAlertCount(it) }
             )
 
             QuickActionsCard(
@@ -302,10 +306,14 @@ private fun AlertSettingsCard(
     vibrationEnabled: Boolean,
     overlayEnabled: Boolean,
     alertVolume: Float,
+    overlayDurationSeconds: Int,
+    repeatAlertCount: Int,
     onSoundToggle: (Boolean) -> Unit,
     onVibrationToggle: (Boolean) -> Unit,
     onOverlayToggle: (Boolean) -> Unit,
-    onVolumeChange: (Float) -> Unit
+    onVolumeChange: (Float) -> Unit,
+    onOverlayDurationChange: (Int) -> Unit,
+    onRepeatAlertCountChange: (Int) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -378,6 +386,50 @@ private fun AlertSettingsCard(
                 checked = overlayEnabled,
                 onCheckedChange = onOverlayToggle
             )
+
+            AnimatedVisibility(visible = overlayEnabled) {
+                Column(
+                    modifier = Modifier.padding(start = 36.dp, top = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Overlay duration selector
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            "Popup stays visible for",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(8 to "8s", 15 to "15s", 30 to "30s", 0 to "Manual").forEach { (secs, label) ->
+                                FilterChip(
+                                    selected = overlayDurationSeconds == secs,
+                                    onClick = { onOverlayDurationChange(secs) },
+                                    label = { Text(label, style = MaterialTheme.typography.labelSmall) }
+                                )
+                            }
+                        }
+                    }
+
+                    // Repeat alert selector
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            "Re-alert if order missed",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(0 to "Off", 1 to "1×", 2 to "2×", 3 to "3×").forEach { (count, label) ->
+                                FilterChip(
+                                    selected = repeatAlertCount == count,
+                                    onClick = { onRepeatAlertCountChange(count) },
+                                    label = { Text(label, style = MaterialTheme.typography.labelSmall) }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+            }
         }
     }
 }

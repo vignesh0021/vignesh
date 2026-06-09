@@ -33,6 +33,8 @@ class DataStoreManager @Inject constructor(
         val KEYWORDS_JSON = stringPreferencesKey("keywords_json")
         val ZONES_JSON = stringPreferencesKey("zones_json")
         val HISTORY_JSON = stringPreferencesKey("alert_history_json")
+        val OVERLAY_DURATION = intPreferencesKey("overlay_duration_secs")
+        val REPEAT_ALERT_COUNT = intPreferencesKey("repeat_alert_count")
     }
 
     val appSettings: Flow<AppSettings> = context.dataStore.data
@@ -43,7 +45,9 @@ class DataStoreManager @Inject constructor(
                 vibrationEnabled = prefs[Keys.VIBRATION_ENABLED] ?: true,
                 overlayEnabled = prefs[Keys.OVERLAY_ENABLED] ?: true,
                 alertVolume = prefs[Keys.ALERT_VOLUME] ?: 1.0f,
-                isMonitoringActive = prefs[Keys.IS_MONITORING_ACTIVE] ?: false
+                isMonitoringActive = prefs[Keys.IS_MONITORING_ACTIVE] ?: false,
+                overlayDurationSeconds = prefs[Keys.OVERLAY_DURATION] ?: 15,
+                repeatAlertCount = prefs[Keys.REPEAT_ALERT_COUNT] ?: 1
             )
         }
 
@@ -168,6 +172,14 @@ class DataStoreManager @Inject constructor(
             }
         }.toString()
         context.dataStore.edit { it[Keys.HISTORY_JSON] = json }
+    }
+
+    suspend fun updateOverlayDuration(seconds: Int) {
+        context.dataStore.edit { it[Keys.OVERLAY_DURATION] = seconds }
+    }
+
+    suspend fun updateRepeatAlertCount(count: Int) {
+        context.dataStore.edit { it[Keys.REPEAT_ALERT_COUNT] = count }
     }
 
     suspend fun clearAlertHistory() {

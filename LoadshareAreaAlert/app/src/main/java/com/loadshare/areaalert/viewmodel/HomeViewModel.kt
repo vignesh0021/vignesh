@@ -46,6 +46,14 @@ class HomeViewModel @Inject constructor(
         settingsRepository.setMonitoringActive(active)
     }
 
+    fun setOverlayDuration(seconds: Int) = viewModelScope.launch {
+        settingsRepository.setOverlayDuration(seconds)
+    }
+
+    fun setRepeatAlertCount(count: Int) = viewModelScope.launch {
+        settingsRepository.setRepeatAlertCount(count)
+    }
+
     fun triggerTestAlert() = viewModelScope.launch {
         val settings = settingsRepository.appSettings.first()
         alertManager.triggerTestAlert(settings)

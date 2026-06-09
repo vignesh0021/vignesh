@@ -23,6 +23,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -298,9 +299,19 @@ class AlertManager @Inject constructor(
     private fun triggerAlert(alert: OrderAlert, settings: AppSettings) {
         if (settings.vibrationEnabled) vibrate()
         if (settings.soundEnabled) playSound(settings.alertVolume)
-        if (settings.overlayEnabled) showOverlay(alert)
+        if (settings.overlayEnabled) showOverlay(alert, settings)
         sendNotification(alert)
         scope.launch { saveHistory(alert) }
+        // Re-alert at 15s intervals so missed orders still get attention
+        if (settings.repeatAlertCount > 0) {
+            scope.launch {
+                repeat(settings.repeatAlertCount) {
+                    delay(15_000L)
+                    if (settings.vibrationEnabled) vibrate()
+                    if (settings.soundEnabled) playSound(settings.alertVolume)
+                }
+            }
+        }
     }
 
     private suspend fun saveHistory(alert: OrderAlert) {
@@ -336,7 +347,9 @@ class AlertManager @Inject constructor(
         } catch (_: Exception) {}
     }
 
-    private fun showOverlay(alert: OrderAlert) {
+    private fun showOverlay(alert: OrderAlert, settings: AppSettings) {
+        val durationMs = if (settings.overlayDurationSeconds == 0) 0L
+                         else settings.overlayDurationSeconds * 1000L
         val intent = Intent(context, OverlayService::class.java).apply {
             putExtra(OverlayService.EXTRA_PLATFORM, alert.platform)
             putExtra(OverlayService.EXTRA_MATCHED_KEYWORD, alert.matchedKeyword)
@@ -344,6 +357,8 @@ class AlertManager @Inject constructor(
             putExtra(OverlayService.EXTRA_DROP, alert.dropLocation)
             putExtra(OverlayService.EXTRA_DISTANCE, alert.distance)
             putExtra(OverlayService.EXTRA_AMOUNT, alert.amount)
+            putExtra(OverlayService.EXTRA_PACKAGE_NAME, currentPackageName)
+            putExtra(OverlayService.EXTRA_DURATION_MS, durationMs)
         }
         context.startService(intent)
     }
