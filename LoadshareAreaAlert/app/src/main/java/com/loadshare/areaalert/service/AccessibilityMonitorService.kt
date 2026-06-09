@@ -75,8 +75,9 @@ class AccessibilityMonitorService : AccessibilityService() {
 
         if (extractedText.isBlank()) return
 
+        val packageName = event.packageName?.toString() ?: ""
         serviceScope.launch(Dispatchers.Default) {
-            alertManager.processScreenText(extractedText, enabledKeywords, currentSettings)
+            alertManager.processScreenText(extractedText, enabledKeywords, currentSettings, packageName)
         }
     }
 

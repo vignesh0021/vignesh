@@ -8,5 +8,6 @@ data class OrderAlert(
     val distance: String,
     val amount: String,
     val rawText: String,
+    val platform: String = "",
     val timestamp: Long = System.currentTimeMillis()
 )

@@ -15,6 +15,7 @@ import dagger.hilt.android.AndroidEntryPoint
 class OverlayService : Service() {
 
     companion object {
+        const val EXTRA_PLATFORM = "extra_platform"
         const val EXTRA_MATCHED_KEYWORD = "extra_matched_keyword"
         const val EXTRA_PICKUP = "extra_pickup"
         const val EXTRA_DROP = "extra_drop"
@@ -33,17 +34,19 @@ class OverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         intent ?: return START_NOT_STICKY
 
+        val platform = intent.getStringExtra(EXTRA_PLATFORM) ?: "Delivery App"
         val keyword = intent.getStringExtra(EXTRA_MATCHED_KEYWORD) ?: return START_NOT_STICKY
         val pickup = intent.getStringExtra(EXTRA_PICKUP) ?: "N/A"
         val drop = intent.getStringExtra(EXTRA_DROP) ?: "N/A"
         val distance = intent.getStringExtra(EXTRA_DISTANCE) ?: "N/A"
         val amount = intent.getStringExtra(EXTRA_AMOUNT) ?: "N/A"
 
-        showOverlay(keyword, pickup, drop, distance, amount)
+        showOverlay(platform, keyword, pickup, drop, distance, amount)
         return START_NOT_STICKY
     }
 
     private fun showOverlay(
+        platform: String,
         keyword: String,
         pickup: String,
         drop: String,
@@ -67,7 +70,7 @@ class OverlayService : Service() {
             y = 120
         }
 
-        val view = createOverlayView(keyword, pickup, drop, distance, amount)
+        val view = createOverlayView(platform, keyword, pickup, drop, distance, amount)
         overlayView = view
 
         view.setOnClickListener { dismissCurrentOverlay() }
@@ -84,6 +87,7 @@ class OverlayService : Service() {
     }
 
     private fun createOverlayView(
+        platform: String,
         keyword: String,
         pickup: String,
         drop: String,
@@ -93,7 +97,7 @@ class OverlayService : Service() {
         val inflater = LayoutInflater.from(this)
         val view = inflater.inflate(R.layout.overlay_alert, null)
 
-        view.findViewById<TextView>(R.id.tv_title).text = "Preferred Area Order Found"
+        view.findViewById<TextView>(R.id.tv_title).text = "$platform · Order Found"
         view.findViewById<TextView>(R.id.tv_keyword).text = "Area: $keyword"
         view.findViewById<TextView>(R.id.tv_pickup).text = "Pickup: $pickup"
         view.findViewById<TextView>(R.id.tv_drop).text = "Drop: $drop"

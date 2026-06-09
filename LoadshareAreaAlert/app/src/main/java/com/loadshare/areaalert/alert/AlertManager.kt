@@ -13,6 +13,7 @@ import com.loadshare.areaalert.MainActivity
 import com.loadshare.areaalert.R
 import com.loadshare.areaalert.data.GeoZoneRepository
 import com.loadshare.areaalert.model.AppSettings
+import com.loadshare.areaalert.model.DeliveryPlatform
 import com.loadshare.areaalert.model.GeoZone
 import com.loadshare.areaalert.model.OrderAlert
 import com.loadshare.areaalert.service.OverlayService
@@ -44,6 +45,8 @@ class AlertManager @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var cachedZones: List<GeoZone> = emptyList()
 
+    @Volatile private var currentPackageName = ""
+
     init {
         createAlertNotificationChannel()
         scope.launch {
@@ -56,14 +59,18 @@ class AlertManager @Inject constructor(
     fun processScreenText(
         fullText: String,
         enabledKeywords: List<String>,
-        settings: AppSettings
+        settings: AppSettings,
+        packageName: String = ""
     ) {
+        currentPackageName = packageName
+        val platform = DeliveryPlatform.fromPackageName(packageName)
+
         // Keyword match: fast, no network required
         val matchedKeyword = enabledKeywords.firstOrNull { keyword ->
             fullText.contains(keyword, ignoreCase = true)
         }
         if (matchedKeyword != null) {
-            val orderAlert = extractOrderInfo(fullText, matchedKeyword)
+            val orderAlert = extractOrderInfo(fullText, matchedKeyword, platform)
             val hash = computeHash(orderAlert.rawText)
             if (!isDuplicate(hash)) {
                 recordHash(hash)
@@ -72,19 +79,20 @@ class AlertManager @Inject constructor(
             return
         }
 
-        // Geo zone match: async geocoding, only fires when no keyword matched
+        // Geo zone match: async geocoding, only when no keyword fired
         val enabledZones = cachedZones.filter { it.isEnabled }
         if (enabledZones.isNotEmpty()) {
-            scope.launch { checkGeoZones(fullText, enabledZones, settings) }
+            scope.launch { checkGeoZones(fullText, enabledZones, settings, platform) }
         }
     }
 
     private suspend fun checkGeoZones(
         fullText: String,
         zones: List<GeoZone>,
-        settings: AppSettings
+        settings: AppSettings,
+        platform: DeliveryPlatform
     ) {
-        val orderInfo = extractOrderInfo(fullText, "")
+        val orderInfo = extractOrderInfo(fullText, "", platform)
         val candidates = listOf(orderInfo.pickupLocation, orderInfo.dropLocation)
             .filter { it != "N/A" && it.length > 3 }
         if (candidates.isEmpty()) return
@@ -99,7 +107,7 @@ class AlertManager @Inject constructor(
             if (isDuplicate(hash)) return
             recordHash(hash)
 
-            val alert = extractOrderInfo(fullText, "Zone: ${matchedZone.name}")
+            val alert = extractOrderInfo(fullText, "Zone: ${matchedZone.name}", platform)
             triggerAlert(alert.copy(hash = hash), settings)
             return
         }
@@ -114,40 +122,117 @@ class AlertManager @Inject constructor(
         return r * 2 * asin(sqrt(a))
     }
 
-    private fun extractOrderInfo(text: String, keyword: String): OrderAlert {
+    // ── Platform-aware order info extraction ─────────────────────────────────
+
+    private fun extractOrderInfo(
+        text: String,
+        keyword: String,
+        platform: DeliveryPlatform
+    ): OrderAlert {
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
 
-        val pickup = extractField(lines, listOf("pickup", "pick up", "from", "collect")) ?: "N/A"
-        val drop = extractField(lines, listOf("drop", "deliver", "delivery", "to")) ?: "N/A"
-        val distance = extractDistance(text) ?: "N/A"
-        val amount = extractAmount(text) ?: "N/A"
+        val (pickup, drop) = when (platform) {
+            DeliveryPlatform.ZOMATO   -> extractZomatoLocations(lines, text)
+            DeliveryPlatform.SWIGGY   -> extractSwiggyLocations(lines, text)
+            DeliveryPlatform.RAPIDO   -> extractRapidoLocations(lines, text)
+            DeliveryPlatform.PORTER   -> extractPorterLocations(lines, text)
+            DeliveryPlatform.DUNZO    -> extractDunzoLocations(lines, text)
+            DeliveryPlatform.BLINKIT,
+            DeliveryPlatform.ZEPTO,
+            DeliveryPlatform.BIGBASKET -> extractQuickCommerceLocations(lines, text)
+            else                       -> extractGenericLocations(lines)
+        }
 
         return OrderAlert(
             hash = "",
             matchedKeyword = keyword,
             pickupLocation = pickup,
             dropLocation = drop,
-            distance = distance,
-            amount = amount,
-            rawText = text.take(500)
+            distance = extractDistance(text) ?: "N/A",
+            amount = extractAmount(text) ?: "N/A",
+            rawText = text.take(500),
+            platform = platform.displayName
         )
     }
 
-    private fun extractField(lines: List<String>, labels: List<String>): String? {
+    // Zomato: Restaurant → pickup, Customer area → drop
+    private fun extractZomatoLocations(lines: List<String>, text: String): Pair<String, String> {
+        val pickup = extractAfterLabel(lines, listOf("pick up from", "pick up at", "restaurant", "outlet"))
+            ?: extractGenericLocations(lines).first
+        val drop = extractAfterLabel(lines, listOf("deliver to", "delivery at", "drop at", "customer"))
+            ?: extractGenericLocations(lines).second
+        return pickup to drop
+    }
+
+    // Swiggy: similar to Zomato but different label wording
+    private fun extractSwiggyLocations(lines: List<String>, text: String): Pair<String, String> {
+        val pickup = extractAfterLabel(lines, listOf("pick up", "pickup from", "store", "restaurant"))
+            ?: extractGenericLocations(lines).first
+        val drop = extractAfterLabel(lines, listOf("deliver to", "drop", "delivery location", "customer address"))
+            ?: extractGenericLocations(lines).second
+        return pickup to drop
+    }
+
+    // Rapido: ride pickup → drop
+    private fun extractRapidoLocations(lines: List<String>, text: String): Pair<String, String> {
+        val pickup = extractAfterLabel(lines, listOf("pickup", "pick up", "from", "start"))
+            ?: extractGenericLocations(lines).first
+        val drop = extractAfterLabel(lines, listOf("drop", "destination", "to", "end"))
+            ?: extractGenericLocations(lines).second
+        return pickup to drop
+    }
+
+    // Porter: goods transport pickup → drop
+    private fun extractPorterLocations(lines: List<String>, text: String): Pair<String, String> {
+        val pickup = extractAfterLabel(lines, listOf("pickup", "from", "collect from", "loading"))
+            ?: extractGenericLocations(lines).first
+        val drop = extractAfterLabel(lines, listOf("drop", "to", "deliver at", "unloading"))
+            ?: extractGenericLocations(lines).second
+        return pickup to drop
+    }
+
+    // Dunzo: store → customer
+    private fun extractDunzoLocations(lines: List<String>, text: String): Pair<String, String> {
+        val pickup = extractAfterLabel(lines, listOf("store", "pick up", "from", "merchant"))
+            ?: extractGenericLocations(lines).first
+        val drop = extractAfterLabel(lines, listOf("deliver at", "drop at", "customer", "to"))
+            ?: extractGenericLocations(lines).second
+        return pickup to drop
+    }
+
+    // Quick commerce (Blinkit/Zepto/BigBasket): dark store → customer
+    private fun extractQuickCommerceLocations(lines: List<String>, text: String): Pair<String, String> {
+        val pickup = extractAfterLabel(lines, listOf("store", "dark store", "warehouse", "pick up from"))
+            ?: extractGenericLocations(lines).first
+        val drop = extractAfterLabel(lines, listOf("deliver to", "drop at", "customer", "address"))
+            ?: extractGenericLocations(lines).second
+        return pickup to drop
+    }
+
+    // Generic fallback: works for Loadshare, Shadowfax, Delhivery and unknown apps
+    private fun extractGenericLocations(lines: List<String>): Pair<String, String> {
+        val pickup = extractAfterLabel(lines, listOf("pickup", "pick up", "from", "collect", "origin"))
+            ?: "N/A"
+        val drop = extractAfterLabel(lines, listOf("drop", "deliver", "delivery", "to", "destination"))
+            ?: "N/A"
+        return pickup to drop
+    }
+
+    private fun extractAfterLabel(lines: List<String>, labels: List<String>): String? {
         for (i in lines.indices) {
             val line = lines[i].lowercase()
             if (labels.any { line.contains(it) }) {
-                val value = lines.getOrNull(i + 1)?.takeIf { it.isNotEmpty() }
-                if (value != null) return value
+                val nextLine = lines.getOrNull(i + 1)?.takeIf { it.isNotEmpty() && it.length > 2 }
+                if (nextLine != null) return nextLine
                 val inline = lines[i].substringAfter(":").trim()
-                if (inline.isNotEmpty()) return inline
+                if (inline.length > 2) return inline
             }
         }
         return null
     }
 
     private fun extractDistance(text: String): String? {
-        val pattern = Regex("""(\d+\.?\d*)\s*(km|kilometer|kilometers|kms)""", RegexOption.IGNORE_CASE)
+        val pattern = Regex("""(\d+\.?\d*)\s*(km|kilometer|kilometers|kms|mi|miles)""", RegexOption.IGNORE_CASE)
         return pattern.find(text)?.value
     }
 
@@ -155,7 +240,10 @@ class AlertManager @Inject constructor(
         val patterns = listOf(
             Regex("""₹\s*(\d+\.?\d*)"""),
             Regex("""Rs\.?\s*(\d+\.?\d*)""", RegexOption.IGNORE_CASE),
-            Regex("""(\d+\.?\d*)\s*₹""")
+            Regex("""(\d+\.?\d*)\s*₹"""),
+            Regex("""earnings[:\s]+₹?\s*(\d+\.?\d*)""", RegexOption.IGNORE_CASE),
+            Regex("""payout[:\s]+₹?\s*(\d+\.?\d*)""", RegexOption.IGNORE_CASE),
+            Regex("""fare[:\s]+₹?\s*(\d+\.?\d*)""", RegexOption.IGNORE_CASE)
         )
         for (pattern in patterns) {
             val match = pattern.find(text)
@@ -163,6 +251,8 @@ class AlertManager @Inject constructor(
         }
         return null
     }
+
+    // ── Hash & deduplication ──────────────────────────────────────────────────
 
     private fun computeHash(text: String): String {
         val normalized = text.trim().lowercase().replace(Regex("\\s+"), " ")
@@ -180,9 +270,10 @@ class AlertManager @Inject constructor(
     private fun recordHash(hash: String) {
         val now = System.currentTimeMillis()
         recentHashes[hash] = now
-        val expired = recentHashes.entries.filter { (now - it.value) > DUPLICATE_WINDOW_MS * 2 }
-        expired.forEach { recentHashes.remove(it.key) }
+        recentHashes.entries.removeIf { (now - it.value) > DUPLICATE_WINDOW_MS * 2 }
     }
+
+    // ── Alert triggering ──────────────────────────────────────────────────────
 
     private fun triggerAlert(alert: OrderAlert, settings: AppSettings) {
         if (settings.vibrationEnabled) vibrate()
@@ -199,8 +290,7 @@ class AlertManager @Inject constructor(
             @Suppress("DEPRECATION")
             context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
-        val pattern = longArrayOf(0, 300, 150, 300, 150, 600)
-        vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
+        vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 300, 150, 300, 150, 600), -1))
     }
 
     private fun playSound(volume: Float) {
@@ -208,14 +298,13 @@ class AlertManager @Inject constructor(
             val maxVolume = (volume * ToneGenerator.MAX_VOLUME).toInt().coerceIn(1, ToneGenerator.MAX_VOLUME)
             val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, maxVolume)
             toneGen.startTone(ToneGenerator.TONE_PROP_BEEP2, 800)
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                toneGen.release()
-            }, 1000)
+            Handler(Looper.getMainLooper()).postDelayed({ toneGen.release() }, 1000)
         } catch (_: Exception) {}
     }
 
     private fun showOverlay(alert: OrderAlert) {
         val intent = Intent(context, OverlayService::class.java).apply {
+            putExtra(OverlayService.EXTRA_PLATFORM, alert.platform)
             putExtra(OverlayService.EXTRA_MATCHED_KEYWORD, alert.matchedKeyword)
             putExtra(OverlayService.EXTRA_PICKUP, alert.pickupLocation)
             putExtra(OverlayService.EXTRA_DROP, alert.dropLocation)
@@ -235,13 +324,16 @@ class AlertManager @Inject constructor(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val platformLabel = if (alert.platform.isNotEmpty()) "[${alert.platform}] " else ""
+
         val notification = NotificationCompat.Builder(context, ALERT_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Preferred Area Order Found!")
-            .setContentText("${alert.matchedKeyword} - ${alert.amount}")
+            .setContentTitle("${platformLabel}Preferred Area Order Found!")
+            .setContentText("${alert.matchedKeyword} · ${alert.amount}")
             .setStyle(
                 NotificationCompat.BigTextStyle()
                     .bigText(
+                        "App: ${alert.platform}\n" +
                         "Keyword: ${alert.matchedKeyword}\n" +
                         "Pickup: ${alert.pickupLocation}\n" +
                         "Drop: ${alert.dropLocation}\n" +
