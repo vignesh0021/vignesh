@@ -291,6 +291,43 @@ mitigations) instantly without staring at the volume pane.
 
 ---
 
+## Price Action Pro
+
+A separate layer of pure price-action tools — Indian intraday classics
++ ICT high-edge signals — all toggleable independently under
+**═══ Price Action Pro ═══**.
+
+### Levels
+
+| Toggle | Drawing |
+|---|---|
+| **Classical Pivot Points** | Daily floor pivots — Pivot, R1, R2, S1, S2 (computed from prev-day H/L/C, non-repainting) |
+| **Central Pivot Range (CPR)** | TC + Pivot + BC. Narrow CPR (TC-BC < 0.5% of price) signals a trending day; wide CPR = range day |
+| **VWAP ±1σ / ±2σ Bands** | Own running-stddev calc (Pine's built-in VWAP doesn't expose variance), reset daily. 1σ holds ~68% of price, 2σ marks mean-reversion extremes |
+| **Initial Balance** | First 60 minutes (09:15-10:15 IST) high/low. Market-profile classical reference for the day's range |
+| **Today / Previous Day Opens** | Two horizontal lines. Today's open is a magnetic intraday reference; prev open marks gap context |
+| **Round Number Levels** | Auto step: NIFTY=100, BANKNIFTY/SENSEX/BANKEX=500, stocks scaled by price tier. Shows nearest level above + below close |
+
+All levels feed the adaptive-target collector when **Use Pivots/CPR
+as TP destinations** is on — so TP1/TP2/TP3 can now project to a
+Pivot, R1, R2, CPR top, or a VWAP standard-deviation band, in addition
+to the existing OB / FVG / HTF / liquidity destinations.
+
+### High-edge signals (visual + alerts + dashboard)
+
+| Signal | Detection | Marker |
+|---|---|---|
+| **Displacement candle** | Body > 1.5× ATR AND body fills > 70% of range | Tiny diamond above/below the bar (green / red) |
+| **RSI Divergence at swings** | Price higher-high + RSI lower-high (bearish) or price lower-low + RSI higher-low (bullish) | `div⤓` / `div⤒` label at the confirming pivot |
+| **Liquidity Trap** | SSL sweep + bullish reversal within 3 bars = BEAR TRAP (sellers caught, bullish setup). BSL sweep + bearish reversal = BULL TRAP (buyers caught, bearish setup). The single highest-hit-rate ICT setup. | Flag with `BEAR TRAP` / `BULL TRAP` text |
+
+A new **PA Pro** dashboard row aggregates whatever PA signals are
+currently fresh — e.g. `Bull Div  ·  Bear Trap` — coloured by net
+direction. Each signal also has its own alert (`Bear Trap`, `Bullish
+RSI Divergence`, `Bull Displacement`, etc.).
+
+---
+
 ## Fyers Auto-Trading (TradingView → Webhook → Fyers)
 
 Turn on **Fyers JSON Webhook** (under ═══ Fyers Auto-Trading ═══) and

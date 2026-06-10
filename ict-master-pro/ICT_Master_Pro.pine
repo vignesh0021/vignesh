@@ -144,6 +144,21 @@ i_showVWAP      = input.bool(true,  "Show VWAP (session-anchored)", group = grpK
 i_useVWAPAsTP   = input.bool(true,  "Use VWAP as TP destination",   group = grpKey)
 i_showORB       = input.bool(false, "Show Opening Range (first 15m)", group = grpKey, tooltip = "Plots the high and low of the first 15 minutes of the session as horizontal lines. Classical Opening Range Breakout / Reversal levels.")
 
+// ── Price Action Pro — Pivots, CPR, VWAP bands, IB, divergence, traps, displacement ─
+grpPAPro          = "═══ Price Action Pro ═══"
+i_showPivots      = input.bool(false, "Show Classical Pivot Points (R1/R2/S1/S2)", group = grpPAPro, tooltip = "Daily floor pivots (Pivot, R1/R2/S1/S2). Computed from previous day's H/L/C. Major reaction levels for intraday trading.")
+i_showCPR         = input.bool(false, "Show Central Pivot Range (CPR)", group = grpPAPro, tooltip = "Pivot + TC + BC. Narrow CPR (TC-BC < 0.5% of price) = trending day; Wide CPR = range day. Classical Indian intraday tool.")
+i_usePivotsAsTP   = input.bool(true,  "Use Pivots/CPR as TP destinations", group = grpPAPro)
+i_showVWAPBands   = input.bool(true,  "Show VWAP ±1σ / ±2σ Bands", group = grpPAPro, tooltip = "Standard-deviation bands around VWAP. 1σ bands hold ~68% of price action — bounces back to VWAP. 2σ bands are mean-reversion extremes.")
+i_showIB          = input.bool(false, "Show Initial Balance (first hour H/L)", group = grpPAPro, tooltip = "High and low of the first 60 minutes (09:15-10:15 IST). Market-profile classical reference for the day's range.")
+i_showDayOpens    = input.bool(false, "Show Today / Previous Day Opens", group = grpPAPro)
+i_showRoundLvls   = input.bool(false, "Show Round Number Levels", group = grpPAPro, tooltip = "Auto step: NIFTY/FINNIFTY=100, BANKNIFTY/SENSEX/BANKEX=500, stocks=round to 10/50/100 based on price. Shows nearest level above and below close.")
+i_showSMDiv       = input.bool(true,  "Show RSI Divergence at Swings", group = grpPAPro, tooltip = "Bearish: price higher high + RSI lower high — distribution. Bullish: price lower low + RSI higher low — accumulation. Marks at the confirming pivot.")
+i_smDivRSILen     = input.int(14,     "RSI Length for Divergence", minval = 2, maxval = 50, group = grpPAPro)
+i_showDispl       = input.bool(true,  "Show Displacement Candles (institutional intent)", group = grpPAPro, tooltip = "Strong-bodied bars (body > N x ATR, body/range > 70%). Signal institutional orderflow — the start of a major leg.")
+i_displACR        = input.float(1.5,  "Displacement Min Body (x ATR)", minval = 0.5, maxval = 5.0, step = 0.1, group = grpPAPro)
+i_showLiqTrap     = input.bool(true,  "Show Liquidity Traps", group = grpPAPro, tooltip = "Marks bars where price sweeps liquidity then reverses within 3 bars. SSL sweep + bullish reversal = BEAR TRAP (sellers trapped, bullish setup). BSL sweep + bearish reversal = BULL TRAP (buyers trapped, bearish setup). Highest-edge ICT pattern.")
+
 // ── Performance Tracker ─────────────────────────────────────────────────────────────
 grpPerf         = "═══ Performance ═══"
 i_trackPerf     = input.bool(true, "Track Signal Performance", group = grpPerf, tooltip = "Tracks each fired signal until SL/TP3 hits, then computes win rate, average R, max drawdown over the rolling window.")
@@ -420,6 +435,103 @@ if inOpenRange
 i_showORBEff = i_cleanMode ? false : i_showORB
 plot(i_showORBEff and not inOpenRange ? orbHigh : na, "ORB High", color = color.new(#1de9b6, 0), linewidth = 2, style = plot.style_linebr)
 plot(i_showORBEff and not inOpenRange ? orbLow  : na, "ORB Low",  color = color.new(#ff5252, 0), linewidth = 2, style = plot.style_linebr)
+
+// ── Daily Pivots + CPR (Indian intraday classical) ──────────────────────────────────
+// Uses previous day's H/L/C (lookahead_off, non-repainting).
+[pdH_pv, pdL_pv, pdC_pv, pdO_pv] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1], open[1]], lookahead = barmerge.lookahead_off)
+todayOpenVal = request.security(syminfo.tickerid, "D", open, lookahead = barmerge.lookahead_off)
+
+pivP  = (pdH_pv + pdL_pv + pdC_pv) / 3.0
+pivR1 = 2 * pivP - pdL_pv
+pivS1 = 2 * pivP - pdH_pv
+pivR2 = pivP + (pdH_pv - pdL_pv)
+pivS2 = pivP - (pdH_pv - pdL_pv)
+// Central Pivot Range
+cpr_bc_raw = (pdH_pv + pdL_pv) / 2.0
+cpr_tc_raw = 2 * pivP - cpr_bc_raw
+cprUpper   = math.max(cpr_bc_raw, cpr_tc_raw)
+cprLower   = math.min(cpr_bc_raw, cpr_tc_raw)
+
+i_showPivotsEff = i_cleanMode ? false : i_showPivots
+i_showCPREff    = i_cleanMode ? false : i_showCPR
+plot(i_showPivotsEff ? pivP  : na, "Pivot", color = color.new(#9e9e9e, 0), linewidth = 2, style = plot.style_line)
+plot(i_showPivotsEff ? pivR1 : na, "R1",    color = color.new(#ef5350, 30), linewidth = 1, style = plot.style_line)
+plot(i_showPivotsEff ? pivS1 : na, "S1",    color = color.new(#26a69a, 30), linewidth = 1, style = plot.style_line)
+plot(i_showPivotsEff ? pivR2 : na, "R2",    color = color.new(#ef5350, 60), linewidth = 1, style = plot.style_line)
+plot(i_showPivotsEff ? pivS2 : na, "S2",    color = color.new(#26a69a, 60), linewidth = 1, style = plot.style_line)
+plot(i_showCPREff    ? cprUpper : na, "CPR Top",    color = color.new(#1565c0, 20), linewidth = 1, style = plot.style_line)
+plot(i_showCPREff    ? pivP     : na, "CPR Pivot",  color = color.new(#1565c0, 0),  linewidth = 2, style = plot.style_line)
+plot(i_showCPREff    ? cprLower : na, "CPR Bot",    color = color.new(#1565c0, 20), linewidth = 1, style = plot.style_line)
+
+// ── VWAP standard-deviation bands (own running calc — resets each NSE day) ──────────
+var float vwSumV   = 0.0
+var float vwSumPV  = 0.0
+var float vwSumP2V = 0.0
+if isNewDay
+    vwSumV   := 0.0
+    vwSumPV  := 0.0
+    vwSumP2V := 0.0
+vwSumV   := vwSumV   + volume
+vwSumPV  := vwSumPV  + hlc3 * volume
+vwSumP2V := vwSumP2V + hlc3 * hlc3 * volume
+myVwap = vwSumV > 0 ? vwSumPV / vwSumV : na
+myVar  = vwSumV > 0 ? math.max(0.0, vwSumP2V / vwSumV - myVwap * myVwap) : 0.0
+mySD   = math.sqrt(myVar)
+vwapUp1 = myVwap + mySD
+vwapDn1 = myVwap - mySD
+vwapUp2 = myVwap + 2 * mySD
+vwapDn2 = myVwap - 2 * mySD
+i_showVWAPBandsEff = i_cleanMode ? false : i_showVWAPBands
+plot(i_showVWAPBandsEff ? vwapUp1 : na, "VWAP +1σ", color = color.new(#ffa726, 30), linewidth = 1)
+plot(i_showVWAPBandsEff ? vwapDn1 : na, "VWAP -1σ", color = color.new(#ffa726, 30), linewidth = 1)
+plot(i_showVWAPBandsEff ? vwapUp2 : na, "VWAP +2σ", color = color.new(#ffa726, 60), linewidth = 1)
+plot(i_showVWAPBandsEff ? vwapDn2 : na, "VWAP -2σ", color = color.new(#ffa726, 60), linewidth = 1)
+
+// ── Initial Balance (first 60m of session — 09:15-10:15 IST) ────────────────────────
+var float ibHigh = na
+var float ibLow  = na
+inIBWin = (hour == 9 and minute >= 15) or (hour == 10 and minute < 15)
+if isNewDay
+    ibHigh := na
+    ibLow  := na
+if inIBWin
+    ibHigh := na(ibHigh) ? high : math.max(ibHigh, high)
+    ibLow  := na(ibLow)  ? low  : math.min(ibLow,  low)
+i_showIBEff = i_cleanMode ? false : i_showIB
+plot(i_showIBEff and not inIBWin ? ibHigh : na, "IB High", color = color.new(#7e57c2, 0), linewidth = 2, style = plot.style_linebr)
+plot(i_showIBEff and not inIBWin ? ibLow  : na, "IB Low",  color = color.new(#7e57c2, 0), linewidth = 2, style = plot.style_linebr)
+
+// ── Today / Previous Day Open ───────────────────────────────────────────────────────
+i_showDayOpensEff = i_cleanMode ? false : i_showDayOpens
+plot(i_showDayOpensEff ? todayOpenVal : na, "Today Open", color = color.new(#26c6da, 0), linewidth = 1, style = plot.style_line)
+plot(i_showDayOpensEff ? pdO_pv       : na, "Prev Open",  color = color.new(#26c6da, 50), linewidth = 1, style = plot.style_line)
+
+// ── Round Number Levels (auto step by instrument) ───────────────────────────────────
+f_roundStep() =>
+    float step = 100.0
+    tk = syminfo.ticker
+    if str.contains(tk, "BANKNIFTY") or str.contains(tk, "SENSEX") or str.contains(tk, "BANKEX")
+        step := 500.0
+    else if str.contains(tk, "NIFTY")
+        step := 100.0
+    else
+        // Stocks: scale step by price
+        if close >= 5000
+            step := 100.0
+        else if close >= 1000
+            step := 50.0
+        else if close >= 200
+            step := 10.0
+        else
+            step := 5.0
+    step
+
+roundStep_v = f_roundStep()
+roundUp = math.ceil(close / roundStep_v)  * roundStep_v
+roundDn = math.floor(close / roundStep_v) * roundStep_v
+i_showRoundLvlsEff = i_cleanMode ? false : i_showRoundLvls
+plot(i_showRoundLvlsEff ? roundUp : na, "Round Up", color = color.new(#9c27b0, 50), linewidth = 1, style = plot.style_linebr)
+plot(i_showRoundLvlsEff ? roundDn : na, "Round Dn", color = color.new(#9c27b0, 50), linewidth = 1, style = plot.style_linebr)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   4. MARKET STRUCTURE — Swings, BOS, CHoCH
@@ -1184,6 +1296,19 @@ f_collectBuyTargets(_entry) =>
             array.push(arr, htf240H_last)
     if i_useVWAPAsTP and not na(vwapVal) and vwapVal > _entry
         array.push(arr, vwapVal)
+    if i_usePivotsAsTP
+        if not na(pivP)  and pivP  > _entry
+            array.push(arr, pivP)
+        if not na(pivR1) and pivR1 > _entry
+            array.push(arr, pivR1)
+        if not na(pivR2) and pivR2 > _entry
+            array.push(arr, pivR2)
+        if not na(cprUpper) and cprUpper > _entry
+            array.push(arr, cprUpper)
+    if i_showVWAPBands and not na(vwapUp1) and vwapUp1 > _entry
+        array.push(arr, vwapUp1)
+    if i_showVWAPBands and not na(vwapUp2) and vwapUp2 > _entry
+        array.push(arr, vwapUp2)
     if not na(pdMid) and pdMid > _entry
         array.push(arr, pdMid)
     array.sort(arr, order.ascending)
@@ -1225,6 +1350,19 @@ f_collectSellTargets(_entry) =>
             array.push(arr, htf240L_last)
     if i_useVWAPAsTP and not na(vwapVal) and vwapVal < _entry
         array.push(arr, vwapVal)
+    if i_usePivotsAsTP
+        if not na(pivP)  and pivP  < _entry
+            array.push(arr, pivP)
+        if not na(pivS1) and pivS1 < _entry
+            array.push(arr, pivS1)
+        if not na(pivS2) and pivS2 < _entry
+            array.push(arr, pivS2)
+        if not na(cprLower) and cprLower < _entry
+            array.push(arr, cprLower)
+    if i_showVWAPBands and not na(vwapDn1) and vwapDn1 < _entry
+        array.push(arr, vwapDn1)
+    if i_showVWAPBands and not na(vwapDn2) and vwapDn2 < _entry
+        array.push(arr, vwapDn2)
     if not na(pdMid) and pdMid < _entry
         array.push(arr, pdMid)
     array.sort(arr, order.descending)
@@ -2091,9 +2229,92 @@ volBarCol = isExtremeVol ? (patGreen ? color.new(#00e676, 0) : color.new(#ff1744
 barcolor(volBarCol, title = "High-Volume Bar Color")
 
 // ════════════════════════════════════════════════════════════════════════════════════
+//   13d. PRICE-ACTION PRO — Displacement, RSI Divergence, Liquidity Traps
+//   Three high-edge signals layered on top of the ICT engine. Displacement
+//   marks institutional intent at the bar level; RSI divergence at the
+//   pivot level catches distribution/accumulation; liquidity traps flag the
+//   classic sweep-then-reverse setup (highest hit-rate ICT pattern).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+// ── Displacement candle: strong-bodied bar > N x ATR, body fills > 70% of range ─────
+displBull = patGreen and patBody > atr14 * i_displACR and patBodyR > 0.7
+displBear = patRed   and patBody > atr14 * i_displACR and patBodyR > 0.7
+plotshape(i_showDispl and displBull, "Bull Displacement", location = location.belowbar, color = color.new(#00e676, 0), style = shape.diamond, size = size.tiny)
+plotshape(i_showDispl and displBear, "Bear Displacement", location = location.abovebar, color = color.new(#ff1744, 0), style = shape.diamond, size = size.tiny)
+
+// ── RSI divergence at swings ────────────────────────────────────────────────────────
+// On each new swing high, compare current pivot price+RSI against the previous
+// pivot's price+RSI. Higher price + lower RSI = bearish (hidden distribution).
+// Lower price + higher RSI = bullish (hidden accumulation).
+rsiDiv = ta.rsi(close, i_smDivRSILen)
+var float divPrevSH_price = na
+var float divPrevSH_rsi   = na
+var float divPrevSL_price = na
+var float divPrevSL_rsi   = na
+bearDiv = false
+bullDiv = false
+if not na(phRaw)
+    rsiAtPH = rsiDiv[pivotLen_modeEff]
+    if not na(divPrevSH_price) and not na(divPrevSH_rsi) and phRaw > divPrevSH_price and rsiAtPH < divPrevSH_rsi - 2
+        bearDiv := true
+        if i_showSMDiv
+            label.new(bar_index - pivotLen_modeEff, phRaw, "div⤓", color = color.new(c_bear, 20), textcolor = color.white, style = label.style_label_down, size = size.tiny)
+    divPrevSH_price := phRaw
+    divPrevSH_rsi   := rsiAtPH
+if not na(plRaw)
+    rsiAtPL = rsiDiv[pivotLen_modeEff]
+    if not na(divPrevSL_price) and not na(divPrevSL_rsi) and plRaw < divPrevSL_price and rsiAtPL > divPrevSL_rsi + 2
+        bullDiv := true
+        if i_showSMDiv
+            label.new(bar_index - pivotLen_modeEff, plRaw, "div⤒", color = color.new(c_bull, 20), textcolor = color.white, style = label.style_label_up, size = size.tiny)
+    divPrevSL_price := plRaw
+    divPrevSL_rsi   := rsiAtPL
+
+// Cache "divergence is fresh" within the structure-memory window so confluence
+// scoring can read it. The flag stays true until the next opposite pivot.
+var bool recentBullDiv = false
+var bool recentBearDiv = false
+var int  lastBullDivBar = -1000
+var int  lastBearDivBar = -1000
+if bullDiv
+    recentBullDiv := true
+    lastBullDivBar := bar_index
+if bearDiv
+    recentBearDiv := true
+    lastBearDivBar := bar_index
+if (bar_index - lastBullDivBar) > structMem_modeEff
+    recentBullDiv := false
+if (bar_index - lastBearDivBar) > structMem_modeEff
+    recentBearDiv := false
+
+// ── Liquidity Traps — sweep + reversal within 3 bars ────────────────────────────────
+// SSL sweep (sell-side liquidity grabbed) + bullish reversal = BEAR TRAP
+// BSL sweep + bearish reversal                              = BULL TRAP
+var int  lastSSLSweepHardBar = -1000
+var int  lastBSLSweepHardBar = -1000
+if justSweptSSL
+    lastSSLSweepHardBar := bar_index
+if justSweptBSL
+    lastBSLSweepHardBar := bar_index
+sslWindow = (bar_index - lastSSLSweepHardBar) <= 3 and lastSSLSweepHardBar >= 0
+bslWindow = (bar_index - lastBSLSweepHardBar) <= 3 and lastBSLSweepHardBar >= 0
+bearTrap = i_showLiqTrap and sslWindow and patGreen and close > open and close > high[1]
+bullTrap = i_showLiqTrap and bslWindow and patRed   and close < open and close < low[1]
+plotshape(bearTrap, "Bear Trap (bullish setup)", location = location.belowbar, color = c_bull, style = shape.flag, text = "BEAR TRAP", textcolor = color.white, size = size.small)
+plotshape(bullTrap, "Bull Trap (bearish setup)", location = location.abovebar, color = c_bear, style = shape.flag, text = "BULL TRAP", textcolor = color.white, size = size.small)
+var int lastBearTrapBar = -1000
+var int lastBullTrapBar = -1000
+if bearTrap
+    lastBearTrapBar := bar_index
+if bullTrap
+    lastBullTrapBar := bar_index
+recentBearTrap = (bar_index - lastBearTrapBar) <= structMem_modeEff
+recentBullTrap = (bar_index - lastBullTrapBar) <= structMem_modeEff
+
+// ════════════════════════════════════════════════════════════════════════════════════
 //   14. DASHBOARD — at-a-glance ICT context
 // ════════════════════════════════════════════════════════════════════════════════════
-var table dash = table.new(f_dashPos(), 2, 22, border_width = 1, frame_color = color.new(color.gray, 50))
+var table dash = table.new(f_dashPos(), 2, 23, border_width = 1, frame_color = color.new(color.gray, 50))
 
 f_zoneText() =>
     inDiscount ? "DISCOUNT (Buy zone)" : inPremium ? "PREMIUM (Sell zone)" : "EQUILIBRIUM"
@@ -2393,6 +2614,30 @@ if i_showDash and barstate.islast
     table.cell(dash, 0, 21, "Mode", text_color = color.white, bgcolor = cellHdr, text_size = sz)
     table.cell(dash, 1, 21, modeName + modeAutoMark + modeDetail, text_color = color.white, bgcolor = modeBg, text_size = sz)
 
+    // Row 22 — PA Pro signal summary (recent divergence / trap / displacement)
+    string paTxt = "-"
+    color  paBg  = color.new(color.gray, 80)
+    paParts = array.new<string>()
+    if recentBullDiv
+        array.push(paParts, "Bull Div")
+    if recentBearDiv
+        array.push(paParts, "Bear Div")
+    if recentBearTrap
+        array.push(paParts, "Bear Trap")
+    if recentBullTrap
+        array.push(paParts, "Bull Trap")
+    if displBull
+        array.push(paParts, "Bull Displ")
+    if displBear
+        array.push(paParts, "Bear Displ")
+    if array.size(paParts) > 0
+        paTxt := array.join(paParts, "  ·  ")
+        bullCount = (recentBullDiv ? 1 : 0) + (recentBearTrap ? 1 : 0) + (displBull ? 1 : 0)
+        bearCount = (recentBearDiv ? 1 : 0) + (recentBullTrap ? 1 : 0) + (displBear ? 1 : 0)
+        paBg := bullCount > bearCount ? color.new(c_bull, 50) : bearCount > bullCount ? color.new(c_bear, 50) : color.new(#1565c0, 50)
+    table.cell(dash, 0, 22, "PA Pro", text_color = color.white, bgcolor = cellHdr, text_size = sz)
+    table.cell(dash, 1, 22, paTxt, text_color = color.white, bgcolor = paBg, text_size = sz)
+
 // ════════════════════════════════════════════════════════════════════════════════════
 //   15. ALERTS
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -2421,3 +2666,11 @@ alertcondition(buySignal  and isIntraday, title = "Intraday Buy Setup", message 
 alertcondition(sellSignal and isIntraday, title = "Intraday Sell Setup",message = "ICT MASTER PRO  INTRADAY SELL  {{ticker}}  {{interval}}  @ {{close}}")
 alertcondition(buySignal  and isSwing,    title = "Swing Buy Setup",    message = "ICT MASTER PRO  SWING BUY  {{ticker}}  {{interval}}  @ {{close}}")
 alertcondition(sellSignal and isSwing,    title = "Swing Sell Setup",   message = "ICT MASTER PRO  SWING SELL  {{ticker}}  {{interval}}  @ {{close}}")
+
+// PA Pro alerts — high-edge confirming signals
+alertcondition(bearTrap,    title = "Bear Trap (bullish setup)", message = "ICT PA: BEAR TRAP on {{ticker}} {{interval}} @ {{close}} — SSL swept, bullish reversal")
+alertcondition(bullTrap,    title = "Bull Trap (bearish setup)", message = "ICT PA: BULL TRAP on {{ticker}} {{interval}} @ {{close}} — BSL swept, bearish reversal")
+alertcondition(bullDiv,     title = "Bullish RSI Divergence",    message = "ICT PA: Bullish RSI Divergence on {{ticker}} {{interval}}")
+alertcondition(bearDiv,     title = "Bearish RSI Divergence",    message = "ICT PA: Bearish RSI Divergence on {{ticker}} {{interval}}")
+alertcondition(displBull,   title = "Bull Displacement",         message = "ICT PA: Bullish displacement candle on {{ticker}} {{interval}} @ {{close}}")
+alertcondition(displBear,   title = "Bear Displacement",         message = "ICT PA: Bearish displacement candle on {{ticker}} {{interval}} @ {{close}}")
