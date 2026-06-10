@@ -1,6 +1,7 @@
 package com.loadshare.areaalert.ui.screens
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -26,6 +27,8 @@ import com.loadshare.areaalert.model.Keyword
 import com.loadshare.areaalert.ui.theme.SuccessGreen
 import com.loadshare.areaalert.viewmodel.KeywordViewModel
 
+private val BlockedRed = Color(0xFFE53935)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun KeywordScreen(
@@ -34,9 +37,13 @@ fun KeywordScreen(
 ) {
     val keywords by viewModel.keywords.collectAsState()
     var newKeywordText by remember { mutableStateOf("") }
+    var addAsExclude by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf<Keyword?>(null) }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+
+    val includeList = keywords.filter { !it.isExclude }
+    val excludeList = keywords.filter { it.isExclude }
 
     Scaffold(
         topBar = {
@@ -49,7 +56,7 @@ fun KeywordScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "${keywords.count { it.isEnabled }} active / ${keywords.size} total",
+                            text = "${includeList.count { it.isEnabled }} preferred · ${excludeList.count { it.isEnabled }} blocked",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)
                         )
@@ -76,47 +83,194 @@ fun KeywordScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            AddKeywordSection(
-                text = newKeywordText,
-                onTextChange = { newKeywordText = it },
-                onAdd = {
-                    if (newKeywordText.isNotBlank()) {
-                        viewModel.addKeyword(newKeywordText)
-                        newKeywordText = ""
-                        focusManager.clearFocus()
+            // ── Add keyword section ──────────────────────────────────────
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                shape = RoundedCornerShape(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Add Location",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    // Include / Block toggle
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = !addAsExclude,
+                            onClick = { addAsExclude = false },
+                            label = { Text("Preferred Area") },
+                            leadingIcon = {
+                                Icon(Icons.Default.CheckCircle, null,
+                                    modifier = Modifier.size(16.dp))
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = SuccessGreen.copy(alpha = 0.15f),
+                                selectedLabelColor = SuccessGreen,
+                                selectedLeadingIconColor = SuccessGreen
+                            )
+                        )
+                        FilterChip(
+                            selected = addAsExclude,
+                            onClick = { addAsExclude = true },
+                            label = { Text("Blocked Area") },
+                            leadingIcon = {
+                                Icon(Icons.Default.Block, null,
+                                    modifier = Modifier.size(16.dp))
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = BlockedRed.copy(alpha = 0.12f),
+                                selectedLabelColor = BlockedRed,
+                                selectedLeadingIconColor = BlockedRed
+                            )
+                        )
                     }
-                },
-                focusRequester = focusRequester
-            )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = newKeywordText,
+                            onValueChange = { newKeywordText = it },
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(focusRequester),
+                            placeholder = {
+                                Text(if (addAsExclude) "e.g. Karapakkam" else "e.g. ECR")
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    if (addAsExclude) Icons.Default.Block else Icons.Default.LocationOn,
+                                    contentDescription = null,
+                                    tint = if (addAsExclude) BlockedRed else MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            keyboardOptions = KeyboardOptions(
+                                capitalization = KeyboardCapitalization.Words,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(onDone = {
+                                if (newKeywordText.isNotBlank()) {
+                                    viewModel.addKeyword(newKeywordText, addAsExclude)
+                                    newKeywordText = ""
+                                    focusManager.clearFocus()
+                                }
+                            }),
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        Button(
+                            onClick = {
+                                if (newKeywordText.isNotBlank()) {
+                                    viewModel.addKeyword(newKeywordText, addAsExclude)
+                                    newKeywordText = ""
+                                    focusManager.clearFocus()
+                                }
+                            },
+                            enabled = newKeywordText.isNotBlank(),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (addAsExclude) BlockedRed
+                                                else MaterialTheme.colorScheme.primary
+                            ),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Add")
+                        }
+                    }
+
+                    if (addAsExclude) {
+                        Text(
+                            text = "Orders with this area name will be skipped and auto-dismissed — even if a preferred keyword also appears.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = BlockedRed.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+            }
 
             if (keywords.isEmpty()) {
-                EmptyKeywordsMessage(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .weight(1f)
-                )
+                Box(
+                    modifier = Modifier.fillMaxSize().weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.LocationOff,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                        )
+                        Text(
+                            text = "No keywords added",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                    }
+                }
             } else {
                 LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .weight(1f),
-                    contentPadding = PaddingValues(16.dp),
+                    modifier = Modifier.fillMaxSize().weight(1f),
+                    contentPadding = PaddingValues(horizontal = 16.dp, bottom = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(
-                        items = keywords,
-                        key = { it.id }
-                    ) { keyword ->
-                        AnimatedVisibility(
-                            visible = true,
-                            enter = slideInVertically() + fadeIn(),
-                            exit = slideOutVertically() + fadeOut()
-                        ) {
-                            KeywordItem(
-                                keyword = keyword,
-                                onToggle = { viewModel.toggleKeyword(keyword.id) },
-                                onDelete = { showDeleteDialog = keyword }
+                    if (includeList.isNotEmpty()) {
+                        item {
+                            SectionHeader(
+                                text = "Preferred Areas",
+                                color = SuccessGreen
                             )
+                        }
+                        items(includeList, key = { it.id }) { keyword ->
+                            AnimatedVisibility(
+                                visible = true,
+                                enter = slideInVertically() + fadeIn(),
+                                exit = slideOutVertically() + fadeOut()
+                            ) {
+                                KeywordItem(
+                                    keyword = keyword,
+                                    onToggle = { viewModel.toggleKeyword(keyword.id) },
+                                    onFlipType = { viewModel.toggleKeywordExclude(keyword.id) },
+                                    onDelete = { showDeleteDialog = keyword }
+                                )
+                            }
+                        }
+                    }
+
+                    if (excludeList.isNotEmpty()) {
+                        item {
+                            SectionHeader(
+                                text = "Blocked Areas",
+                                color = BlockedRed,
+                                modifier = Modifier.padding(top = if (includeList.isNotEmpty()) 8.dp else 0.dp)
+                            )
+                        }
+                        items(excludeList, key = { it.id }) { keyword ->
+                            AnimatedVisibility(
+                                visible = true,
+                                enter = slideInVertically() + fadeIn(),
+                                exit = slideOutVertically() + fadeOut()
+                            ) {
+                                KeywordItem(
+                                    keyword = keyword,
+                                    onToggle = { viewModel.toggleKeyword(keyword.id) },
+                                    onFlipType = { viewModel.toggleKeywordExclude(keyword.id) },
+                                    onDelete = { showDeleteDialog = keyword }
+                                )
+                            }
                         }
                     }
                 }
@@ -152,73 +306,34 @@ fun KeywordScreen(
 }
 
 @Composable
-private fun AddKeywordSection(
+private fun SectionHeader(
     text: String,
-    onTextChange: (String) -> Unit,
-    onAdd: () -> Unit,
-    focusRequester: FocusRequester
+    color: Color,
+    modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                text = "Add New Location",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = onTextChange,
-                    modifier = Modifier
-                        .weight(1f)
-                        .focusRequester(focusRequester),
-                    placeholder = { Text("e.g. Sholinganallur") },
-                    leadingIcon = {
-                        Icon(Icons.Default.LocationOn, contentDescription = null)
-                    },
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Words,
-                        imeAction = ImeAction.Done
-                    ),
-                    keyboardActions = KeyboardActions(onDone = { onAdd() }),
-                    singleLine = true,
-                    shape = RoundedCornerShape(10.dp)
-                )
-                Button(
-                    onClick = onAdd,
-                    enabled = text.isNotBlank(),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Add")
-                }
-            }
-        }
-    }
+    Text(
+        text = text.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color = color,
+        modifier = modifier.padding(vertical = 4.dp)
+    )
 }
 
 @Composable
 private fun KeywordItem(
     keyword: Keyword,
     onToggle: () -> Unit,
+    onFlipType: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val accentColor = if (keyword.isExclude) BlockedRed else SuccessGreen
+    val borderColor = if (keyword.isExclude) BlockedRed.copy(alpha = 0.3f) else Color.Transparent
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, borderColor, RoundedCornerShape(12.dp)),
         shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         colors = CardDefaults.cardColors(
@@ -231,19 +346,19 @@ private fun KeywordItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f)
             ) {
                 Icon(
-                    Icons.Default.LocationOn,
+                    if (keyword.isExclude) Icons.Default.Block else Icons.Default.LocationOn,
                     contentDescription = null,
-                    tint = if (keyword.isEnabled) SuccessGreen else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                    tint = if (keyword.isEnabled) accentColor else accentColor.copy(alpha = 0.35f),
                     modifier = Modifier.size(20.dp)
                 )
                 Column {
@@ -257,59 +372,46 @@ private fun KeywordItem(
                             MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                     )
                     Text(
-                        text = if (keyword.isEnabled) "Active" else "Disabled",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (keyword.isEnabled) SuccessGreen else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        text = when {
+                            !keyword.isEnabled -> "Disabled"
+                            keyword.isExclude -> "Blocked — orders auto-dismissed"
+                            else -> "Active — alerts enabled"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (keyword.isEnabled) accentColor else accentColor.copy(alpha = 0.4f)
                     )
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(0.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Flip between preferred/blocked
+                IconButton(onClick = onFlipType, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        if (keyword.isExclude) Icons.Default.CheckCircle else Icons.Default.Block,
+                        contentDescription = if (keyword.isExclude) "Move to preferred" else "Move to blocked",
+                        tint = if (keyword.isExclude) SuccessGreen.copy(alpha = 0.7f) else BlockedRed.copy(alpha = 0.6f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
                 Switch(
                     checked = keyword.isEnabled,
                     onCheckedChange = { onToggle() },
                     colors = SwitchDefaults.colors(
-                        checkedThumbColor = SuccessGreen,
-                        checkedTrackColor = SuccessGreen.copy(alpha = 0.3f)
+                        checkedThumbColor = accentColor,
+                        checkedTrackColor = accentColor.copy(alpha = 0.3f)
                     )
                 )
-                IconButton(onClick = onDelete) {
+                IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
                     Icon(
                         Icons.Default.Delete,
                         contentDescription = "Delete",
-                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun EmptyKeywordsMessage(modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier,
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Icon(
-                Icons.Default.LocationOff,
-                contentDescription = null,
-                modifier = Modifier.size(64.dp),
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-            )
-            Text(
-                text = "No keywords added",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-            )
-            Text(
-                text = "Add location keywords to monitor for orders",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-            )
         }
     }
 }

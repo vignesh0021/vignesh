@@ -36,6 +36,13 @@ class SettingsRepository @Inject constructor(
         dataStoreManager.saveKeywords(updated)
     }
 
+    suspend fun toggleKeywordExclude(keywordId: String, currentList: List<Keyword>) {
+        val updated = currentList.map { kw ->
+            if (kw.id == keywordId) kw.copy(isExclude = !kw.isExclude) else kw
+        }
+        dataStoreManager.saveKeywords(updated)
+    }
+
     suspend fun saveAllKeywords(keywords: List<Keyword>) = dataStoreManager.saveKeywords(keywords)
     suspend fun setOverlayDuration(seconds: Int) = dataStoreManager.updateOverlayDuration(seconds)
     suspend fun setRepeatAlertCount(count: Int) = dataStoreManager.updateRepeatAlertCount(count)

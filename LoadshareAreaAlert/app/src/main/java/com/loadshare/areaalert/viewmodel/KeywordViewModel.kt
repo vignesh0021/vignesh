@@ -17,13 +17,13 @@ class KeywordViewModel @Inject constructor(
     val keywords: StateFlow<List<Keyword>> = settingsRepository.keywords
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun addKeyword(text: String) {
+    fun addKeyword(text: String, isExclude: Boolean = false) {
         if (text.isBlank()) return
         viewModelScope.launch {
             val trimmed = text.trim()
             val current = keywords.value
             if (current.any { it.text.equals(trimmed, ignoreCase = true) }) return@launch
-            settingsRepository.addKeyword(Keyword(text = trimmed), current)
+            settingsRepository.addKeyword(Keyword(text = trimmed, isExclude = isExclude), current)
         }
     }
 
@@ -33,5 +33,9 @@ class KeywordViewModel @Inject constructor(
 
     fun toggleKeyword(keywordId: String) = viewModelScope.launch {
         settingsRepository.toggleKeyword(keywordId, keywords.value)
+    }
+
+    fun toggleKeywordExclude(keywordId: String) = viewModelScope.launch {
+        settingsRepository.toggleKeywordExclude(keywordId, keywords.value)
     }
 }

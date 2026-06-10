@@ -114,7 +114,11 @@ class AccessibilityMonitorService : AccessibilityService() {
         if (packageName == applicationContext.packageName) return
         if (packageName in BLOCKED_PACKAGES) return
 
-        val enabledKeywords = activeKeywords.filter { it.isEnabled }.map { it.text }
+        // Include keywords: preferred areas (ECR, Palavakkam, etc.)
+        val enabledKeywords = activeKeywords.filter { it.isEnabled && !it.isExclude }.map { it.text }
+        // Exclude keywords: blocked areas (Karapakkam, Thoraipakkam, OMR, etc.)
+        // Any order whose short-line text contains an excluded keyword is skipped / auto-dismissed.
+        val excludedKeywords = activeKeywords.filter { it.isEnabled && it.isExclude }.map { it.text }
 
         val rootNode = rootInActiveWindow ?: return
 
@@ -123,14 +127,14 @@ class AccessibilityMonitorService : AccessibilityService() {
         // contains × buttons, and the popup path would click the wrong one
         // (first × found regardless of card keyword) if it ran first.
         var processedAsListScreen = false
-        if (currentSettings.autoDismissNonAreaOrders && enabledKeywords.isNotEmpty()) {
+        if (currentSettings.autoDismissNonAreaOrders && (enabledKeywords.isNotEmpty() || excludedKeywords.isNotEmpty())) {
             val now = System.currentTimeMillis()
             if (now - lastOrderListFilterTime >= ORDER_LIST_FILTER_DEBOUNCE_MS) {
                 val screenText = extractTextFromNode(rootNode)
                 if (looksLikeOrderListScreen(screenText)) {
                     processedAsListScreen = true
                     lastOrderListFilterTime = now
-                    val dismissed = findAndDismissNonAreaCard(rootNode, enabledKeywords)
+                    val dismissed = findAndDismissNonAreaCard(rootNode, enabledKeywords, excludedKeywords)
                     if (dismissed) {
                         rootNode.recycle()
                         return  // one card gone; next accessibility event will remove the next
@@ -145,19 +149,18 @@ class AccessibilityMonitorService : AccessibilityService() {
         // content updates within an existing window (TYPE_WINDOW_CONTENT_CHANGED),
         // not as new window events. Skipped when we already identified a list screen
         // above to avoid interfering with list card interactions.
-        if (!processedAsListScreen && currentSettings.autoDismissNonAreaOrders && enabledKeywords.isNotEmpty()) {
+        if (!processedAsListScreen && currentSettings.autoDismissNonAreaOrders &&
+            (enabledKeywords.isNotEmpty() || excludedKeywords.isNotEmpty())) {
             val now = System.currentTimeMillis()
             if (now - lastAutoDismissCheck >= AUTO_DISMISS_DEBOUNCE_MS) {
                 lastAutoDismissCheck = now
                 val fullText = extractTextFromNode(rootNode)
-                // Check the FULL text so we never dismiss a preferred-area popup
-                // whose keyword happens to appear on a long (>60-char) address line.
-                // Short-line filtering is only used later in AlertManager to prevent
-                // false-positive ALERTS from geocoded address strings.
-                val hasKeyword = enabledKeywords.any { kw ->
-                    fullText.contains(kw, ignoreCase = true)
-                }
-                if (!hasKeyword && looksLikeOrderPopup(fullText)) {
+                // Keep popup if it has an include keyword AND no exclude keyword.
+                // If it has an exclude keyword, always dismiss — even if ECR also appears.
+                val hasInclude = enabledKeywords.any { kw -> fullText.contains(kw, ignoreCase = true) }
+                val hasExclude = excludedKeywords.any { kw -> fullText.contains(kw, ignoreCase = true) }
+                val shouldDismiss = (!hasInclude || hasExclude) && looksLikeOrderPopup(fullText)
+                if (shouldDismiss) {
                     val dismissed = findAndClickDismiss(rootNode)
                     if (!dismissed) {
                         // Close button not found in accessibility tree (ImageButton with no
@@ -192,7 +195,7 @@ class AccessibilityMonitorService : AccessibilityService() {
         if (extractedText.isBlank()) return
 
         serviceScope.launch(Dispatchers.Default) {
-            alertManager.processScreenText(extractedText, enabledKeywords, currentSettings, packageName)
+            alertManager.processScreenText(extractedText, enabledKeywords, excludedKeywords, currentSettings, packageName)
         }
     }
 
@@ -241,16 +244,17 @@ class AccessibilityMonitorService : AccessibilityService() {
     // × sits — same row as the button, left of it.
     private fun findAndDismissNonAreaCard(
         node: AccessibilityNodeInfo,
-        keywords: List<String>
+        keywords: List<String>,
+        excludedKeywords: List<String> = emptyList()
     ): Boolean {
-        if (dismissCardByAnchor(node, keywords)) return true
+        if (dismissCardByAnchor(node, keywords, excludedKeywords)) return true
         // Fallback for apps whose × DOES expose text/description
-        return dismissCardBySymbol(node, keywords, 0)
+        return dismissCardBySymbol(node, keywords, excludedKeywords, 0)
     }
 
     // Anchor strategy: find every "Choose Order"-style button, climb to its card
     // container, keyword-check the card text, and skip non-matching cards.
-    private fun dismissCardByAnchor(rootNode: AccessibilityNodeInfo, keywords: List<String>): Boolean {
+    private fun dismissCardByAnchor(rootNode: AccessibilityNodeInfo, keywords: List<String>, excludedKeywords: List<String>): Boolean {
         val rootBounds = Rect().also { rootNode.getBoundsInScreen(it) }
         if (rootBounds.isEmpty) return false
 
@@ -260,7 +264,7 @@ class AccessibilityMonitorService : AccessibilityService() {
             var handled = false
             for (anchor in anchors) {
                 if (!handled) {
-                    handled = trySkipCard(anchor, rootBounds, keywords)
+                    handled = trySkipCard(anchor, rootBounds, keywords, excludedKeywords)
                 }
                 anchor.recycle()
             }
@@ -280,7 +284,8 @@ class AccessibilityMonitorService : AccessibilityService() {
     private fun trySkipCard(
         chooseBtn: AccessibilityNodeInfo,
         rootBounds: Rect,
-        keywords: List<String>
+        keywords: List<String>,
+        excludedKeywords: List<String> = emptyList()
     ): Boolean {
         val chooseBounds = Rect().also { chooseBtn.getBoundsInScreen(it) }
         if (chooseBounds.isEmpty) return false
@@ -306,8 +311,10 @@ class AccessibilityMonitorService : AccessibilityService() {
         val cardNode = card ?: return false
 
         val cardText = extractTextFromNode(cardNode)
-        val hasKeyword = keywords.any { kw -> cardText.contains(kw, ignoreCase = true) }
-        if (hasKeyword) {
+        val hasInclude = keywords.any { kw -> cardText.contains(kw, ignoreCase = true) }
+        val hasExclude = excludedKeywords.any { kw -> cardText.contains(kw, ignoreCase = true) }
+        // Keep the card if it has a preferred keyword AND no blocked-area keyword
+        if (hasInclude && !hasExclude) {
             cardNode.recycle()
             return false
         }
@@ -376,6 +383,7 @@ class AccessibilityMonitorService : AccessibilityService() {
     private fun dismissCardBySymbol(
         node: AccessibilityNodeInfo,
         keywords: List<String>,
+        excludedKeywords: List<String> = emptyList(),
         depth: Int
     ): Boolean {
         if (depth > 30) return false
@@ -389,13 +397,13 @@ class AccessibilityMonitorService : AccessibilityService() {
 
         if (isCloseIndicator) {
             val cardText = extractCardText(node)
-            val hasKeyword = keywords.any { kw -> cardText.contains(kw, ignoreCase = true) }
-            if (!hasKeyword) {
+            val hasInclude = keywords.any { kw -> cardText.contains(kw, ignoreCase = true) }
+            val hasExclude = excludedKeywords.any { kw -> cardText.contains(kw, ignoreCase = true) }
+            if (!hasInclude || hasExclude) {
                 if (node.isClickable) {
                     node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     return true
                 }
-                // Same parent-climb pattern as findAndClickDismiss
                 var parent = node.parent
                 var climbs = 0
                 while (parent != null && climbs < 3) {
@@ -415,7 +423,7 @@ class AccessibilityMonitorService : AccessibilityService() {
 
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = dismissCardBySymbol(child, keywords, depth + 1)
+            val found = dismissCardBySymbol(child, keywords, excludedKeywords, depth + 1)
             child.recycle()
             if (found) return true
         }

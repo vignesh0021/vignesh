@@ -78,6 +78,7 @@ class AlertManager @Inject constructor(
     fun processScreenText(
         fullText: String,
         enabledKeywords: List<String>,
+        excludedKeywords: List<String> = emptyList(),
         settings: AppSettings,
         packageName: String = ""
     ) {
@@ -87,13 +88,20 @@ class AlertManager @Inject constructor(
         currentPackageName = packageName
         val platform = DeliveryPlatform.fromPackageName(packageName)
 
-        // Keyword match: only check short lines (≤60 chars) to avoid matching area names
-        // that appear embedded inside long geocoded address strings.
+        // Exclusion check on short lines: if a blocked-area keyword appears anywhere
+        // in a non-geocoded line, skip this order entirely regardless of include keywords.
         val shortLineText = fullText.lines()
             .map { it.trim() }
             .filter { it.length in 2..60 }
             .joinToString("\n")
 
+        if (excludedKeywords.isNotEmpty() &&
+            excludedKeywords.any { kw -> shortLineText.contains(kw, ignoreCase = true) }) {
+            return
+        }
+
+        // Keyword match: only check short lines (≤60 chars) to avoid matching area names
+        // that appear embedded inside long geocoded address strings.
         val matchedKeyword = enabledKeywords.firstOrNull { keyword ->
             shortLineText.contains(keyword, ignoreCase = true)
         }

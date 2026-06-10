@@ -99,6 +99,7 @@ class DataStoreManager @Inject constructor(
                     put("id", kw.id)
                     put("text", kw.text)
                     put("isEnabled", kw.isEnabled)
+                    put("isExclude", kw.isExclude)
                 })
             }
         }.toString()
@@ -113,7 +114,8 @@ class DataStoreManager @Inject constructor(
                 Keyword(
                     id = obj.getString("id"),
                     text = obj.getString("text"),
-                    isEnabled = obj.getBoolean("isEnabled")
+                    isEnabled = obj.getBoolean("isEnabled"),
+                    isExclude = obj.optBoolean("isExclude", false)
                 )
             }
         } catch (e: Exception) {
