@@ -379,12 +379,39 @@ pmHigh = request.security(syminfo.tickerid, "M", high[1], lookahead = barmerge.l
 pmLow  = request.security(syminfo.tickerid, "M", low[1],  lookahead = barmerge.lookahead_on)
 
 // Plot key levels (when not in clean mode)
-plot(i_showKey ? pdHigh : na, "PDH", color = color.new(#ff5252, 30), style = plot.style_linebr, linewidth = 1)
-plot(i_showKey ? pdLow  : na, "PDL", color = color.new(#69f0ae, 30), style = plot.style_linebr, linewidth = 1)
-plot(i_showKey ? pwHigh : na, "PWH", color = color.new(#ff5252, 0),  style = plot.style_linebr, linewidth = 2)
-plot(i_showKey ? pwLow  : na, "PWL", color = color.new(#69f0ae, 0),  style = plot.style_linebr, linewidth = 2)
-plot(i_showKey ? pmHigh : na, "PMH", color = color.new(#d50000, 0),  style = plot.style_linebr, linewidth = 2)
-plot(i_showKey ? pmLow  : na, "PML", color = color.new(#00c853, 0),  style = plot.style_linebr, linewidth = 2)
+// TradingView caps each script at 64 outputs (plot + plotshape + barcolor).
+// Static horizontal-level lines (PDH/PDL/PWH/.../Pivots/CPR/VWAP bands/ORB/IB/
+// Day Opens/Round Levels/Weekly OHL) are drawn via line.new instead — they
+// consume the 500-line cap, not the 64-output cap.
+f_levelLn(_ln, _show, _y, _col, _w) =>
+    line out = _ln
+    if _show and not na(_y)
+        if na(out)
+            out := line.new(bar_index, _y, bar_index + 1, _y, color = _col, width = _w, extend = extend.both)
+        else
+            line.set_y1(out, _y)
+            line.set_y2(out, _y)
+            line.set_x1(out, bar_index - 1)
+            line.set_x2(out, bar_index)
+            line.set_color(out, _col)
+            line.set_width(out, _w)
+    else if not _show and not na(out)
+        line.delete(out)
+        out := na
+    out
+
+var line ln_pdh = na
+var line ln_pdl = na
+var line ln_pwh = na
+var line ln_pwl = na
+var line ln_pmh = na
+var line ln_pml = na
+ln_pdh := f_levelLn(ln_pdh, i_showKey, pdHigh, color.new(#ff5252, 30), 1)
+ln_pdl := f_levelLn(ln_pdl, i_showKey, pdLow,  color.new(#69f0ae, 30), 1)
+ln_pwh := f_levelLn(ln_pwh, i_showKey, pwHigh, color.new(#ff5252, 0),  2)
+ln_pwl := f_levelLn(ln_pwl, i_showKey, pwLow,  color.new(#69f0ae, 0),  2)
+ln_pmh := f_levelLn(ln_pmh, i_showKey, pmHigh, color.new(#d50000, 0),  2)
+ln_pml := f_levelLn(ln_pml, i_showKey, pmLow,  color.new(#00c853, 0),  2)
 
 // HTF pivots (1H and 4H) — fetched here (before the MTF plots) so the latched
 // vars are declared before they're referenced. Used as MTF liquidity pools
@@ -408,10 +435,14 @@ if not na(htf240_PL)
     htf240L_last := htf240_PL
 
 // MTF liquidity pools — last 1H and 4H pivot highs and lows
-plot(i_showMTFEff ? htf60H_last  : na, "1H Pivot High",  color = color.new(#ff5252, 30), style = plot.style_linebr, linewidth = 1)
-plot(i_showMTFEff ? htf60L_last  : na, "1H Pivot Low",   color = color.new(#69f0ae, 30), style = plot.style_linebr, linewidth = 1)
-plot(i_showMTFEff ? htf240H_last : na, "4H Pivot High",  color = color.new(#ff5252, 0),  style = plot.style_linebr, linewidth = 2)
-plot(i_showMTFEff ? htf240L_last : na, "4H Pivot Low",   color = color.new(#69f0ae, 0),  style = plot.style_linebr, linewidth = 2)
+var line ln_htf60H  = na
+var line ln_htf60L  = na
+var line ln_htf240H = na
+var line ln_htf240L = na
+ln_htf60H  := f_levelLn(ln_htf60H,  i_showMTFEff, htf60H_last,  color.new(#ff5252, 30), 1)
+ln_htf60L  := f_levelLn(ln_htf60L,  i_showMTFEff, htf60L_last,  color.new(#69f0ae, 30), 1)
+ln_htf240H := f_levelLn(ln_htf240H, i_showMTFEff, htf240H_last, color.new(#ff5252, 0),  2)
+ln_htf240L := f_levelLn(ln_htf240L, i_showMTFEff, htf240L_last, color.new(#69f0ae, 0),  2)
 
 // VWAP — session-anchored. The single most important institutional reference
 // for intraday traders. Price gravitates to it; bounces off it act as entries.
@@ -433,8 +464,11 @@ if inOpenRange
     orbHigh := na(orbHigh) ? high : math.max(orbHigh, high)
     orbLow  := na(orbLow)  ? low  : math.min(orbLow,  low)
 i_showORBEff = i_cleanMode ? false : i_showORB
-plot(i_showORBEff and not inOpenRange ? orbHigh : na, "ORB High", color = color.new(#1de9b6, 0), linewidth = 2, style = plot.style_linebr)
-plot(i_showORBEff and not inOpenRange ? orbLow  : na, "ORB Low",  color = color.new(#ff5252, 0), linewidth = 2, style = plot.style_linebr)
+var line ln_orbH = na
+var line ln_orbL = na
+orbShow = i_showORBEff and not inOpenRange
+ln_orbH := f_levelLn(ln_orbH, orbShow, orbHigh, color.new(#1de9b6, 0), 2)
+ln_orbL := f_levelLn(ln_orbL, orbShow, orbLow,  color.new(#ff5252, 0), 2)
 
 // ── Daily Pivots + CPR (Indian intraday classical) ──────────────────────────────────
 // Uses previous day's H/L/C (lookahead_off, non-repainting).
@@ -454,14 +488,22 @@ cprLower   = math.min(cpr_bc_raw, cpr_tc_raw)
 
 i_showPivotsEff = i_cleanMode ? false : i_showPivots
 i_showCPREff    = i_cleanMode ? false : i_showCPR
-plot(i_showPivotsEff ? pivP  : na, "Pivot", color = color.new(#9e9e9e, 0), linewidth = 2, style = plot.style_line)
-plot(i_showPivotsEff ? pivR1 : na, "R1",    color = color.new(#ef5350, 30), linewidth = 1, style = plot.style_line)
-plot(i_showPivotsEff ? pivS1 : na, "S1",    color = color.new(#26a69a, 30), linewidth = 1, style = plot.style_line)
-plot(i_showPivotsEff ? pivR2 : na, "R2",    color = color.new(#ef5350, 60), linewidth = 1, style = plot.style_line)
-plot(i_showPivotsEff ? pivS2 : na, "S2",    color = color.new(#26a69a, 60), linewidth = 1, style = plot.style_line)
-plot(i_showCPREff    ? cprUpper : na, "CPR Top",    color = color.new(#1565c0, 20), linewidth = 1, style = plot.style_line)
-plot(i_showCPREff    ? pivP     : na, "CPR Pivot",  color = color.new(#1565c0, 0),  linewidth = 2, style = plot.style_line)
-plot(i_showCPREff    ? cprLower : na, "CPR Bot",    color = color.new(#1565c0, 20), linewidth = 1, style = plot.style_line)
+var line ln_pivP  = na
+var line ln_pivR1 = na
+var line ln_pivS1 = na
+var line ln_pivR2 = na
+var line ln_pivS2 = na
+var line ln_cprT  = na
+var line ln_cprP  = na
+var line ln_cprB  = na
+ln_pivP  := f_levelLn(ln_pivP,  i_showPivotsEff, pivP,  color.new(#9e9e9e, 0), 2)
+ln_pivR1 := f_levelLn(ln_pivR1, i_showPivotsEff, pivR1, color.new(#ef5350, 30), 1)
+ln_pivS1 := f_levelLn(ln_pivS1, i_showPivotsEff, pivS1, color.new(#26a69a, 30), 1)
+ln_pivR2 := f_levelLn(ln_pivR2, i_showPivotsEff, pivR2, color.new(#ef5350, 60), 1)
+ln_pivS2 := f_levelLn(ln_pivS2, i_showPivotsEff, pivS2, color.new(#26a69a, 60), 1)
+ln_cprT  := f_levelLn(ln_cprT,  i_showCPREff,    cprUpper, color.new(#1565c0, 20), 1)
+ln_cprP  := f_levelLn(ln_cprP,  i_showCPREff,    pivP,     color.new(#1565c0, 0),  2)
+ln_cprB  := f_levelLn(ln_cprB,  i_showCPREff,    cprLower, color.new(#1565c0, 20), 1)
 
 // ── VWAP standard-deviation bands (own running calc — resets each NSE day) ──────────
 var float vwSumV   = 0.0
@@ -482,10 +524,14 @@ vwapDn1 = myVwap - mySD
 vwapUp2 = myVwap + 2 * mySD
 vwapDn2 = myVwap - 2 * mySD
 i_showVWAPBandsEff = i_cleanMode ? false : i_showVWAPBands
-plot(i_showVWAPBandsEff ? vwapUp1 : na, "VWAP +1σ", color = color.new(#ffa726, 30), linewidth = 1)
-plot(i_showVWAPBandsEff ? vwapDn1 : na, "VWAP -1σ", color = color.new(#ffa726, 30), linewidth = 1)
-plot(i_showVWAPBandsEff ? vwapUp2 : na, "VWAP +2σ", color = color.new(#ffa726, 60), linewidth = 1)
-plot(i_showVWAPBandsEff ? vwapDn2 : na, "VWAP -2σ", color = color.new(#ffa726, 60), linewidth = 1)
+var line ln_vwU1 = na
+var line ln_vwD1 = na
+var line ln_vwU2 = na
+var line ln_vwD2 = na
+ln_vwU1 := f_levelLn(ln_vwU1, i_showVWAPBandsEff, vwapUp1, color.new(#ffa726, 30), 1)
+ln_vwD1 := f_levelLn(ln_vwD1, i_showVWAPBandsEff, vwapDn1, color.new(#ffa726, 30), 1)
+ln_vwU2 := f_levelLn(ln_vwU2, i_showVWAPBandsEff, vwapUp2, color.new(#ffa726, 60), 1)
+ln_vwD2 := f_levelLn(ln_vwD2, i_showVWAPBandsEff, vwapDn2, color.new(#ffa726, 60), 1)
 
 // ── Initial Balance (first 60m of session — 09:15-10:15 IST) ────────────────────────
 var float ibHigh = na
@@ -498,13 +544,18 @@ if inIBWin
     ibHigh := na(ibHigh) ? high : math.max(ibHigh, high)
     ibLow  := na(ibLow)  ? low  : math.min(ibLow,  low)
 i_showIBEff = i_cleanMode ? false : i_showIB
-plot(i_showIBEff and not inIBWin ? ibHigh : na, "IB High", color = color.new(#7e57c2, 0), linewidth = 2, style = plot.style_linebr)
-plot(i_showIBEff and not inIBWin ? ibLow  : na, "IB Low",  color = color.new(#7e57c2, 0), linewidth = 2, style = plot.style_linebr)
+var line ln_ibH = na
+var line ln_ibL = na
+ibShow = i_showIBEff and not inIBWin
+ln_ibH := f_levelLn(ln_ibH, ibShow, ibHigh, color.new(#7e57c2, 0), 2)
+ln_ibL := f_levelLn(ln_ibL, ibShow, ibLow,  color.new(#7e57c2, 0), 2)
 
 // ── Today / Previous Day Open ───────────────────────────────────────────────────────
 i_showDayOpensEff = i_cleanMode ? false : i_showDayOpens
-plot(i_showDayOpensEff ? todayOpenVal : na, "Today Open", color = color.new(#26c6da, 0), linewidth = 1, style = plot.style_line)
-plot(i_showDayOpensEff ? pdO_pv       : na, "Prev Open",  color = color.new(#26c6da, 50), linewidth = 1, style = plot.style_line)
+var line ln_todayO = na
+var line ln_prevO  = na
+ln_todayO := f_levelLn(ln_todayO, i_showDayOpensEff, todayOpenVal, color.new(#26c6da, 0),  1)
+ln_prevO  := f_levelLn(ln_prevO,  i_showDayOpensEff, pdO_pv,       color.new(#26c6da, 50), 1)
 
 // ── Round Number Levels (auto step by instrument) ───────────────────────────────────
 f_roundStep() =>
@@ -530,8 +581,10 @@ roundStep_v = f_roundStep()
 roundUp = math.ceil(close / roundStep_v)  * roundStep_v
 roundDn = math.floor(close / roundStep_v) * roundStep_v
 i_showRoundLvlsEff = i_cleanMode ? false : i_showRoundLvls
-plot(i_showRoundLvlsEff ? roundUp : na, "Round Up", color = color.new(#9c27b0, 50), linewidth = 1, style = plot.style_linebr)
-plot(i_showRoundLvlsEff ? roundDn : na, "Round Dn", color = color.new(#9c27b0, 50), linewidth = 1, style = plot.style_linebr)
+var line ln_roundU = na
+var line ln_roundD = na
+ln_roundU := f_levelLn(ln_roundU, i_showRoundLvlsEff, roundUp, color.new(#9c27b0, 50), 1)
+ln_roundD := f_levelLn(ln_roundD, i_showRoundLvlsEff, roundDn, color.new(#9c27b0, 50), 1)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   4. MARKET STRUCTURE — Swings, BOS, CHoCH
@@ -1035,9 +1088,12 @@ sessionOK = avoidLunch_modeEff ? not inLunch : true
 weeklyBullBias = not na(pwHigh) and not na(pwLow) and close > (pwHigh + pwLow) / 2
 weeklyBearBias = not na(pwHigh) and not na(pwLow) and close < (pwHigh + pwLow) / 2
 
-plot(i_showWeekly ? wHigh : na, "Weekly High", color = color.new(c_bear, 70),       style = plot.style_linebr, linewidth = 1)
-plot(i_showWeekly ? wLow  : na, "Weekly Low",  color = color.new(c_bull, 70),       style = plot.style_linebr, linewidth = 1)
-plot(i_showWeekly ? wOpen : na, "Weekly Open", color = color.new(color.orange, 70), style = plot.style_linebr, linewidth = 1)
+var line ln_wHigh = na
+var line ln_wLow  = na
+var line ln_wOpen = na
+ln_wHigh := f_levelLn(ln_wHigh, i_showWeekly, wHigh, color.new(c_bear, 70),       1)
+ln_wLow  := f_levelLn(ln_wLow,  i_showWeekly, wLow,  color.new(c_bull, 70),       1)
+ln_wOpen := f_levelLn(ln_wOpen, i_showWeekly, wOpen, color.new(color.orange, 70), 1)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   11. CONFLUENCE SCORING ENGINE
