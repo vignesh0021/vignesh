@@ -224,7 +224,7 @@ fun KeywordScreen(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize().weight(1f),
-                    contentPadding = PaddingValues(horizontal = 16.dp, bottom = 16.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     if (includeList.isNotEmpty()) {
