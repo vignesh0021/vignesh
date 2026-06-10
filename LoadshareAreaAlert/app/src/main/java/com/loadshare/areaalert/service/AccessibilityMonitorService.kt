@@ -55,7 +55,11 @@ class AccessibilityMonitorService : AccessibilityService() {
         private val ORDER_POPUP_PATTERNS = listOf(
             "choose order", "accept order", "new order", "order request",
             "view more orders", "accept ride", "accept trip", "new delivery",
-            "order details", "pick up order"
+            "order details", "pick up order",
+            // Loadshare / Shadowfax specific
+            "accept", "decline", "new shipment", "order available",
+            "view order", "assign order", "order alert", "new task",
+            "delivery request", "shipment request"
         )
         private val AMOUNT_PATTERN = Regex("""₹\s*\d+""")
     }
@@ -106,14 +110,12 @@ class AccessibilityMonitorService : AccessibilityService() {
             if (now - lastAutoDismissCheck >= AUTO_DISMISS_DEBOUNCE_MS) {
                 lastAutoDismissCheck = now
                 val fullText = extractTextFromNode(rootNode)
-                // Use short-line matching (≤60 chars) to avoid false positives from
-                // area names embedded in long geocoded address strings.
-                val shortLineText = fullText.lines()
-                    .map { it.trim() }
-                    .filter { it.length in 2..60 }
-                    .joinToString("\n")
+                // Check the FULL text so we never dismiss a preferred-area popup
+                // whose keyword happens to appear on a long (>60-char) address line.
+                // Short-line filtering is only used later in AlertManager to prevent
+                // false-positive ALERTS from geocoded address strings.
                 val hasKeyword = enabledKeywords.any { kw ->
-                    shortLineText.contains(kw, ignoreCase = true)
+                    fullText.contains(kw, ignoreCase = true)
                 }
                 if (!hasKeyword && looksLikeOrderPopup(fullText)) {
                     val dismissed = findAndClickDismiss(rootNode)
@@ -161,12 +163,20 @@ class AccessibilityMonitorService : AccessibilityService() {
         return if (start <= end) hour >= start && hour < end else hour >= start || hour < end
     }
 
-    // Returns true if the visible screen looks like a delivery order selection popup
+    // Returns true if the visible screen looks like a delivery order selection popup.
+    // Two detection paths so we catch apps whose UI wording we haven't seen yet:
+    //   Path A: ₹ amount + one of our known order-prompt patterns
+    //   Path B: ₹ amount + both a pickup label AND a drop label (UI-agnostic)
     private fun looksLikeOrderPopup(text: String): Boolean {
         val lower = text.lowercase()
         val hasAmount = AMOUNT_PATTERN.containsMatchIn(text)
+        if (!hasAmount) return false
         val hasOrderPrompt = ORDER_POPUP_PATTERNS.any { lower.contains(it) }
-        return hasAmount && hasOrderPrompt
+        if (hasOrderPrompt) return true
+        // Path B: any screen showing an amount alongside pickup + drop/deliver labels
+        val hasPickup = lower.contains("pick") || lower.contains("from") || lower.contains("origin")
+        val hasDrop = lower.contains("drop") || lower.contains("deliver") || lower.contains("destination")
+        return hasPickup && hasDrop
     }
 
     // Recursively finds the close/dismiss button and clicks it.
