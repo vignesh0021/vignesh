@@ -480,7 +480,7 @@ private fun SmartFilterCard(
             SettingsToggleRow(
                 icon = Icons.Default.FilterAlt,
                 title = "Auto-dismiss Other Areas",
-                subtitle = "Instantly close order popups that don't match your keywords",
+                subtitle = "Auto-skip non-area cards in order lists AND close popups that don't match your keywords",
                 checked = autoDismissEnabled,
                 onCheckedChange = onAutoDismissToggle
             )

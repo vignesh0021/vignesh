@@ -36,6 +36,9 @@ class AccessibilityMonitorService : AccessibilityService() {
         private const val MONITORING_CHANNEL_ID = "loadshare_monitoring"
         private const val PROCESS_DEBOUNCE_MS = 1000L
         private const val AUTO_DISMISS_DEBOUNCE_MS = 500L
+        // Separate debounce for list-card filtering — one card dismissed per interval,
+        // then the list re-renders and the next event triggers the next dismissal.
+        private const val ORDER_LIST_FILTER_DEBOUNCE_MS = 800L
 
         // These packages must never trigger alerts — system UI and our own app
         // cause feedback loops (notification text re-read as new order content)
@@ -51,7 +54,12 @@ class AccessibilityMonitorService : AccessibilityService() {
             "com.oneplus.launcher"
         )
 
-        // Patterns that indicate an order-selection popup (not just background screen text)
+        // Explicit titles that identify the "Orders Near You" list screen
+        private val ORDER_LIST_SCREEN_SIGNALS = listOf(
+            "orders near you", "available orders", "nearby orders"
+        )
+
+        // Patterns that indicate a single-order popup (not just background screen text)
         private val ORDER_POPUP_PATTERNS = listOf(
             "choose order", "accept order", "new order", "order request",
             "view more orders", "accept ride", "accept trip", "new delivery",
@@ -66,6 +74,7 @@ class AccessibilityMonitorService : AccessibilityService() {
 
     private var lastProcessTime = 0L
     private var lastAutoDismissCheck = 0L
+    private var lastOrderListFilterTime = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -101,11 +110,34 @@ class AccessibilityMonitorService : AccessibilityService() {
 
         val rootNode = rootInActiveWindow ?: return
 
-        // Auto-dismiss: runs on ALL event types because Loadshare shows order popups
-        // as content updates within an existing window (TYPE_WINDOW_CONTENT_CHANGED),
-        // not as new window events (TYPE_WINDOW_STATE_CHANGED).
-        // Uses a separate 500ms debounce to keep CPU cost low.
+        // ── Order list filtering ─────────────────────────────────────────────
+        // Must run BEFORE the popup auto-dismiss block. The list screen also
+        // contains × buttons, and the popup path would click the wrong one
+        // (first × found regardless of card keyword) if it ran first.
+        var processedAsListScreen = false
         if (currentSettings.autoDismissNonAreaOrders && enabledKeywords.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            if (now - lastOrderListFilterTime >= ORDER_LIST_FILTER_DEBOUNCE_MS) {
+                val screenText = extractTextFromNode(rootNode)
+                if (looksLikeOrderListScreen(screenText)) {
+                    processedAsListScreen = true
+                    lastOrderListFilterTime = now
+                    val dismissed = findAndDismissNonAreaCard(rootNode, enabledKeywords)
+                    if (dismissed) {
+                        rootNode.recycle()
+                        return  // one card gone; next accessibility event will remove the next
+                    }
+                    // All visible cards are preferred — fall through to normal alert processing
+                }
+            }
+        }
+
+        // ── Popup auto-dismiss ───────────────────────────────────────────────
+        // Runs on ALL event types because Loadshare shows order popups as
+        // content updates within an existing window (TYPE_WINDOW_CONTENT_CHANGED),
+        // not as new window events. Skipped when we already identified a list screen
+        // above to avoid interfering with list card interactions.
+        if (!processedAsListScreen && currentSettings.autoDismissNonAreaOrders && enabledKeywords.isNotEmpty()) {
             val now = System.currentTimeMillis()
             if (now - lastAutoDismissCheck >= AUTO_DISMISS_DEBOUNCE_MS) {
                 lastAutoDismissCheck = now
@@ -163,7 +195,18 @@ class AccessibilityMonitorService : AccessibilityService() {
         return if (start <= end) hour >= start && hour < end else hour >= start || hour < end
     }
 
-    // Returns true if the visible screen looks like a delivery order selection popup.
+    // Returns true when the screen shows a LIST of order cards (e.g. "Orders Near You").
+    // This is distinct from a single-order popup — list screens show multiple ₹ amounts
+    // and per-card × buttons that skip individual orders.
+    private fun looksLikeOrderListScreen(text: String): Boolean {
+        val lower = text.lowercase()
+        if (ORDER_LIST_SCREEN_SIGNALS.any { lower.contains(it) }) return true
+        // Generic fallback: 2+ amounts AND "choose order" = list, not a single-order popup
+        val multipleAmounts = AMOUNT_PATTERN.findAll(text).count() >= 2
+        return multipleAmounts && lower.contains("choose order")
+    }
+
+    // Returns true if the visible screen looks like a single delivery order popup.
     // Two detection paths so we catch apps whose UI wording we haven't seen yet:
     //   Path A: ₹ amount + one of our known order-prompt patterns
     //   Path B: ₹ amount + both a pickup label AND a drop label (UI-agnostic)
@@ -177,6 +220,82 @@ class AccessibilityMonitorService : AccessibilityService() {
         val hasPickup = lower.contains("pick") || lower.contains("from") || lower.contains("origin")
         val hasDrop = lower.contains("drop") || lower.contains("deliver") || lower.contains("destination")
         return hasPickup && hasDrop
+    }
+
+    // Recursively finds the FIRST order card whose × button can be clicked and whose
+    // text does NOT contain any preferred keyword, then clicks it.
+    // One card dismissed per call — the list re-renders, firing a new accessibility event
+    // that will process the next non-preferred card.
+    private fun findAndDismissNonAreaCard(
+        node: AccessibilityNodeInfo,
+        keywords: List<String>,
+        depth: Int = 0
+    ): Boolean {
+        if (depth > 30) return false
+
+        val text = node.text?.toString()?.trim() ?: ""
+        val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
+
+        val isCloseIndicator = text in setOf("×", "✕", "✗", "✖", "✘") ||
+                desc.contains("skip") || desc.contains("decline") ||
+                desc.contains("close") || desc.contains("dismiss")
+
+        if (isCloseIndicator) {
+            val cardText = extractCardText(node)
+            val hasKeyword = keywords.any { kw -> cardText.contains(kw, ignoreCase = true) }
+            if (!hasKeyword) {
+                if (node.isClickable) {
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    return true
+                }
+                // Same parent-climb pattern as findAndClickDismiss
+                var parent = node.parent
+                var climbs = 0
+                while (parent != null && climbs < 3) {
+                    if (parent.isClickable) {
+                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        parent.recycle()
+                        return true
+                    }
+                    val gp = parent.parent
+                    parent.recycle()
+                    parent = gp
+                    climbs++
+                }
+                parent?.recycle()
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findAndDismissNonAreaCard(child, keywords, depth + 1)
+            child.recycle()
+            if (found) return true
+        }
+        return false
+    }
+
+    // Walks UP from a × button node to find the enclosing order card container —
+    // the first ancestor with ≥ 3 children (indicating a multi-field card ViewGroup).
+    // Returns all text found within that card.
+    private fun extractCardText(closeNode: AccessibilityNodeInfo): String {
+        var current = closeNode.parent ?: return ""
+        var climbs = 0
+        while (climbs < 6) {
+            if (current.childCount >= 3) {
+                val sb = StringBuilder()
+                extractTextRecursive(current, sb, 0)
+                current.recycle()
+                return sb.toString()
+            }
+            val parent = current.parent
+            current.recycle()
+            if (parent == null) return ""
+            current = parent
+            climbs++
+        }
+        current.recycle()
+        return ""
     }
 
     // Recursively finds the close/dismiss button and clicks it.
