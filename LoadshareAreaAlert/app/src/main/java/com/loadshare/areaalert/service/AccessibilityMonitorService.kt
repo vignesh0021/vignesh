@@ -53,7 +53,9 @@ class AccessibilityMonitorService : AccessibilityService() {
 
         // Patterns that indicate an order-selection popup (not just background screen text)
         private val ORDER_POPUP_PATTERNS = listOf(
-            "choose order", "accept order", "new order", "order request"
+            "choose order", "accept order", "new order", "order request",
+            "view more orders", "accept ride", "accept trip", "new delivery",
+            "order details", "pick up order"
         )
         private val AMOUNT_PATTERN = Regex("""₹\s*\d+""")
     }
@@ -114,7 +116,16 @@ class AccessibilityMonitorService : AccessibilityService() {
                     shortLineText.contains(kw, ignoreCase = true)
                 }
                 if (!hasKeyword && looksLikeOrderPopup(fullText)) {
-                    findAndClickDismiss(rootNode)
+                    val dismissed = findAndClickDismiss(rootNode)
+                    if (!dismissed) {
+                        // Close button not found in accessibility tree (ImageButton with no
+                        // text/description). ACTION_DISMISS works for standard dialogs;
+                        // GLOBAL_ACTION_BACK closes bottom sheets without exiting the app.
+                        val dimissedByAction = rootNode.performAction(AccessibilityNodeInfo.ACTION_DISMISS)
+                        if (!dimissedByAction) {
+                            performGlobalAction(GLOBAL_ACTION_BACK)
+                        }
+                    }
                     rootNode.recycle()
                     return
                 }
@@ -158,20 +169,42 @@ class AccessibilityMonitorService : AccessibilityService() {
         return hasAmount && hasOrderPrompt
     }
 
-    // Recursively finds the first clickable close/dismiss button and clicks it.
-    // Returns true if a button was found and clicked.
+    // Recursively finds the close/dismiss button and clicks it.
+    // Strategy 1: match by text character or content description.
+    // Strategy 2: if the matching node itself is not clickable (common for ImageView icons
+    //             inside a FrameLayout button), climb up to the nearest clickable ancestor.
     private fun findAndClickDismiss(node: AccessibilityNodeInfo, depth: Int = 0): Boolean {
-        if (depth > 20) return false
+        if (depth > 25) return false
 
         val text = node.text?.toString()?.trim() ?: ""
         val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
 
-        val isCloseButton = text in setOf("×", "✕", "✗", "✖", "X") ||
-                desc.contains("close") || desc.contains("dismiss") || desc.contains("cancel")
+        val isCloseIndicator = text in setOf("×", "✕", "✗", "✖", "✘", "X", "x") ||
+                desc.contains("close") || desc.contains("dismiss") ||
+                desc.contains("cancel") || desc.contains("decline") ||
+                desc.contains("skip") || desc.contains("reject")
 
-        if (isCloseButton && node.isClickable) {
-            node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            return true
+        if (isCloseIndicator) {
+            if (node.isClickable) {
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                return true
+            }
+            // The icon/text is not clickable itself — the parent container usually is.
+            // Walk up at most 3 levels to find the clickable ancestor.
+            var parent = node.parent
+            var climbs = 0
+            while (parent != null && climbs < 3) {
+                if (parent.isClickable) {
+                    parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    parent.recycle()
+                    return true
+                }
+                val grandParent = parent.parent
+                parent.recycle()
+                parent = grandParent
+                climbs++
+            }
+            parent?.recycle()
         }
 
         for (i in 0 until node.childCount) {
