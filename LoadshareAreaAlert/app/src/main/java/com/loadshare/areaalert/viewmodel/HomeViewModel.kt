@@ -62,6 +62,26 @@ class HomeViewModel @Inject constructor(
         settingsRepository.setMatchDropOnly(enabled)
     }
 
+    fun setMinAmount(rupees: Int) = viewModelScope.launch {
+        settingsRepository.setMinAmount(rupees)
+    }
+
+    fun setMaxDistance(km: Int) = viewModelScope.launch {
+        settingsRepository.setMaxDistance(km)
+    }
+
+    fun setWorkingHoursEnabled(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.setWorkingHoursEnabled(enabled)
+    }
+
+    fun setWorkStartHour(hour: Int) = viewModelScope.launch {
+        settingsRepository.setWorkStartHour(hour)
+    }
+
+    fun setWorkEndHour(hour: Int) = viewModelScope.launch {
+        settingsRepository.setWorkEndHour(hour)
+    }
+
     fun triggerTestAlert() = viewModelScope.launch {
         val settings = settingsRepository.appSettings.first()
         alertManager.triggerTestAlert(settings)

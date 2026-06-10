@@ -41,4 +41,9 @@ class SettingsRepository @Inject constructor(
     suspend fun setRepeatAlertCount(count: Int) = dataStoreManager.updateRepeatAlertCount(count)
     suspend fun setAutoDismiss(enabled: Boolean) = dataStoreManager.updateAutoDismiss(enabled)
     suspend fun setMatchDropOnly(enabled: Boolean) = dataStoreManager.updateMatchDropOnly(enabled)
+    suspend fun setMinAmount(rupees: Int) = dataStoreManager.updateMinAmount(rupees)
+    suspend fun setMaxDistance(km: Int) = dataStoreManager.updateMaxDistance(km)
+    suspend fun setWorkingHoursEnabled(enabled: Boolean) = dataStoreManager.updateWorkingHoursEnabled(enabled)
+    suspend fun setWorkStartHour(hour: Int) = dataStoreManager.updateWorkStartHour(hour)
+    suspend fun setWorkEndHour(hour: Int) = dataStoreManager.updateWorkEndHour(hour)
 }

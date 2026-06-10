@@ -163,6 +163,19 @@ fun HomeScreen(
                 onMatchDropOnlyToggle = { viewModel.setMatchDropOnly(it) }
             )
 
+            OrderFiltersCard(
+                minAmountRupees = settings.minAmountRupees,
+                maxDistanceKm = settings.maxDistanceKm,
+                workingHoursEnabled = settings.workingHoursEnabled,
+                workStartHour = settings.workStartHour,
+                workEndHour = settings.workEndHour,
+                onMinAmountChange = { viewModel.setMinAmount(it) },
+                onMaxDistanceChange = { viewModel.setMaxDistance(it) },
+                onWorkingHoursToggle = { viewModel.setWorkingHoursEnabled(it) },
+                onWorkStartHourChange = { viewModel.setWorkStartHour(it) },
+                onWorkEndHourChange = { viewModel.setWorkEndHour(it) }
+            )
+
             QuickActionsCard(
                 onNavigateToKeywords = onNavigateToKeywords,
                 onNavigateToZones = onNavigateToZones,
@@ -510,6 +523,271 @@ private fun SmartFilterCard(
             }
         }
     }
+}
+
+@Composable
+private fun OrderFiltersCard(
+    minAmountRupees: Int,
+    maxDistanceKm: Int,
+    workingHoursEnabled: Boolean,
+    workStartHour: Int,
+    workEndHour: Int,
+    onMinAmountChange: (Int) -> Unit,
+    onMaxDistanceChange: (Int) -> Unit,
+    onWorkingHoursToggle: (Boolean) -> Unit,
+    onWorkStartHourChange: (Int) -> Unit,
+    onWorkEndHourChange: (Int) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text(
+                text = "Order Filters",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            // ── Minimum amount ──────────────────────────────────────────
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.CurrencyRupee,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            "Minimum Amount",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Text(
+                        text = if (minAmountRupees == 0) "Off" else "₹$minAmountRupees+",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (minAmountRupees == 0)
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        else
+                            MaterialTheme.colorScheme.primary
+                    )
+                }
+                Text(
+                    "Skip orders paying less than this amount",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                )
+                Slider(
+                    value = minAmountRupees.toFloat(),
+                    onValueChange = { onMinAmountChange(it.toInt()) },
+                    valueRange = 0f..300f,
+                    steps = 29,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = MaterialTheme.colorScheme.primary,
+                        activeTrackColor = MaterialTheme.colorScheme.primary
+                    )
+                )
+            }
+
+            HorizontalDivider()
+
+            // ── Maximum distance ────────────────────────────────────────
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Route,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            "Maximum Distance",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Text(
+                        text = if (maxDistanceKm == 0) "Off" else "≤ ${maxDistanceKm} km",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (maxDistanceKm == 0)
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        else
+                            MaterialTheme.colorScheme.primary
+                    )
+                }
+                Text(
+                    "Skip orders farther than this distance",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                )
+                Slider(
+                    value = maxDistanceKm.toFloat(),
+                    onValueChange = { onMaxDistanceChange(it.toInt()) },
+                    valueRange = 0f..30f,
+                    steps = 29,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = MaterialTheme.colorScheme.primary,
+                        activeTrackColor = MaterialTheme.colorScheme.primary
+                    )
+                )
+            }
+
+            HorizontalDivider()
+
+            // ── Working hours ───────────────────────────────────────────
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Schedule,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Column {
+                            Text(
+                                "Working Hours",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                "Only monitor during these hours",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = workingHoursEnabled,
+                        onCheckedChange = onWorkingHoursToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                }
+
+                AnimatedVisibility(visible = workingHoursEnabled) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        // Start hour
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "Start time",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                                Text(
+                                    formatHour(workStartHour),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Slider(
+                                value = workStartHour.toFloat(),
+                                onValueChange = { onWorkStartHourChange(it.toInt()) },
+                                valueRange = 0f..23f,
+                                steps = 22,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = MaterialTheme.colorScheme.primary,
+                                    activeTrackColor = MaterialTheme.colorScheme.primary
+                                )
+                            )
+                        }
+                        // End hour
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "End time",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                                Text(
+                                    formatHour(workEndHour),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Slider(
+                                value = workEndHour.toFloat(),
+                                onValueChange = { onWorkEndHourChange(it.toInt()) },
+                                valueRange = 0f..23f,
+                                steps = 22,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = MaterialTheme.colorScheme.primary,
+                                    activeTrackColor = MaterialTheme.colorScheme.primary
+                                )
+                            )
+                        }
+                        // Summary
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "Monitoring active: ${formatHour(workStartHour)} – ${formatHour(workEndHour)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatHour(h: Int): String = when {
+    h == 0 -> "12:00 AM"
+    h < 12 -> "$h:00 AM"
+    h == 12 -> "12:00 PM"
+    else -> "${h - 12}:00 PM"
 }
 
 @Composable

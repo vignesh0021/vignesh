@@ -26,6 +26,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.security.MessageDigest
+import java.util.Calendar
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -80,14 +81,14 @@ class AlertManager @Inject constructor(
         settings: AppSettings,
         packageName: String = ""
     ) {
+        // Working hours gate — silently skip all processing outside configured hours
+        if (!isWithinWorkingHours(settings)) return
+
         currentPackageName = packageName
         val platform = DeliveryPlatform.fromPackageName(packageName)
 
         // Keyword match: only check short lines (≤60 chars) to avoid matching area names
-        // that appear embedded deep inside long geocoded address strings.
-        // Example: "Sholinganallur" can appear in a Siruseri address like
-        // "House No 46, 6 Th Floor, Mig 2 Tnhb Sholinganallur, Tamil Nadu 600119"
-        // which should not trigger an alert.
+        // that appear embedded inside long geocoded address strings.
         val shortLineText = fullText.lines()
             .map { it.trim() }
             .filter { it.length in 2..60 }
@@ -99,13 +100,23 @@ class AlertManager @Inject constructor(
         if (matchedKeyword != null) {
             val orderAlert = extractOrderInfo(fullText, matchedKeyword, platform)
 
-            // Drop-only mode: skip if keyword only appears in pickup, not in drop.
-            // Useful for drivers who only want orders WHERE THEY DELIVER, not where they pick up.
+            // Drop-only mode: keyword must appear in drop address, not just pickup
             if (settings.matchDropLocationOnly &&
                 orderAlert.dropLocation != "N/A" &&
                 !orderAlert.dropLocation.contains(matchedKeyword, ignoreCase = true)) {
-                // Keyword is only in pickup — not a desired drop-area order
                 return
+            }
+
+            // Amount filter: skip orders below the minimum (parsed from "₹87" → 87)
+            if (settings.minAmountRupees > 0) {
+                val amount = parseAmountValue(orderAlert.amount)
+                if (amount in 1 until settings.minAmountRupees) return
+            }
+
+            // Distance filter: skip orders above the maximum (parsed from "3.0 km" → 3.0)
+            if (settings.maxDistanceKm > 0) {
+                val distKm = parseDistanceValue(orderAlert.distance)
+                if (distKm > 0 && distKm > settings.maxDistanceKm) return
             }
 
             val stableKey = "${matchedKeyword}|${orderAlert.amount}|${orderAlert.pickupLocation.take(60)}"
@@ -123,6 +134,23 @@ class AlertManager @Inject constructor(
             scope.launch { checkGeoZones(fullText, enabledZones, settings, platform) }
         }
     }
+
+    private fun isWithinWorkingHours(settings: AppSettings): Boolean {
+        if (!settings.workingHoursEnabled) return true
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        // Handle schedules that cross midnight (e.g. 22:00–06:00)
+        return if (settings.workStartHour <= settings.workEndHour) {
+            hour >= settings.workStartHour && hour < settings.workEndHour
+        } else {
+            hour >= settings.workStartHour || hour < settings.workEndHour
+        }
+    }
+
+    private fun parseAmountValue(amountStr: String): Int =
+        Regex("""\d+""").find(amountStr)?.value?.toIntOrNull() ?: 0
+
+    private fun parseDistanceValue(distanceStr: String): Double =
+        Regex("""(\d+\.?\d*)""").find(distanceStr)?.value?.toDoubleOrNull() ?: 0.0
 
     private suspend fun checkGeoZones(
         fullText: String,

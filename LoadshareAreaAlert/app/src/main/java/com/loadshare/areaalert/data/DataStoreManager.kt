@@ -37,6 +37,11 @@ class DataStoreManager @Inject constructor(
         val REPEAT_ALERT_COUNT = intPreferencesKey("repeat_alert_count")
         val AUTO_DISMISS = booleanPreferencesKey("auto_dismiss_non_area")
         val MATCH_DROP_ONLY = booleanPreferencesKey("match_drop_location_only")
+        val MIN_AMOUNT = intPreferencesKey("min_amount_rupees")
+        val MAX_DISTANCE = intPreferencesKey("max_distance_km")
+        val WORKING_HOURS_ENABLED = booleanPreferencesKey("working_hours_enabled")
+        val WORK_START_HOUR = intPreferencesKey("work_start_hour")
+        val WORK_END_HOUR = intPreferencesKey("work_end_hour")
     }
 
     val appSettings: Flow<AppSettings> = context.dataStore.data
@@ -51,7 +56,12 @@ class DataStoreManager @Inject constructor(
                 overlayDurationSeconds = prefs[Keys.OVERLAY_DURATION] ?: 15,
                 repeatAlertCount = prefs[Keys.REPEAT_ALERT_COUNT] ?: 1,
                 autoDismissNonAreaOrders = prefs[Keys.AUTO_DISMISS] ?: false,
-                matchDropLocationOnly = prefs[Keys.MATCH_DROP_ONLY] ?: false
+                matchDropLocationOnly = prefs[Keys.MATCH_DROP_ONLY] ?: false,
+                minAmountRupees = prefs[Keys.MIN_AMOUNT] ?: 0,
+                maxDistanceKm = prefs[Keys.MAX_DISTANCE] ?: 0,
+                workingHoursEnabled = prefs[Keys.WORKING_HOURS_ENABLED] ?: false,
+                workStartHour = prefs[Keys.WORK_START_HOUR] ?: 8,
+                workEndHour = prefs[Keys.WORK_END_HOUR] ?: 21
             )
         }
 
@@ -192,6 +202,26 @@ class DataStoreManager @Inject constructor(
 
     suspend fun updateMatchDropOnly(enabled: Boolean) {
         context.dataStore.edit { it[Keys.MATCH_DROP_ONLY] = enabled }
+    }
+
+    suspend fun updateMinAmount(rupees: Int) {
+        context.dataStore.edit { it[Keys.MIN_AMOUNT] = rupees }
+    }
+
+    suspend fun updateMaxDistance(km: Int) {
+        context.dataStore.edit { it[Keys.MAX_DISTANCE] = km }
+    }
+
+    suspend fun updateWorkingHoursEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.WORKING_HOURS_ENABLED] = enabled }
+    }
+
+    suspend fun updateWorkStartHour(hour: Int) {
+        context.dataStore.edit { it[Keys.WORK_START_HOUR] = hour }
+    }
+
+    suspend fun updateWorkEndHour(hour: Int) {
+        context.dataStore.edit { it[Keys.WORK_END_HOUR] = hour }
     }
 
     suspend fun clearAlertHistory() {

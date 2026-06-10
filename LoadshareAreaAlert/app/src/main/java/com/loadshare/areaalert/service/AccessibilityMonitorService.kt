@@ -18,6 +18,7 @@ import com.loadshare.areaalert.model.Keyword
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
+import java.util.Calendar
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -83,6 +84,7 @@ class AccessibilityMonitorService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
         if (!currentSettings.isMonitoringActive) return
+        if (currentSettings.workingHoursEnabled && !isWithinWorkingHours()) return
 
         val packageName = event.packageName?.toString() ?: ""
         // Block our own app and system UI — they create notification feedback loops
@@ -139,6 +141,13 @@ class AccessibilityMonitorService : AccessibilityService() {
         serviceScope.launch(Dispatchers.Default) {
             alertManager.processScreenText(extractedText, enabledKeywords, currentSettings, packageName)
         }
+    }
+
+    private fun isWithinWorkingHours(): Boolean {
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        val start = currentSettings.workStartHour
+        val end = currentSettings.workEndHour
+        return if (start <= end) hour >= start && hour < end else hour >= start || hour < end
     }
 
     // Returns true if the visible screen looks like a delivery order selection popup
