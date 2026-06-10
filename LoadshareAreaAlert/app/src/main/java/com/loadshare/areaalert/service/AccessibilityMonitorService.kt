@@ -2,10 +2,13 @@ package com.loadshare.areaalert.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.GestureDescription
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.graphics.Path
+import android.graphics.Rect
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.app.NotificationCompat
@@ -58,6 +61,11 @@ class AccessibilityMonitorService : AccessibilityService() {
         private val ORDER_LIST_SCREEN_SIGNALS = listOf(
             "orders near you", "available orders", "nearby orders"
         )
+
+        // Button texts that anchor an order card — every card has one of these,
+        // so we locate cards by these buttons instead of the × icon (which often
+        // has no text or content description in the accessibility tree)
+        private val CARD_ANCHOR_TEXTS = listOf("Choose Order", "Accept Order", "View Order", "Accept")
 
         // Patterns that indicate a single-order popup (not just background screen text)
         private val ORDER_POPUP_PATTERNS = listOf(
@@ -201,9 +209,9 @@ class AccessibilityMonitorService : AccessibilityService() {
     private fun looksLikeOrderListScreen(text: String): Boolean {
         val lower = text.lowercase()
         if (ORDER_LIST_SCREEN_SIGNALS.any { lower.contains(it) }) return true
-        // Generic fallback: 2+ amounts AND "choose order" = list, not a single-order popup
+        // Generic fallback: 2+ amounts AND a per-card action button = list, not a single popup
         val multipleAmounts = AMOUNT_PATTERN.findAll(text).count() >= 2
-        return multipleAmounts && lower.contains("choose order")
+        return multipleAmounts && CARD_ANCHOR_TEXTS.any { lower.contains(it.lowercase()) }
     }
 
     // Returns true if the visible screen looks like a single delivery order popup.
@@ -222,14 +230,153 @@ class AccessibilityMonitorService : AccessibilityService() {
         return hasPickup && hasDrop
     }
 
-    // Recursively finds the FIRST order card whose × button can be clicked and whose
-    // text does NOT contain any preferred keyword, then clicks it.
-    // One card dismissed per call — the list re-renders, firing a new accessibility event
-    // that will process the next non-preferred card.
+    // Dismisses the FIRST order card whose text does NOT contain any preferred keyword.
+    // One card per call — the list re-renders, firing a new accessibility event that
+    // will process the next non-preferred card.
+    //
+    // Primary strategy is geometry-based, anchored on the "Choose Order" button:
+    // the × skip icon in Loadshare is an ImageView with NO text and NO content
+    // description, so symbol matching can never find it. Instead we locate each
+    // card by its labeled button and click (or coordinate-tap) the area where the
+    // × sits — same row as the button, left of it.
     private fun findAndDismissNonAreaCard(
         node: AccessibilityNodeInfo,
+        keywords: List<String>
+    ): Boolean {
+        if (dismissCardByAnchor(node, keywords)) return true
+        // Fallback for apps whose × DOES expose text/description
+        return dismissCardBySymbol(node, keywords, 0)
+    }
+
+    // Anchor strategy: find every "Choose Order"-style button, climb to its card
+    // container, keyword-check the card text, and skip non-matching cards.
+    private fun dismissCardByAnchor(rootNode: AccessibilityNodeInfo, keywords: List<String>): Boolean {
+        val rootBounds = Rect().also { rootNode.getBoundsInScreen(it) }
+        if (rootBounds.isEmpty) return false
+
+        for (anchorText in CARD_ANCHOR_TEXTS) {
+            val anchors = rootNode.findAccessibilityNodeInfosByText(anchorText) ?: continue
+            if (anchors.isEmpty()) continue
+            var handled = false
+            for (anchor in anchors) {
+                if (!handled) {
+                    handled = trySkipCard(anchor, rootBounds, keywords)
+                }
+                anchor.recycle()
+            }
+            if (handled) return true
+            // Anchors existed but every card matched a keyword (or skip failed) —
+            // don't fall through to weaker anchor texts like plain "Accept",
+            // they would just re-find the same buttons.
+            return false
+        }
+        return false
+    }
+
+    // Given one card's Choose/Accept button: climb to the card container, check its
+    // text for keywords, and if none match, click the × — found either as a small
+    // clickable node on the same row left of the button, or by tapping the screen
+    // coordinates where the × visually sits.
+    private fun trySkipCard(
+        chooseBtn: AccessibilityNodeInfo,
+        rootBounds: Rect,
+        keywords: List<String>
+    ): Boolean {
+        val chooseBounds = Rect().also { chooseBtn.getBoundsInScreen(it) }
+        if (chooseBounds.isEmpty) return false
+
+        // Climb to the card container: tall enough to include the address lines
+        // (≥3× button height) but not most of the screen (≤70%, else we overshot
+        // into the scrolling list itself)
+        var card: AccessibilityNodeInfo? = chooseBtn.parent
+        var climbs = 0
+        while (card != null && climbs < 8) {
+            val b = Rect().also { card!!.getBoundsInScreen(it) }
+            if (b.height() > rootBounds.height() * 0.7) {
+                card.recycle()
+                card = null
+                break
+            }
+            if (b.height() >= chooseBounds.height() * 3) break
+            val parent = card.parent
+            card.recycle()
+            card = parent
+            climbs++
+        }
+        val cardNode = card ?: return false
+
+        val cardText = extractTextFromNode(cardNode)
+        val hasKeyword = keywords.any { kw -> cardText.contains(kw, ignoreCase = true) }
+        if (hasKeyword) {
+            cardNode.recycle()
+            return false
+        }
+
+        val cardBounds = Rect().also { cardNode.getBoundsInScreen(it) }
+
+        // Strategy 1: a clickable node on the same row as the button, fully to its
+        // left and narrower than it — that's the × regardless of its text/description
+        val skipBtn = findSkipButtonByGeometry(cardNode, chooseBounds, 0)
+        cardNode.recycle()
+        if (skipBtn != null) {
+            val clicked = skipBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            skipBtn.recycle()
+            if (clicked) return true
+        }
+
+        // Strategy 2: no clickable node found (× not exposed to accessibility at all) —
+        // physically tap the gap between the card's left edge and the button, at the
+        // button's vertical center. That's exactly where the × is drawn.
+        val tapX = (cardBounds.left + chooseBounds.left) / 2f
+        val tapY = chooseBounds.exactCenterY()
+        return tapAt(tapX, tapY)
+    }
+
+    // Finds a clickable node positioned like a skip button: same row as the
+    // Choose Order button, entirely left of it, narrower than it.
+    private fun findSkipButtonByGeometry(
+        node: AccessibilityNodeInfo,
+        chooseBounds: Rect,
+        depth: Int
+    ): AccessibilityNodeInfo? {
+        if (depth > 15) return null
+        if (depth > 0 && node.isClickable) {
+            val b = Rect().also { node.getBoundsInScreen(it) }
+            val sameRow = b.centerY() in chooseBounds.top..chooseBounds.bottom
+            val leftOfButton = b.right <= chooseBounds.left
+            val smaller = b.width() in 1 until chooseBounds.width()
+            if (sameRow && leftOfButton && smaller) return node
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findSkipButtonByGeometry(child, chooseBounds, depth + 1)
+            if (found == null) {
+                child.recycle()
+            } else {
+                if (found !== child) child.recycle()
+                return found
+            }
+        }
+        return null
+    }
+
+    // Dispatches a real tap at screen coordinates — works even when the target view
+    // is not clickable in the accessibility tree. Requires canPerformGestures.
+    private fun tapAt(x: Float, y: Float): Boolean {
+        if (x <= 0f || y <= 0f) return false
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 60))
+            .build()
+        return dispatchGesture(gesture, null, null)
+    }
+
+    // Legacy symbol/description matching — kept as a fallback for apps whose ×
+    // button does expose text ("×") or a description ("skip", "decline", ...).
+    private fun dismissCardBySymbol(
+        node: AccessibilityNodeInfo,
         keywords: List<String>,
-        depth: Int = 0
+        depth: Int
     ): Boolean {
         if (depth > 30) return false
 
@@ -268,7 +415,7 @@ class AccessibilityMonitorService : AccessibilityService() {
 
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = findAndDismissNonAreaCard(child, keywords, depth + 1)
+            val found = dismissCardBySymbol(child, keywords, depth + 1)
             child.recycle()
             if (found) return true
         }
