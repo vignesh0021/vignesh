@@ -1229,29 +1229,7 @@ f_fyersPayload(_isBuy, _qty, _lots, _lotSize, _entry, _sl, _tp1, _tp2, _tp3, _sc
     sideNum = instr == "OPTIONS" ? 1 : (_isBuy ? 1 : -1)
     underlying = f_fyersUnderlying()
     sym = instr == "EQUITY" ? (i_stockExchange + ":" + syminfo.ticker + "-EQ") : syminfo.ticker
-    "{\"broker\":\"fyers\","
-      + "\"action\":\""    + sideStr + "\","
-      + "\"side\":"        + str.tostring(sideNum) + ","
-      + "\"instrument\":\"" + instr + "\","
-      + "\"underlying\":\"" + underlying + "\","
-      + "\"optionType\":\"" + optTyp + "\","
-      + "\"expiry\":\""    + i_optionExpiry + "\","
-      + "\"strikeOffset\":" + str.tostring(i_optionStrikeOff) + ","
-      + "\"symbol\":\""    + sym + "\","
-      + "\"exchange\":\""  + i_stockExchange + "\","
-      + "\"qty\":"         + str.tostring(_qty) + ","
-      + "\"lots\":"        + str.tostring(_lots) + ","
-      + "\"lotSize\":"     + str.tostring(_lotSize) + ","
-      + "\"productType\":\"" + i_fyersProduct + "\","
-      + "\"orderType\":\"" + i_fyersOrderType + "\","
-      + "\"entryPrice\":"  + str.tostring(_entry, format.mintick) + ","
-      + "\"sl\":"          + str.tostring(_sl,    format.mintick) + ","
-      + "\"tp1\":"         + str.tostring(_tp1,   format.mintick) + ","
-      + "\"tp2\":"         + str.tostring(_tp2,   format.mintick) + ","
-      + "\"tp3\":"         + str.tostring(_tp3,   format.mintick) + ","
-      + "\"score\":"       + str.tostring(_score) + ","
-      + "\"ticker\":\"{{ticker}}\","
-      + "\"time\":\"{{timenow}}\"}"
+    "{\"broker\":\"fyers\",\"action\":\"" + sideStr + "\",\"side\":" + str.tostring(sideNum) + ",\"instrument\":\"" + instr + "\",\"underlying\":\"" + underlying + "\",\"optionType\":\"" + optTyp + "\",\"expiry\":\"" + i_optionExpiry + "\",\"strikeOffset\":" + str.tostring(i_optionStrikeOff) + ",\"symbol\":\"" + sym + "\",\"exchange\":\"" + i_stockExchange + "\",\"qty\":" + str.tostring(_qty) + ",\"lots\":" + str.tostring(_lots) + ",\"lotSize\":" + str.tostring(_lotSize) + ",\"productType\":\"" + i_fyersProduct + "\",\"orderType\":\"" + i_fyersOrderType + "\",\"entryPrice\":" + str.tostring(_entry, format.mintick) + ",\"sl\":" + str.tostring(_sl, format.mintick) + ",\"tp1\":" + str.tostring(_tp1, format.mintick) + ",\"tp2\":" + str.tostring(_tp2, format.mintick) + ",\"tp3\":" + str.tostring(_tp3, format.mintick) + ",\"score\":" + str.tostring(_score) + ",\"ticker\":\"{{ticker}}\",\"time\":\"{{timenow}}\"}"
 
 // ════════════════════════════════════════════════════════════════════════════════════
 //   12b. ADAPTIVE TARGETS — project TP1 / TP2 / TP3 to actual price-action levels
