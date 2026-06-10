@@ -34,6 +34,7 @@ class AccessibilityMonitorService : AccessibilityService() {
         private const val FOREGROUND_NOTIFICATION_ID = 1001
         private const val MONITORING_CHANNEL_ID = "loadshare_monitoring"
         private const val PROCESS_DEBOUNCE_MS = 1000L
+        private const val AUTO_DISMISS_DEBOUNCE_MS = 500L
 
         // These packages must never trigger alerts — system UI and our own app
         // cause feedback loops (notification text re-read as new order content)
@@ -57,6 +58,7 @@ class AccessibilityMonitorService : AccessibilityService() {
     }
 
     private var lastProcessTime = 0L
+    private var lastAutoDismissCheck = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -91,20 +93,29 @@ class AccessibilityMonitorService : AccessibilityService() {
 
         val rootNode = rootInActiveWindow ?: return
 
-        // Auto-dismiss: fires immediately on new popup windows, no debounce needed.
-        // Only active when keywords are defined (geo-zone check requires async geocoding
-        // so we can't use it for instant dismiss decisions).
-        if (currentSettings.autoDismissNonAreaOrders &&
-            enabledKeywords.isNotEmpty() &&
-            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-        ) {
-            val fullText = extractTextFromNode(rootNode)
-            val hasKeyword = enabledKeywords.any { kw -> fullText.contains(kw, ignoreCase = true) }
-            if (!hasKeyword && looksLikeOrderPopup(fullText)) {
-                // This is a non-area order popup — click its dismiss button
-                findAndClickDismiss(rootNode)
-                rootNode.recycle()
-                return
+        // Auto-dismiss: runs on ALL event types because Loadshare shows order popups
+        // as content updates within an existing window (TYPE_WINDOW_CONTENT_CHANGED),
+        // not as new window events (TYPE_WINDOW_STATE_CHANGED).
+        // Uses a separate 500ms debounce to keep CPU cost low.
+        if (currentSettings.autoDismissNonAreaOrders && enabledKeywords.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            if (now - lastAutoDismissCheck >= AUTO_DISMISS_DEBOUNCE_MS) {
+                lastAutoDismissCheck = now
+                val fullText = extractTextFromNode(rootNode)
+                // Use short-line matching (≤60 chars) to avoid false positives from
+                // area names embedded in long geocoded address strings.
+                val shortLineText = fullText.lines()
+                    .map { it.trim() }
+                    .filter { it.length in 2..60 }
+                    .joinToString("\n")
+                val hasKeyword = enabledKeywords.any { kw ->
+                    shortLineText.contains(kw, ignoreCase = true)
+                }
+                if (!hasKeyword && looksLikeOrderPopup(fullText)) {
+                    findAndClickDismiss(rootNode)
+                    rootNode.recycle()
+                    return
+                }
             }
         }
 

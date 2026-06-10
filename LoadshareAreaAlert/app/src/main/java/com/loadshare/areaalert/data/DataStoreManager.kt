@@ -36,6 +36,7 @@ class DataStoreManager @Inject constructor(
         val OVERLAY_DURATION = intPreferencesKey("overlay_duration_secs")
         val REPEAT_ALERT_COUNT = intPreferencesKey("repeat_alert_count")
         val AUTO_DISMISS = booleanPreferencesKey("auto_dismiss_non_area")
+        val MATCH_DROP_ONLY = booleanPreferencesKey("match_drop_location_only")
     }
 
     val appSettings: Flow<AppSettings> = context.dataStore.data
@@ -49,7 +50,8 @@ class DataStoreManager @Inject constructor(
                 isMonitoringActive = prefs[Keys.IS_MONITORING_ACTIVE] ?: false,
                 overlayDurationSeconds = prefs[Keys.OVERLAY_DURATION] ?: 15,
                 repeatAlertCount = prefs[Keys.REPEAT_ALERT_COUNT] ?: 1,
-                autoDismissNonAreaOrders = prefs[Keys.AUTO_DISMISS] ?: false
+                autoDismissNonAreaOrders = prefs[Keys.AUTO_DISMISS] ?: false,
+                matchDropLocationOnly = prefs[Keys.MATCH_DROP_ONLY] ?: false
             )
         }
 
@@ -186,6 +188,10 @@ class DataStoreManager @Inject constructor(
 
     suspend fun updateAutoDismiss(enabled: Boolean) {
         context.dataStore.edit { it[Keys.AUTO_DISMISS] = enabled }
+    }
+
+    suspend fun updateMatchDropOnly(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.MATCH_DROP_ONLY] = enabled }
     }
 
     suspend fun clearAlertHistory() {

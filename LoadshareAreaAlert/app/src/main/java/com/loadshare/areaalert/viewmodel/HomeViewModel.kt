@@ -58,6 +58,10 @@ class HomeViewModel @Inject constructor(
         settingsRepository.setAutoDismiss(enabled)
     }
 
+    fun setMatchDropOnly(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.setMatchDropOnly(enabled)
+    }
+
     fun triggerTestAlert() = viewModelScope.launch {
         val settings = settingsRepository.appSettings.first()
         alertManager.triggerTestAlert(settings)

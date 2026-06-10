@@ -158,7 +158,9 @@ fun HomeScreen(
 
             SmartFilterCard(
                 autoDismissEnabled = settings.autoDismissNonAreaOrders,
-                onAutoDismissToggle = { viewModel.setAutoDismiss(it) }
+                matchDropOnly = settings.matchDropLocationOnly,
+                onAutoDismissToggle = { viewModel.setAutoDismiss(it) },
+                onMatchDropOnlyToggle = { viewModel.setMatchDropOnly(it) }
             )
 
             QuickActionsCard(
@@ -442,7 +444,9 @@ private fun AlertSettingsCard(
 @Composable
 private fun SmartFilterCard(
     autoDismissEnabled: Boolean,
-    onAutoDismissToggle: (Boolean) -> Unit
+    matchDropOnly: Boolean,
+    onAutoDismissToggle: (Boolean) -> Unit,
+    onMatchDropOnlyToggle: (Boolean) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -463,12 +467,22 @@ private fun SmartFilterCard(
             SettingsToggleRow(
                 icon = Icons.Default.FilterAlt,
                 title = "Auto-dismiss Other Areas",
-                subtitle = "Instantly close non-preferred area order popups so only YOUR area orders need attention",
+                subtitle = "Instantly close order popups that don't match your keywords",
                 checked = autoDismissEnabled,
                 onCheckedChange = onAutoDismissToggle
             )
 
-            AnimatedVisibility(visible = autoDismissEnabled) {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            SettingsToggleRow(
+                icon = Icons.Default.LocationOn,
+                title = "Match Delivery Area Only",
+                subtitle = "Alert only when your keyword is in the DROP/delivery address — ignores ECR pickup → other area drop orders",
+                checked = matchDropOnly,
+                onCheckedChange = onMatchDropOnlyToggle
+            )
+
+            AnimatedVisibility(visible = matchDropOnly) {
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = PrimaryGreen.copy(alpha = 0.08f)
@@ -487,7 +501,7 @@ private fun SmartFilterCard(
                             modifier = Modifier.size(16.dp).padding(top = 2.dp)
                         )
                         Text(
-                            text = "Works based on your Location Keywords. When a Loadshare/delivery app order popup appears and none of your keywords match, it will be auto-closed.",
+                            text = "Example: keyword \"ECR\" will alert for orders that DELIVER to ECR, but skip orders that only PICKUP from ECR and deliver elsewhere.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                         )

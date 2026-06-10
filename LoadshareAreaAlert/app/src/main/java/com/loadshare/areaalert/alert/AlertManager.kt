@@ -83,14 +83,31 @@ class AlertManager @Inject constructor(
         currentPackageName = packageName
         val platform = DeliveryPlatform.fromPackageName(packageName)
 
-        // Keyword match: fast, no network required
+        // Keyword match: only check short lines (≤60 chars) to avoid matching area names
+        // that appear embedded deep inside long geocoded address strings.
+        // Example: "Sholinganallur" can appear in a Siruseri address like
+        // "House No 46, 6 Th Floor, Mig 2 Tnhb Sholinganallur, Tamil Nadu 600119"
+        // which should not trigger an alert.
+        val shortLineText = fullText.lines()
+            .map { it.trim() }
+            .filter { it.length in 2..60 }
+            .joinToString("\n")
+
         val matchedKeyword = enabledKeywords.firstOrNull { keyword ->
-            fullText.contains(keyword, ignoreCase = true)
+            shortLineText.contains(keyword, ignoreCase = true)
         }
         if (matchedKeyword != null) {
             val orderAlert = extractOrderInfo(fullText, matchedKeyword, platform)
-            // Hash on stable order fields so the same order deduplicates reliably,
-            // and a genuinely new order (different amount/location) always alerts.
+
+            // Drop-only mode: skip if keyword only appears in pickup, not in drop.
+            // Useful for drivers who only want orders WHERE THEY DELIVER, not where they pick up.
+            if (settings.matchDropLocationOnly &&
+                orderAlert.dropLocation != "N/A" &&
+                !orderAlert.dropLocation.contains(matchedKeyword, ignoreCase = true)) {
+                // Keyword is only in pickup — not a desired drop-area order
+                return
+            }
+
             val stableKey = "${matchedKeyword}|${orderAlert.amount}|${orderAlert.pickupLocation.take(60)}"
             val hash = computeHash(stableKey)
             if (!isDuplicate(hash)) {

@@ -8,5 +8,6 @@ data class AppSettings(
     val isMonitoringActive: Boolean = false,
     val overlayDurationSeconds: Int = 15,
     val repeatAlertCount: Int = 1,
-    val autoDismissNonAreaOrders: Boolean = false
+    val autoDismissNonAreaOrders: Boolean = false,
+    val matchDropLocationOnly: Boolean = false   // alert only when keyword is in DROP address
 )
