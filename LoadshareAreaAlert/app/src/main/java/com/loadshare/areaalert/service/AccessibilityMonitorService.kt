@@ -9,6 +9,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
+import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.app.NotificationCompat
@@ -36,9 +37,12 @@ class AccessibilityMonitorService : AccessibilityService() {
 
     companion object {
         private const val FOREGROUND_NOTIFICATION_ID = 1001
+        private const val SERVICE_STOPPED_NOTIFICATION_ID = 1002
         private const val MONITORING_CHANNEL_ID = "loadshare_monitoring"
+        private const val SERVICE_ALERT_CHANNEL_ID = "loadshare_service_alerts"
         private const val PROCESS_DEBOUNCE_MS = 1000L
         private const val AUTO_DISMISS_DEBOUNCE_MS = 500L
+        private const val HEARTBEAT_INTERVAL_MS = 60_000L
         // Separate debounce for list-card filtering — one card dismissed per interval,
         // then the list re-renders and the next event triggers the next dismissal.
         private const val ORDER_LIST_FILTER_DEBOUNCE_MS = 800L
@@ -83,6 +87,7 @@ class AccessibilityMonitorService : AccessibilityService() {
     private var lastProcessTime = 0L
     private var lastAutoDismissCheck = 0L
     private var lastOrderListFilterTime = 0L
+    private var lastHeartbeatWrite = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -114,6 +119,14 @@ class AccessibilityMonitorService : AccessibilityService() {
         // Block our own app and system UI — they create notification feedback loops
         if (packageName == applicationContext.packageName) return
         if (packageName in BLOCKED_PACKAGES) return
+
+        // Liveness heartbeat — written at most once per minute so HomeScreen
+        // can detect if the service has silently stopped receiving events.
+        val nowMs = System.currentTimeMillis()
+        if (nowMs - lastHeartbeatWrite >= HEARTBEAT_INTERVAL_MS) {
+            lastHeartbeatWrite = nowMs
+            serviceScope.launch(Dispatchers.IO) { settingsRepository.updateLastHeartbeat() }
+        }
 
         // Include keywords: preferred areas (ECR, Palavakkam, etc.)
         val enabledKeywords = activeKeywords.filter { it.isEnabled && !it.isExclude }.map { it.text }
@@ -538,9 +551,36 @@ class AccessibilityMonitorService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (currentSettings.isMonitoringActive) {
+            postServiceStoppedNotification()
+        }
         serviceScope.cancel()
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         manager.cancel(FOREGROUND_NOTIFICATION_ID)
+    }
+
+    private fun postServiceStoppedNotification() {
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        manager.createNotificationChannel(
+            NotificationChannel(SERVICE_ALERT_CHANNEL_ID, "Service Alerts", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Alerts when the monitoring service stops unexpectedly"
+                enableLights(true)
+            }
+        )
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        val pi = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification = NotificationCompat.Builder(this, SERVICE_ALERT_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Area Alert stopped")
+            .setContentText("Monitoring paused — tap to re-enable accessibility service")
+            .setContentIntent(pi)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setAutoCancel(true)
+            .build()
+        manager.notify(SERVICE_STOPPED_NOTIFICATION_ID, notification)
     }
 
     private fun observeSettings() {

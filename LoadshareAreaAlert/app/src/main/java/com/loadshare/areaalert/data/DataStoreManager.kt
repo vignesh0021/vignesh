@@ -42,6 +42,7 @@ class DataStoreManager @Inject constructor(
         val WORKING_HOURS_ENABLED = booleanPreferencesKey("working_hours_enabled")
         val WORK_START_HOUR = intPreferencesKey("work_start_hour")
         val WORK_END_HOUR = intPreferencesKey("work_end_hour")
+        val LAST_SERVICE_HEARTBEAT = longPreferencesKey("last_service_heartbeat")
     }
 
     val appSettings: Flow<AppSettings> = context.dataStore.data
@@ -228,6 +229,14 @@ class DataStoreManager @Inject constructor(
 
     suspend fun clearAlertHistory() {
         context.dataStore.edit { it.remove(Keys.HISTORY_JSON) }
+    }
+
+    val lastServiceHeartbeat: Flow<Long> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { prefs -> prefs[Keys.LAST_SERVICE_HEARTBEAT] ?: 0L }
+
+    suspend fun updateLastHeartbeat() {
+        context.dataStore.edit { it[Keys.LAST_SERVICE_HEARTBEAT] = System.currentTimeMillis() }
     }
 
     private fun parseAlertHistory(json: String): List<AlertRecord> {

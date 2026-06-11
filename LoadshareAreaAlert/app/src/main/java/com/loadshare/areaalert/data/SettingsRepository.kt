@@ -12,6 +12,7 @@ class SettingsRepository @Inject constructor(
 ) {
     val appSettings: Flow<AppSettings> = dataStoreManager.appSettings
     val keywords: Flow<List<Keyword>> = dataStoreManager.keywords
+    val lastServiceHeartbeat: Flow<Long> = dataStoreManager.lastServiceHeartbeat
 
     suspend fun setSoundEnabled(enabled: Boolean) = dataStoreManager.updateSoundEnabled(enabled)
     suspend fun setVibrationEnabled(enabled: Boolean) = dataStoreManager.updateVibrationEnabled(enabled)
@@ -53,4 +54,5 @@ class SettingsRepository @Inject constructor(
     suspend fun setWorkingHoursEnabled(enabled: Boolean) = dataStoreManager.updateWorkingHoursEnabled(enabled)
     suspend fun setWorkStartHour(hour: Int) = dataStoreManager.updateWorkStartHour(hour)
     suspend fun setWorkEndHour(hour: Int) = dataStoreManager.updateWorkEndHour(hour)
+    suspend fun updateLastHeartbeat() = dataStoreManager.updateLastHeartbeat()
 }

@@ -41,6 +41,7 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val settings by viewModel.appSettings.collectAsState()
+    val serviceStale by viewModel.serviceStale.collectAsState()
     var accessibilityEnabled by remember { mutableStateOf(false) }
     var overlayPermissionGranted by remember { mutableStateOf(false) }
     var batteryOptEnabled by remember { mutableStateOf(false) }
@@ -138,6 +139,16 @@ fun HomeScreen(
                         viewModel.openBatteryOptimizationSettings()
                         batteryOptEnabled = viewModel.isBatteryOptimizationEnabled()
                     }
+                )
+            }
+
+            AnimatedVisibility(visible = serviceStale) {
+                PermissionWarningCard(
+                    title = "Service May Have Stopped",
+                    message = "Monitoring is ON but no activity detected in the last 3 minutes. The service may have been killed. Re-enable it to resume protection.",
+                    buttonText = "Re-enable Service",
+                    icon = Icons.Default.Warning,
+                    onAction = { viewModel.openAccessibilitySettings() }
                 )
             }
 

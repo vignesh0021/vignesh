@@ -12,6 +12,7 @@ import com.loadshare.areaalert.data.SettingsRepository
 import com.loadshare.areaalert.model.AppSettings
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -25,6 +26,17 @@ class HomeViewModel @Inject constructor(
 
     val appSettings: StateFlow<AppSettings> = settingsRepository.appSettings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
+
+    // True when monitoring is ON but no heartbeat has been received for >3 minutes —
+    // the service registered but is no longer processing events.
+    val serviceStale: StateFlow<Boolean> = combine(
+        settingsRepository.appSettings,
+        settingsRepository.lastServiceHeartbeat,
+        flow { while (true) { emit(Unit); delay(30_000L) } }
+    ) { settings, heartbeat, _ ->
+        settings.isMonitoringActive && heartbeat > 0L &&
+            (System.currentTimeMillis() - heartbeat) > 3 * 60_000L
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     fun setSoundEnabled(enabled: Boolean) = viewModelScope.launch {
         settingsRepository.setSoundEnabled(enabled)
