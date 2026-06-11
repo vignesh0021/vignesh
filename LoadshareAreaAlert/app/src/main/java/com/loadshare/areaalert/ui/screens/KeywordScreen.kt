@@ -1,5 +1,7 @@
 package com.loadshare.areaalert.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -36,16 +38,34 @@ fun KeywordScreen(
     viewModel: KeywordViewModel = hiltViewModel()
 ) {
     val keywords by viewModel.keywords.collectAsState()
+    val backupMessage by viewModel.backupMessage.collectAsState()
     var newKeywordText by remember { mutableStateOf("") }
     var addAsExclude by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf<Keyword?>(null) }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val includeList = keywords.filter { !it.isExclude }
     val excludeList = keywords.filter { it.isExclude }
 
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri -> uri?.let { viewModel.exportKeywords(it) } }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let { viewModel.importKeywords(it) } }
+
+    LaunchedEffect(backupMessage) {
+        backupMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearBackupMessage()
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -74,7 +94,23 @@ fun KeywordScreen(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary
-                )
+                ),
+                actions = {
+                    IconButton(onClick = { exportLauncher.launch("loadshare_keywords_backup.json") }) {
+                        Icon(
+                            Icons.Default.Upload,
+                            contentDescription = "Export keywords backup",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                    IconButton(onClick = { importLauncher.launch("application/json") }) {
+                        Icon(
+                            Icons.Default.Download,
+                            contentDescription = "Import keywords backup",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                }
             )
         }
     ) { paddingValues ->
