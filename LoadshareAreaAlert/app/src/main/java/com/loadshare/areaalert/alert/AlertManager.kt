@@ -91,21 +91,15 @@ class AlertManager @Inject constructor(
 
         // Exclusion check on short lines: if a blocked-area keyword appears anywhere
         // in a non-geocoded line, skip this order entirely regardless of include keywords.
-        val shortLineText = fullText.lines()
-            .map { it.trim() }
-            .filter { it.length in 2..60 }
-            .joinToString("\n")
+        val shortLineText = OrderTextParser.shortLineText(fullText)
 
-        if (excludedKeywords.isNotEmpty() &&
-            excludedKeywords.any { kw -> shortLineText.contains(kw, ignoreCase = true) }) {
+        if (OrderTextParser.containsExcludedKeyword(shortLineText, excludedKeywords)) {
             return
         }
 
         // Keyword match: only check short lines (≤60 chars) to avoid matching area names
         // that appear embedded inside long geocoded address strings.
-        val matchedKeyword = enabledKeywords.firstOrNull { keyword ->
-            shortLineText.contains(keyword, ignoreCase = true)
-        }
+        val matchedKeyword = OrderTextParser.findMatchedKeyword(shortLineText, enabledKeywords)
         if (matchedKeyword != null) {
             val orderAlert = extractOrderInfo(fullText, matchedKeyword, platform)
 
@@ -144,22 +138,17 @@ class AlertManager @Inject constructor(
         }
     }
 
-    private fun isWithinWorkingHours(settings: AppSettings): Boolean {
-        if (!settings.workingHoursEnabled) return true
-        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-        // Handle schedules that cross midnight (e.g. 22:00–06:00)
-        return if (settings.workStartHour <= settings.workEndHour) {
-            hour >= settings.workStartHour && hour < settings.workEndHour
-        } else {
-            hour >= settings.workStartHour || hour < settings.workEndHour
-        }
-    }
+    private fun isWithinWorkingHours(settings: AppSettings): Boolean =
+        OrderTextParser.isWithinWorkingHours(
+            settings.workingHoursEnabled,
+            settings.workStartHour,
+            settings.workEndHour,
+            Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        )
 
-    private fun parseAmountValue(amountStr: String): Int =
-        Regex("""\d+""").find(amountStr)?.value?.toIntOrNull() ?: 0
+    private fun parseAmountValue(amountStr: String): Int = OrderTextParser.parseAmountValue(amountStr)
 
-    private fun parseDistanceValue(distanceStr: String): Double =
-        Regex("""(\d+\.?\d*)""").find(distanceStr)?.value?.toDoubleOrNull() ?: 0.0
+    private fun parseDistanceValue(distanceStr: String): Double = OrderTextParser.parseDistanceValue(distanceStr)
 
     private suspend fun checkGeoZones(
         fullText: String,
@@ -205,146 +194,18 @@ class AlertManager @Inject constructor(
         platform: DeliveryPlatform
     ): OrderAlert {
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
-
-        val (pickup, drop) = when (platform) {
-            DeliveryPlatform.LOADSHARE -> extractLoadshareLocations(lines)
-            DeliveryPlatform.ZOMATO    -> extractZomatoLocations(lines, text)
-            DeliveryPlatform.SWIGGY    -> extractSwiggyLocations(lines, text)
-            DeliveryPlatform.RAPIDO    -> extractRapidoLocations(lines, text)
-            DeliveryPlatform.PORTER    -> extractPorterLocations(lines, text)
-            DeliveryPlatform.DUNZO     -> extractDunzoLocations(lines, text)
-            DeliveryPlatform.BLINKIT,
-            DeliveryPlatform.ZEPTO,
-            DeliveryPlatform.BIGBASKET -> extractQuickCommerceLocations(lines, text)
-            else                       -> extractGenericLocations(lines)
-        }
+        val (pickup, drop) = OrderTextParser.extractLocations(platform, lines)
 
         return OrderAlert(
             hash = "",
             matchedKeyword = keyword,
             pickupLocation = pickup,
             dropLocation = drop,
-            distance = extractDistance(text) ?: "N/A",
-            amount = extractAmount(text) ?: "N/A",
+            distance = OrderTextParser.extractDistance(text) ?: "N/A",
+            amount = OrderTextParser.extractAmount(text) ?: "N/A",
             rawText = text.take(500),
             platform = platform.displayName
         )
-    }
-
-    // Zomato: Restaurant → pickup, Customer area → drop
-    private fun extractZomatoLocations(lines: List<String>, text: String): Pair<String, String> {
-        val pickup = extractAfterLabel(lines, listOf("pick up from", "pick up at", "restaurant", "outlet"))
-            ?: extractGenericLocations(lines).first
-        val drop = extractAfterLabel(lines, listOf("deliver to", "delivery at", "drop at", "customer"))
-            ?: extractGenericLocations(lines).second
-        return pickup to drop
-    }
-
-    // Swiggy: similar to Zomato but different label wording
-    private fun extractSwiggyLocations(lines: List<String>, text: String): Pair<String, String> {
-        val pickup = extractAfterLabel(lines, listOf("pick up", "pickup from", "store", "restaurant"))
-            ?: extractGenericLocations(lines).first
-        val drop = extractAfterLabel(lines, listOf("deliver to", "drop", "delivery location", "customer address"))
-            ?: extractGenericLocations(lines).second
-        return pickup to drop
-    }
-
-    // Rapido: ride pickup → drop
-    private fun extractRapidoLocations(lines: List<String>, text: String): Pair<String, String> {
-        val pickup = extractAfterLabel(lines, listOf("pickup", "pick up", "from", "start"))
-            ?: extractGenericLocations(lines).first
-        val drop = extractAfterLabel(lines, listOf("drop", "destination", "to", "end"))
-            ?: extractGenericLocations(lines).second
-        return pickup to drop
-    }
-
-    // Porter: goods transport pickup → drop
-    private fun extractPorterLocations(lines: List<String>, text: String): Pair<String, String> {
-        val pickup = extractAfterLabel(lines, listOf("pickup", "from", "collect from", "loading"))
-            ?: extractGenericLocations(lines).first
-        val drop = extractAfterLabel(lines, listOf("drop", "to", "deliver at", "unloading"))
-            ?: extractGenericLocations(lines).second
-        return pickup to drop
-    }
-
-    // Dunzo: store → customer
-    private fun extractDunzoLocations(lines: List<String>, text: String): Pair<String, String> {
-        val pickup = extractAfterLabel(lines, listOf("store", "pick up", "from", "merchant"))
-            ?: extractGenericLocations(lines).first
-        val drop = extractAfterLabel(lines, listOf("deliver at", "drop at", "customer", "to"))
-            ?: extractGenericLocations(lines).second
-        return pickup to drop
-    }
-
-    // Quick commerce (Blinkit/Zepto/BigBasket): dark store → customer
-    private fun extractQuickCommerceLocations(lines: List<String>, text: String): Pair<String, String> {
-        val pickup = extractAfterLabel(lines, listOf("store", "dark store", "warehouse", "pick up from"))
-            ?: extractGenericLocations(lines).first
-        val drop = extractAfterLabel(lines, listOf("deliver to", "drop at", "customer", "address"))
-            ?: extractGenericLocations(lines).second
-        return pickup to drop
-    }
-
-    // Loadshare order cards show bare locality names with no "Pickup:" / "Drop:" labels.
-    // The first two non-amount, non-numeric, non-action lines are pickup and drop.
-    private fun extractLoadshareLocations(lines: List<String>): Pair<String, String> {
-        val actionTexts = setOf(
-            "choose order", "accept order", "accept", "view order", "decline",
-            "skip", "new order", "order available", "order request"
-        )
-        val candidates = lines.filter { line ->
-            val l = line.trim()
-            l.length in 4..50
-                && !l.contains('₹')
-                && !l.all { it.isDigit() || it == '.' || it == ' ' }
-                && l.lowercase() !in actionTexts
-        }
-        val pickup = candidates.getOrNull(0) ?: "N/A"
-        val drop   = candidates.getOrNull(1) ?: "N/A"
-        return pickup to drop
-    }
-
-    // Generic fallback: works for Shadowfax, Delhivery and unknown apps
-    private fun extractGenericLocations(lines: List<String>): Pair<String, String> {
-        val pickup = extractAfterLabel(lines, listOf("pickup", "pick up", "from", "collect", "origin"))
-            ?: "N/A"
-        val drop = extractAfterLabel(lines, listOf("drop", "deliver", "delivery", "to", "destination"))
-            ?: "N/A"
-        return pickup to drop
-    }
-
-    private fun extractAfterLabel(lines: List<String>, labels: List<String>): String? {
-        for (i in lines.indices) {
-            val line = lines[i].lowercase()
-            if (labels.any { line.contains(it) }) {
-                val nextLine = lines.getOrNull(i + 1)?.takeIf { it.isNotEmpty() && it.length > 2 }
-                if (nextLine != null) return nextLine
-                val inline = lines[i].substringAfter(":").trim()
-                if (inline.length > 2) return inline
-            }
-        }
-        return null
-    }
-
-    private fun extractDistance(text: String): String? {
-        val pattern = Regex("""(\d+\.?\d*)\s*(km|kilometer|kilometers|kms|mi|miles)""", RegexOption.IGNORE_CASE)
-        return pattern.find(text)?.value
-    }
-
-    private fun extractAmount(text: String): String? {
-        val patterns = listOf(
-            Regex("""₹\s*(\d+\.?\d*)"""),
-            Regex("""Rs\.?\s*(\d+\.?\d*)""", RegexOption.IGNORE_CASE),
-            Regex("""(\d+\.?\d*)\s*₹"""),
-            Regex("""earnings[:\s]+₹?\s*(\d+\.?\d*)""", RegexOption.IGNORE_CASE),
-            Regex("""payout[:\s]+₹?\s*(\d+\.?\d*)""", RegexOption.IGNORE_CASE),
-            Regex("""fare[:\s]+₹?\s*(\d+\.?\d*)""", RegexOption.IGNORE_CASE)
-        )
-        for (pattern in patterns) {
-            val match = pattern.find(text)
-            if (match != null) return match.value.trim()
-        }
-        return null
     }
 
     // ── Hash & deduplication ──────────────────────────────────────────────────

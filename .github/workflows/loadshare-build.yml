@@ -29,6 +29,10 @@ jobs:
           gradle-version: '8.7'
           cache-read-only: false
 
+      - name: Run unit tests
+        working-directory: LoadshareAreaAlert
+        run: gradle testDebugUnitTest --no-daemon --stacktrace
+
       - name: Build Debug APK
         working-directory: LoadshareAreaAlert
         run: gradle assembleDebug --no-daemon --stacktrace
