@@ -5,8 +5,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.media.AudioManager
-import android.media.ToneGenerator
+import android.media.AudioAttributes
+import android.media.MediaPlayer
+import android.media.RingtoneManager
 import android.os.*
 import androidx.core.app.NotificationCompat
 import com.loadshare.areaalert.MainActivity
@@ -206,11 +207,12 @@ class AlertManager @Inject constructor(
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
 
         val (pickup, drop) = when (platform) {
-            DeliveryPlatform.ZOMATO   -> extractZomatoLocations(lines, text)
-            DeliveryPlatform.SWIGGY   -> extractSwiggyLocations(lines, text)
-            DeliveryPlatform.RAPIDO   -> extractRapidoLocations(lines, text)
-            DeliveryPlatform.PORTER   -> extractPorterLocations(lines, text)
-            DeliveryPlatform.DUNZO    -> extractDunzoLocations(lines, text)
+            DeliveryPlatform.LOADSHARE -> extractLoadshareLocations(lines)
+            DeliveryPlatform.ZOMATO    -> extractZomatoLocations(lines, text)
+            DeliveryPlatform.SWIGGY    -> extractSwiggyLocations(lines, text)
+            DeliveryPlatform.RAPIDO    -> extractRapidoLocations(lines, text)
+            DeliveryPlatform.PORTER    -> extractPorterLocations(lines, text)
+            DeliveryPlatform.DUNZO     -> extractDunzoLocations(lines, text)
             DeliveryPlatform.BLINKIT,
             DeliveryPlatform.ZEPTO,
             DeliveryPlatform.BIGBASKET -> extractQuickCommerceLocations(lines, text)
@@ -283,7 +285,26 @@ class AlertManager @Inject constructor(
         return pickup to drop
     }
 
-    // Generic fallback: works for Loadshare, Shadowfax, Delhivery and unknown apps
+    // Loadshare order cards show bare locality names with no "Pickup:" / "Drop:" labels.
+    // The first two non-amount, non-numeric, non-action lines are pickup and drop.
+    private fun extractLoadshareLocations(lines: List<String>): Pair<String, String> {
+        val actionTexts = setOf(
+            "choose order", "accept order", "accept", "view order", "decline",
+            "skip", "new order", "order available", "order request"
+        )
+        val candidates = lines.filter { line ->
+            val l = line.trim()
+            l.length in 4..50
+                && !l.contains('₹')
+                && !l.all { it.isDigit() || it == '.' || it == ' ' }
+                && l.lowercase() !in actionTexts
+        }
+        val pickup = candidates.getOrNull(0) ?: "N/A"
+        val drop   = candidates.getOrNull(1) ?: "N/A"
+        return pickup to drop
+    }
+
+    // Generic fallback: works for Shadowfax, Delhivery and unknown apps
     private fun extractGenericLocations(lines: List<String>): Pair<String, String> {
         val pickup = extractAfterLabel(lines, listOf("pickup", "pick up", "from", "collect", "origin"))
             ?: "N/A"
@@ -393,10 +414,24 @@ class AlertManager @Inject constructor(
 
     private fun playSound(volume: Float) {
         try {
-            val maxVolume = (volume * ToneGenerator.MAX_VOLUME).toInt().coerceIn(1, ToneGenerator.MAX_VOLUME)
-            val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, maxVolume)
-            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP2, 800)
-            Handler(Looper.getMainLooper()).postDelayed({ toneGen.release() }, 1000)
+            // Use USAGE_ALARM so the sound plays even during phone calls —
+            // ToneGenerator on STREAM_NOTIFICATION was silenced by call audio focus.
+            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                ?: return
+            MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                setDataSource(context, uri)
+                setVolume(volume, volume)
+                setOnCompletionListener { it.release() }
+                prepare()
+                start()
+            }
         } catch (_: Exception) {}
     }
 

@@ -105,6 +105,7 @@ class AccessibilityMonitorService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        try {
         event ?: return
         if (!currentSettings.isMonitoringActive) return
         if (currentSettings.workingHoursEnabled && !isWithinWorkingHours()) return
@@ -196,6 +197,10 @@ class AccessibilityMonitorService : AccessibilityService() {
 
         serviceScope.launch(Dispatchers.Default) {
             alertManager.processScreenText(extractedText, enabledKeywords, excludedKeywords, currentSettings, packageName)
+        }
+        } catch (_: Exception) {
+            // Swallow: AccessibilityNodeInfo ops can throw on OEM ROMs during window teardown.
+            // Letting the exception propagate causes Android to silently kill the service.
         }
     }
 

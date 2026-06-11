@@ -6,6 +6,9 @@ on:
     branches:
       - claude/loadshare-area-alert-app-NPUJn
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -24,6 +27,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+          cache-read-only: false
 
       - name: Build Debug APK
         working-directory: LoadshareAreaAlert
