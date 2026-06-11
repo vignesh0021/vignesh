@@ -159,7 +159,9 @@ object OrderTextParser {
     private fun extractAfterLabel(lines: List<String>, labels: List<String>): String? {
         for (i in lines.indices) {
             val line = lines[i].lowercase()
-            if (labels.any { line.contains(it) }) {
+            // Word-boundary match: plain contains() let short labels like "to"
+            // match inside words ("Store", "customer"), grabbing wrong lines.
+            if (labels.any { label -> Regex("\\b${Regex.escape(label)}\\b").containsMatchIn(line) }) {
                 val nextLine = lines.getOrNull(i + 1)?.takeIf { it.isNotEmpty() && it.length > 2 }
                 if (nextLine != null) return nextLine
                 val inline = lines[i].substringAfter(":").trim()
