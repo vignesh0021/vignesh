@@ -136,11 +136,22 @@ class OrderTextParserTest {
     }
 
     @Test
-    fun `loadshare extraction filters demand surge badge`() {
-        val lines = listOf("Demand surge included", "ECR Kottivakkam", "Burger King", "2.8 km", "ECR Kottivakkam", "Choose Order")
+    fun `loadshare extraction filters demand surge badge and skips restaurant line`() {
+        // Real card structure: [Demand surge badge, AREA, Restaurant, distance, AREA, address, distance, Choose Order]
+        val lines = listOf("Demand surge included", "ECR Kottivakkam", "Burger King", "2.8 km", "ECR Kottivakkam", "Pillaiyar Kovil Street", "4.2 km", "Choose Order")
         val (pickup, drop) = OrderTextParser.extractLoadshareLocations(lines)
         assertEquals("ECR Kottivakkam", pickup)
-        assertEquals("Burger King", drop)   // restaurant line — still second candidate
+        // With surge filtered, candidates = [ECR Kottivakkam, Burger King, ECR Kottivakkam, Pillaiyar Kovil Street]
+        // size ≥ 3 → take index 0 and 2 → both are the area name
+        assertEquals("ECR Kottivakkam", drop)
+    }
+
+    @Test
+    fun `loadshare extraction with no restaurant line uses index 0 and 1`() {
+        val lines = listOf("Sholinganallur", "Neelankarai", "Choose Order")
+        val (pickup, drop) = OrderTextParser.extractLoadshareLocations(lines)
+        assertEquals("Sholinganallur", pickup)
+        assertEquals("Neelankarai", drop)
     }
 
     @Test

@@ -47,18 +47,39 @@ class AccessibilityMonitorService : AccessibilityService() {
         // then the list re-renders and the next event triggers the next dismissal.
         private const val ORDER_LIST_FILTER_DEBOUNCE_MS = 800L
 
-        // These packages must never trigger alerts — system UI and our own app
-        // cause feedback loops (notification text re-read as new order content)
+        // These packages must never trigger alerts — system UI and OEM launchers
+        // cause feedback loops (notification shade text re-read as new order content)
         private val BLOCKED_PACKAGES = setOf(
             "android",
             "com.android.systemui",
             "com.android.launcher",
             "com.android.launcher3",
             "com.google.android.apps.nexuslauncher",
+            // Samsung
             "com.samsung.android.launcher",
+            "com.sec.android.app.launcher",
+            // Xiaomi / MIUI
             "com.miui.home",
+            // Motorola
             "com.motorola.launcher3",
-            "com.oneplus.launcher"
+            // OnePlus / OxygenOS / ColorOS
+            "com.oneplus.launcher",
+            "com.oppo.launcher",
+            "com.coloros.launcher",
+            // Vivo / Funtouch / OriginOS
+            "com.vivo.launcher",
+            "com.bbk.launcher2",
+            // Realme / ColorOS
+            "com.realme.launcher",
+            // Honor
+            "com.hihonor.android.launcher",
+            // ASUS
+            "com.asus.launcher",
+            // Nokia / HMD
+            "com.hmd.android.launcher",
+            // Phone app — call screen events cause false triggers
+            "com.android.phone",
+            "com.google.android.dialer"
         )
 
         // Explicit titles that identify the "Orders Near You" list screen

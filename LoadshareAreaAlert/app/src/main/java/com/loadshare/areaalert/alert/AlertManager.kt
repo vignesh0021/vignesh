@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 import java.security.MessageDigest
 import java.util.Calendar
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.*
@@ -50,7 +51,8 @@ class AlertManager @Inject constructor(
     }
 
     private val recentHashes = ConcurrentHashMap<String, Long>()
-    private var notificationCounter = NOTIFICATION_ID_BASE
+    // AtomicInteger: sendNotification() is called from IO coroutines concurrently
+    private val notificationCounter = AtomicInteger(NOTIFICATION_ID_BASE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var cachedZones: List<GeoZone> = emptyList()
 
@@ -63,11 +65,6 @@ class AlertManager @Inject constructor(
     }
 
     fun isSnoozed(): Boolean = System.currentTimeMillis() < snoozeUntilMs
-
-    fun snoozeRemainingSeconds(): Int =
-        ((snoozeUntilMs - System.currentTimeMillis()) / 1000L).coerceAtLeast(0).toInt()
-
-    @Volatile private var currentPackageName = ""
 
     init {
         createAlertNotificationChannel()
@@ -89,7 +86,7 @@ class AlertManager @Inject constructor(
             rawText = "test",
             platform = "Test Alert"
         )
-        triggerAlert(test, settings)
+        triggerAlert(test, settings, "")
     }
 
     fun processScreenText(
@@ -104,7 +101,6 @@ class AlertManager @Inject constructor(
         // Snooze gate — user tapped "Snooze" on the overlay after accepting an order
         if (isSnoozed()) return
 
-        currentPackageName = packageName
         val platform = DeliveryPlatform.fromPackageName(packageName)
 
         // Exclusion check on short lines: if a blocked-area keyword appears anywhere
@@ -144,7 +140,7 @@ class AlertManager @Inject constructor(
             val hash = computeHash(stableKey)
             if (!isDuplicate(hash)) {
                 recordHash(hash)
-                triggerAlert(orderAlert.copy(hash = hash), settings)
+                triggerAlert(orderAlert.copy(hash = hash), settings, packageName)
             }
             return
         }
@@ -152,7 +148,7 @@ class AlertManager @Inject constructor(
         // Geo zone match: async geocoding, only when no keyword fired
         val enabledZones = cachedZones.filter { it.isEnabled }
         if (enabledZones.isNotEmpty()) {
-            scope.launch { checkGeoZones(fullText, enabledZones, settings, platform) }
+            scope.launch { checkGeoZones(fullText, enabledZones, settings, platform, packageName) }
         }
     }
 
@@ -172,8 +168,10 @@ class AlertManager @Inject constructor(
         fullText: String,
         zones: List<GeoZone>,
         settings: AppSettings,
-        platform: DeliveryPlatform
+        platform: DeliveryPlatform,
+        packageName: String
     ) {
+        if (isSnoozed()) return
         val orderInfo = extractOrderInfo(fullText, "", platform)
         val candidates = listOf(orderInfo.pickupLocation, orderInfo.dropLocation)
             .filter { it != "N/A" && it.length > 3 }
@@ -190,7 +188,7 @@ class AlertManager @Inject constructor(
             val hash = computeHash(stableKey)
             if (isDuplicate(hash)) return
             recordHash(hash)
-            triggerAlert(alert.copy(hash = hash), settings)
+            triggerAlert(alert.copy(hash = hash), settings, packageName)
             return
         }
     }
@@ -249,17 +247,19 @@ class AlertManager @Inject constructor(
 
     // ── Alert triggering ──────────────────────────────────────────────────────
 
-    private fun triggerAlert(alert: OrderAlert, settings: AppSettings) {
+    private fun triggerAlert(alert: OrderAlert, settings: AppSettings, packageName: String = "") {
         if (settings.vibrationEnabled) vibrate()
         if (settings.soundEnabled) playSound(settings.alertVolume, settings.alertSoundUri)
-        if (settings.overlayEnabled) showOverlay(alert, settings)
+        if (settings.overlayEnabled) showOverlay(alert, settings, packageName)
         sendNotification(alert)
         scope.launch { saveHistory(alert) }
-        // Re-alert at 15s intervals so missed orders still get attention
+        // Re-alert at 15s intervals so missed orders still get attention.
+        // Uses a for-loop so we can break out early if the user snoozes.
         if (settings.repeatAlertCount > 0) {
             scope.launch {
-                repeat(settings.repeatAlertCount) {
+                for (i in 0 until settings.repeatAlertCount) {
                     delay(15_000L)
+                    if (isSnoozed()) break
                     if (settings.vibrationEnabled) vibrate()
                     if (settings.soundEnabled) playSound(settings.alertVolume, settings.alertSoundUri)
                 }
@@ -337,7 +337,7 @@ class AlertManager @Inject constructor(
         true
     } catch (_: Exception) { false }
 
-    private fun showOverlay(alert: OrderAlert, settings: AppSettings) {
+    private fun showOverlay(alert: OrderAlert, settings: AppSettings, packageName: String) {
         val durationMs = if (settings.overlayDurationSeconds == 0) 0L
                          else settings.overlayDurationSeconds * 1000L
         val intent = Intent(context, OverlayService::class.java).apply {
@@ -347,7 +347,7 @@ class AlertManager @Inject constructor(
             putExtra(OverlayService.EXTRA_DROP, alert.dropLocation)
             putExtra(OverlayService.EXTRA_DISTANCE, alert.distance)
             putExtra(OverlayService.EXTRA_AMOUNT, alert.amount)
-            putExtra(OverlayService.EXTRA_PACKAGE_NAME, currentPackageName)
+            putExtra(OverlayService.EXTRA_PACKAGE_NAME, packageName)
             putExtra(OverlayService.EXTRA_DURATION_MS, durationMs)
         }
         context.startService(intent)
@@ -386,7 +386,7 @@ class AlertManager @Inject constructor(
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .build()
 
-        notificationManager.notify(notificationCounter++, notification)
+        notificationManager.notify(notificationCounter.getAndIncrement(), notification)
     }
 
     private fun createAlertNotificationChannel() {

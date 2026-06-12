@@ -110,7 +110,11 @@ object OrderTextParser {
                 && !l.lowercase().contains("surge")   // catch future surge badge variants
         }
         val pickup = candidates.getOrNull(0) ?: "N/A"
-        val drop   = candidates.getOrNull(1) ?: "N/A"
+        // Loadshare card structure: [AREA] → [Restaurant/store] → [AREA] → [detail]
+        // When there are ≥3 candidates the restaurant name lands at index 1 (between the
+        // two area names), so we take index 2 for drop. With <3 candidates the card has
+        // no restaurant line and index 1 is the drop area directly.
+        val drop = if (candidates.size >= 3) candidates[2] else (candidates.getOrNull(1) ?: "N/A")
         return pickup to drop
     }
 
