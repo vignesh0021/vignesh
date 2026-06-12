@@ -1,5 +1,12 @@
 package com.loadshare.areaalert.ui.screens
 
+import android.app.Activity
+import android.content.Intent
+import android.media.RingtoneManager
+import android.net.Uri
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -45,6 +52,23 @@ fun HomeScreen(
     var accessibilityEnabled by remember { mutableStateOf(false) }
     var overlayPermissionGranted by remember { mutableStateOf(false) }
     var batteryOptEnabled by remember { mutableStateOf(false) }
+
+    val alertToneName = remember(settings.alertSoundUri) {
+        viewModel.getAlertToneName(settings.alertSoundUri)
+    }
+    val toneLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                result.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                result.data?.getParcelableExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+            }
+            viewModel.setAlertSoundUri(uri?.toString() ?: "")
+        }
+    }
 
     // Refresh permission states every time the screen becomes visible
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -157,12 +181,29 @@ fun HomeScreen(
                 vibrationEnabled = settings.vibrationEnabled,
                 overlayEnabled = settings.overlayEnabled,
                 alertVolume = settings.alertVolume,
+                alertToneName = alertToneName,
                 overlayDurationSeconds = settings.overlayDurationSeconds,
                 repeatAlertCount = settings.repeatAlertCount,
                 onSoundToggle = { viewModel.setSoundEnabled(it) },
                 onVibrationToggle = { viewModel.setVibrationEnabled(it) },
                 onOverlayToggle = { viewModel.setOverlayEnabled(it) },
                 onVolumeChange = { viewModel.setAlertVolume(it) },
+                onPickAlertTone = {
+                    val existing = settings.alertSoundUri.takeIf { it.isNotBlank() }?.let(Uri::parse)
+                        ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                    val intent = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+                        putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALL)
+                        putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Select Alert Tone")
+                        putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                        putExtra(
+                            RingtoneManager.EXTRA_RINGTONE_DEFAULT_URI,
+                            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                        )
+                        putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                        putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, existing)
+                    }
+                    toneLauncher.launch(intent)
+                },
                 onOverlayDurationChange = { viewModel.setOverlayDuration(it) },
                 onRepeatAlertCountChange = { viewModel.setRepeatAlertCount(it) }
             )
@@ -337,12 +378,14 @@ private fun AlertSettingsCard(
     vibrationEnabled: Boolean,
     overlayEnabled: Boolean,
     alertVolume: Float,
+    alertToneName: String,
     overlayDurationSeconds: Int,
     repeatAlertCount: Int,
     onSoundToggle: (Boolean) -> Unit,
     onVibrationToggle: (Boolean) -> Unit,
     onOverlayToggle: (Boolean) -> Unit,
     onVolumeChange: (Float) -> Unit,
+    onPickAlertTone: () -> Unit,
     onOverlayDurationChange: (Int) -> Unit,
     onRepeatAlertCountChange: (Int) -> Unit
 ) {
@@ -398,6 +441,38 @@ private fun AlertSettingsCard(
                             activeTrackColor = MaterialTheme.colorScheme.primary
                         )
                     )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Alert Tone",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                            )
+                            Text(
+                                alertToneName,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = onPickAlertTone,
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.MusicNote,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Change", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
                 }
             }
 

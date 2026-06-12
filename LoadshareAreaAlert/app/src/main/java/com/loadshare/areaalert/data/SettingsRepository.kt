@@ -18,6 +18,7 @@ class SettingsRepository @Inject constructor(
     suspend fun setVibrationEnabled(enabled: Boolean) = dataStoreManager.updateVibrationEnabled(enabled)
     suspend fun setOverlayEnabled(enabled: Boolean) = dataStoreManager.updateOverlayEnabled(enabled)
     suspend fun setAlertVolume(volume: Float) = dataStoreManager.updateAlertVolume(volume)
+    suspend fun setAlertSoundUri(uri: String) = dataStoreManager.updateAlertSoundUri(uri)
     suspend fun setMonitoringActive(active: Boolean) = dataStoreManager.updateMonitoringActive(active)
 
     suspend fun addKeyword(keyword: Keyword, currentList: List<Keyword>) {

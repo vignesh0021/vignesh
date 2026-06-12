@@ -8,6 +8,7 @@ import android.content.Intent
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.*
 import androidx.core.app.NotificationCompat
 import com.loadshare.areaalert.MainActivity
@@ -233,7 +234,7 @@ class AlertManager @Inject constructor(
 
     private fun triggerAlert(alert: OrderAlert, settings: AppSettings) {
         if (settings.vibrationEnabled) vibrate()
-        if (settings.soundEnabled) playSound(settings.alertVolume)
+        if (settings.soundEnabled) playSound(settings.alertVolume, settings.alertSoundUri)
         if (settings.overlayEnabled) showOverlay(alert, settings)
         sendNotification(alert)
         scope.launch { saveHistory(alert) }
@@ -243,7 +244,7 @@ class AlertManager @Inject constructor(
                 repeat(settings.repeatAlertCount) {
                     delay(15_000L)
                     if (settings.vibrationEnabled) vibrate()
-                    if (settings.soundEnabled) playSound(settings.alertVolume)
+                    if (settings.soundEnabled) playSound(settings.alertVolume, settings.alertSoundUri)
                 }
             }
         }
@@ -263,38 +264,60 @@ class AlertManager @Inject constructor(
     }
 
     private fun vibrate() {
-        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val manager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-            manager.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-        }
-        vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 300, 150, 300, 150, 600), -1))
-    }
-
-    private fun playSound(volume: Float) {
         try {
-            // Use USAGE_ALARM so the sound plays even during phone calls —
-            // ToneGenerator on STREAM_NOTIFICATION was silenced by call audio focus.
-            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                ?: return
-            MediaPlayer().apply {
-                setAudioAttributes(
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val manager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                manager.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+            if (!vibrator.hasVibrator()) return
+            val effect = VibrationEffect.createWaveform(longArrayOf(0, 400, 200, 400, 200, 800), -1)
+            // Without alarm-usage attributes the vibration is suppressed in silent/DND
+            // mode and on Samsung/Xiaomi ROMs when triggered from a background service.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                vibrator.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_ALARM))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(
+                    effect,
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_ALARM)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build()
                 )
-                setDataSource(context, uri)
-                setVolume(volume, volume)
-                setOnCompletionListener { it.release() }
-                prepare()
-                start()
             }
         } catch (_: Exception) {}
     }
+
+    private fun playSound(volume: Float, customSoundUri: String = "") {
+        val defaultUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        val customUri = customSoundUri.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
+        val played = customUri != null && playUri(customUri, volume)
+        // Custom tone may have been deleted from the device — fall back to default
+        if (!played && defaultUri != null) playUri(defaultUri, volume)
+    }
+
+    private fun playUri(uri: Uri, volume: Float): Boolean = try {
+        // Use USAGE_ALARM so the sound plays even during phone calls —
+        // ToneGenerator on STREAM_NOTIFICATION was silenced by call audio focus.
+        MediaPlayer().apply {
+            setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            setDataSource(context, uri)
+            setVolume(volume, volume)
+            setOnCompletionListener { it.release() }
+            prepare()
+            start()
+        }
+        true
+    } catch (_: Exception) { false }
 
     private fun showOverlay(alert: OrderAlert, settings: AppSettings) {
         val durationMs = if (settings.overlayDurationSeconds == 0) 0L

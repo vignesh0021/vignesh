@@ -29,6 +29,7 @@ class DataStoreManager @Inject constructor(
         val VIBRATION_ENABLED = booleanPreferencesKey("vibration_enabled")
         val OVERLAY_ENABLED = booleanPreferencesKey("overlay_enabled")
         val ALERT_VOLUME = floatPreferencesKey("alert_volume")
+        val ALERT_SOUND_URI = stringPreferencesKey("alert_sound_uri")
         val IS_MONITORING_ACTIVE = booleanPreferencesKey("is_monitoring_active")
         val KEYWORDS_JSON = stringPreferencesKey("keywords_json")
         val ZONES_JSON = stringPreferencesKey("zones_json")
@@ -53,6 +54,7 @@ class DataStoreManager @Inject constructor(
                 vibrationEnabled = prefs[Keys.VIBRATION_ENABLED] ?: true,
                 overlayEnabled = prefs[Keys.OVERLAY_ENABLED] ?: true,
                 alertVolume = prefs[Keys.ALERT_VOLUME] ?: 1.0f,
+                alertSoundUri = prefs[Keys.ALERT_SOUND_URI] ?: "",
                 isMonitoringActive = prefs[Keys.IS_MONITORING_ACTIVE] ?: false,
                 overlayDurationSeconds = prefs[Keys.OVERLAY_DURATION] ?: 15,
                 repeatAlertCount = prefs[Keys.REPEAT_ALERT_COUNT] ?: 1,
@@ -87,6 +89,10 @@ class DataStoreManager @Inject constructor(
 
     suspend fun updateAlertVolume(volume: Float) {
         context.dataStore.edit { it[Keys.ALERT_VOLUME] = volume }
+    }
+
+    suspend fun updateAlertSoundUri(uri: String) {
+        context.dataStore.edit { it[Keys.ALERT_SOUND_URI] = uri }
     }
 
     suspend fun updateMonitoringActive(active: Boolean) {

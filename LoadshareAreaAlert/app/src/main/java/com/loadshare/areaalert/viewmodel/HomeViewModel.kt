@@ -2,6 +2,7 @@ package com.loadshare.areaalert.viewmodel
 
 import android.content.Context
 import android.content.Intent
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
@@ -52,6 +53,18 @@ class HomeViewModel @Inject constructor(
 
     fun setAlertVolume(volume: Float) = viewModelScope.launch {
         settingsRepository.setAlertVolume(volume)
+    }
+
+    fun setAlertSoundUri(uri: String) = viewModelScope.launch {
+        settingsRepository.setAlertSoundUri(uri)
+    }
+
+    fun getAlertToneName(uriString: String): String {
+        if (uriString.isBlank()) return "Default (Alarm)"
+        return try {
+            RingtoneManager.getRingtone(context, Uri.parse(uriString))
+                ?.getTitle(context) ?: "Custom tone"
+        } catch (_: Exception) { "Custom tone" }
     }
 
     fun setMonitoringActive(active: Boolean) = viewModelScope.launch {
