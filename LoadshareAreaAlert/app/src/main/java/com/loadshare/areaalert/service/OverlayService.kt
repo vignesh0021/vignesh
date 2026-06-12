@@ -9,10 +9,14 @@ import android.os.Looper
 import android.view.*
 import android.widget.TextView
 import com.loadshare.areaalert.R
+import com.loadshare.areaalert.alert.AlertManager
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class OverlayService : Service() {
+
+    @Inject lateinit var alertManager: AlertManager
 
     companion object {
         const val EXTRA_PLATFORM = "extra_platform"
@@ -113,6 +117,11 @@ class OverlayService : Service() {
             if (distance != "N/A") distance else ""
         view.findViewById<TextView>(R.id.tv_amount).text = amount
         view.findViewById<TextView>(R.id.tv_dismiss).setOnClickListener { dismissCurrentOverlay() }
+
+        view.findViewById<TextView>(R.id.btn_snooze).setOnClickListener {
+            alertManager.snoozeFor(10 * 60 * 1000L)
+            dismissCurrentOverlay()
+        }
 
         val btnOpenApp = view.findViewById<TextView>(R.id.btn_open_app)
         if (appPackage.isNotEmpty() && appPackage != packageName) {

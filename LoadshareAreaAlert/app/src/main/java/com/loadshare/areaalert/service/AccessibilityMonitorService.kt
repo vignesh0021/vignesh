@@ -176,12 +176,10 @@ class AccessibilityMonitorService : AccessibilityService() {
                 val shouldDismiss = (!hasInclude || hasExclude) && looksLikeOrderPopup(fullText)
                 if (shouldDismiss) {
                     val dismissed = findAndClickDismiss(rootNode)
+                        || tryDismissPopupByGeometry(rootNode)
                     if (!dismissed) {
-                        // Close button not found in accessibility tree (ImageButton with no
-                        // text/description). ACTION_DISMISS works for standard dialogs;
-                        // GLOBAL_ACTION_BACK closes bottom sheets without exiting the app.
-                        val dimissedByAction = rootNode.performAction(AccessibilityNodeInfo.ACTION_DISMISS)
-                        if (!dimissedByAction) {
+                        // Last resort: standard dialog dismiss, then back.
+                        if (!rootNode.performAction(AccessibilityNodeInfo.ACTION_DISMISS)) {
                             performGlobalAction(GLOBAL_ACTION_BACK)
                         }
                     }
@@ -469,6 +467,36 @@ class AccessibilityMonitorService : AccessibilityService() {
         }
         current.recycle()
         return ""
+    }
+
+    // Finds the × button on a single-order popup using the same geometry approach used
+    // for list-screen cards: locate the "Choose Order" button, then tap the clickable
+    // node to its left (or the physical coordinate if no node is found).
+    // Loadshare's × is an ImageButton with no text/description, so text-based search
+    // never finds it — geometry is the only reliable method.
+    private fun tryDismissPopupByGeometry(rootNode: AccessibilityNodeInfo): Boolean {
+        val rootBounds = Rect().also { rootNode.getBoundsInScreen(it) }
+        if (rootBounds.isEmpty) return false
+        for (anchorText in CARD_ANCHOR_TEXTS) {
+            val anchors = rootNode.findAccessibilityNodeInfosByText(anchorText) ?: continue
+            for (anchor in anchors) {
+                val bounds = Rect().also { anchor.getBoundsInScreen(it) }
+                if (bounds.isEmpty) { anchor.recycle(); continue }
+                // Strategy 1: clickable node geometrically to the left of the button
+                val skipBtn = findSkipButtonByGeometry(rootNode, bounds, 0)
+                anchor.recycle()
+                if (skipBtn != null) {
+                    val clicked = skipBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    skipBtn.recycle()
+                    if (clicked) return true
+                }
+                // Strategy 2: physically tap midpoint between left edge and button
+                val tapX = (rootBounds.left + bounds.left) / 2f
+                val tapY = bounds.exactCenterY()
+                if (tapX > 0f && tapY > 0f) return tapAt(tapX, tapY)
+            }
+        }
+        return false
     }
 
     // Recursively finds the close/dismiss button and clicks it.

@@ -31,9 +31,6 @@ object OrderTextParser {
         }
     }
 
-    fun parseAmountValue(amountStr: String): Int =
-        Regex("""\d+""").find(amountStr)?.value?.toIntOrNull() ?: 0
-
     fun parseDistanceValue(distanceStr: String): Double =
         Regex("""(\d+\.?\d*)""").find(distanceStr)?.value?.toDoubleOrNull() ?: 0.0
 
@@ -44,6 +41,8 @@ object OrderTextParser {
 
     fun extractAmount(text: String): String? {
         val patterns = listOf(
+            // Loadshare "₹55 + ₹25" (base + incentive) — match full expression first
+            Regex("""₹\s*\d+\.?\d*\s*\+\s*₹\s*\d+\.?\d*"""),
             Regex("""₹\s*(\d+\.?\d*)"""),
             Regex("""Rs\.?\s*(\d+\.?\d*)""", RegexOption.IGNORE_CASE),
             Regex("""(\d+\.?\d*)\s*₹"""),
@@ -56,6 +55,20 @@ object OrderTextParser {
             if (match != null) return match.value.trim()
         }
         return null
+    }
+
+    // Parses a rupee string to an integer. Handles:
+    //   "₹87"         → 87
+    //   "₹55 + ₹25"   → 80  (Loadshare base + incentive, summed for min-amount filter)
+    fun parseAmountValue(amountStr: String): Int {
+        val sumPattern = Regex("""₹\s*(\d+\.?\d*)\s*\+\s*₹\s*(\d+\.?\d*)""")
+        val sumMatch = sumPattern.find(amountStr)
+        if (sumMatch != null) {
+            val a = sumMatch.groupValues[1].toDoubleOrNull()?.toInt() ?: 0
+            val b = sumMatch.groupValues[2].toDoubleOrNull()?.toInt() ?: 0
+            return a + b
+        }
+        return Regex("""\d+""").find(amountStr)?.value?.toIntOrNull() ?: 0
     }
 
     fun extractLocations(platform: DeliveryPlatform, lines: List<String>): Pair<String, String> =
@@ -79,14 +92,22 @@ object OrderTextParser {
             "choose order", "accept order", "accept", "view order", "decline",
             "skip", "new order", "order available", "order request",
             // Screen titles and app chrome — never location names
-            "orders near you", "available orders", "nearby orders", "loadshare"
+            "orders near you", "available orders", "nearby orders", "loadshare",
+            // Promotional / incentive badges (shown at top of Loadshare order cards)
+            "demand surge included", "demand surge",
+            // Navigation elements
+            "view more orders", "view more"
         )
+        // Standalone distance labels like "2.8 km", "1.9 km" — not location names
+        val distanceLine = Regex("""^\d+\.?\d*\s*(km|mi|m)\s*$""", RegexOption.IGNORE_CASE)
         val candidates = lines.filter { line ->
             val l = line.trim()
             l.length in 4..50
                 && !l.contains('₹')
                 && !l.all { it.isDigit() || it == '.' || it == ' ' }
                 && l.lowercase() !in actionTexts
+                && !distanceLine.matches(l)
+                && !l.lowercase().contains("surge")   // catch future surge badge variants
         }
         val pickup = candidates.getOrNull(0) ?: "N/A"
         val drop   = candidates.getOrNull(1) ?: "N/A"

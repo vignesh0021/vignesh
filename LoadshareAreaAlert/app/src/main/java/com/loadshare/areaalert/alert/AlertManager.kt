@@ -43,7 +43,9 @@ class AlertManager @Inject constructor(
 ) {
     companion object {
         private const val ALERT_CHANNEL_ID = "loadshare_alerts"
-        private const val DUPLICATE_WINDOW_MS = 30_000L
+        // 5-minute dedup: prevents re-alerting the same order while the user is
+        // actively on the Loadshare screen after accepting it.
+        private const val DUPLICATE_WINDOW_MS = 300_000L
         private const val NOTIFICATION_ID_BASE = 2000
     }
 
@@ -51,6 +53,19 @@ class AlertManager @Inject constructor(
     private var notificationCounter = NOTIFICATION_ID_BASE
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var cachedZones: List<GeoZone> = emptyList()
+
+    // Snooze: user tapped "Snooze" on overlay after accepting an order.
+    // All processScreenText calls return early until snooze expires.
+    @Volatile private var snoozeUntilMs = 0L
+
+    fun snoozeFor(durationMs: Long) {
+        snoozeUntilMs = System.currentTimeMillis() + durationMs
+    }
+
+    fun isSnoozed(): Boolean = System.currentTimeMillis() < snoozeUntilMs
+
+    fun snoozeRemainingSeconds(): Int =
+        ((snoozeUntilMs - System.currentTimeMillis()) / 1000L).coerceAtLeast(0).toInt()
 
     @Volatile private var currentPackageName = ""
 
@@ -86,6 +101,8 @@ class AlertManager @Inject constructor(
     ) {
         // Working hours gate — silently skip all processing outside configured hours
         if (!isWithinWorkingHours(settings)) return
+        // Snooze gate — user tapped "Snooze" on the overlay after accepting an order
+        if (isSnoozed()) return
 
         currentPackageName = packageName
         val platform = DeliveryPlatform.fromPackageName(packageName)
@@ -301,8 +318,9 @@ class AlertManager @Inject constructor(
     }
 
     private fun playUri(uri: Uri, volume: Float): Boolean = try {
-        // Use USAGE_ALARM so the sound plays even during phone calls —
-        // ToneGenerator on STREAM_NOTIFICATION was silenced by call audio focus.
+        // Use USAGE_ALARM so the sound plays even during phone calls.
+        // prepareAsync() is non-blocking — sound starts as soon as the system
+        // has buffered enough, eliminating the small freeze from prepare().
         MediaPlayer().apply {
             setAudioAttributes(
                 AudioAttributes.Builder()
@@ -312,9 +330,9 @@ class AlertManager @Inject constructor(
             )
             setDataSource(context, uri)
             setVolume(volume, volume)
+            setOnPreparedListener { it.start() }
             setOnCompletionListener { it.release() }
-            prepare()
-            start()
+            prepareAsync()
         }
         true
     } catch (_: Exception) { false }

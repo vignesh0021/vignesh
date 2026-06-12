@@ -143,6 +143,20 @@
             android:focusable="true"
             android:fontFamily="sans-serif-medium" />
 
+        <!-- Snooze — tap after accepting an order to stop re-alerts for 10 minutes -->
+        <TextView
+            android:id="@+id/btn_snooze"
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:layout_marginTop="8dp"
+            android:text="SNOOZE 10 MIN (Order Accepted)"
+            android:textColor="#9E9E9E"
+            android:textSize="11sp"
+            android:gravity="center"
+            android:background="#2C2C4E"
+            android:clickable="true"
+            android:focusable="true" />
+
     </LinearLayout>
 
 </androidx.cardview.widget.CardView>

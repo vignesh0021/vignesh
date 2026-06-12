@@ -124,6 +124,34 @@ class OrderTextParserTest {
     }
 
     @Test
+    fun `loadshare base plus incentive amount is extracted as full expression`() {
+        assertEquals("₹55 + ₹25", OrderTextParser.extractAmount("₹55 + ₹25"))
+        assertEquals("₹55 + ₹10", OrderTextParser.extractAmount("₹55 + ₹10"))
+    }
+
+    @Test
+    fun `loadshare base plus incentive amount value is summed`() {
+        assertEquals(80, OrderTextParser.parseAmountValue("₹55 + ₹25"))
+        assertEquals(65, OrderTextParser.parseAmountValue("₹55 + ₹10"))
+    }
+
+    @Test
+    fun `loadshare extraction filters demand surge badge`() {
+        val lines = listOf("Demand surge included", "ECR Kottivakkam", "Burger King", "2.8 km", "ECR Kottivakkam", "Choose Order")
+        val (pickup, drop) = OrderTextParser.extractLoadshareLocations(lines)
+        assertEquals("ECR Kottivakkam", pickup)
+        assertEquals("Burger King", drop)   // restaurant line — still second candidate
+    }
+
+    @Test
+    fun `loadshare extraction filters standalone distance lines`() {
+        val lines = listOf("ECR Kottivakkam", "1.9 km", "ECR Kottivakkam", "3.6 km", "Choose Order")
+        val (pickup, drop) = OrderTextParser.extractLoadshareLocations(lines)
+        assertEquals("ECR Kottivakkam", pickup)
+        assertEquals("ECR Kottivakkam", drop)
+    }
+
+    @Test
     fun `distance extracted with km unit`() {
         assertEquals("2.3 km", OrderTextParser.extractDistance("Distance: 2.3 km away"))
     }
