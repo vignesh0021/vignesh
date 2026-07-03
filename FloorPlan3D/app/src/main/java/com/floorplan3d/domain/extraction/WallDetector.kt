@@ -46,12 +46,26 @@ data class WallDetectionResult(
  */
 class WallDetector(private val log: PlanLogger = PlanLog) {
 
-    fun detect(pixels: IntArray, width: Int, height: Int): WallDetectionResult {
+    /** Analyses the single most significant plan on the sheet. */
+    fun detect(pixels: IntArray, width: Int, height: Int): WallDetectionResult =
+        detectAll(pixels, width, height).first()
+
+    /**
+     * Analyses every plan-sized ink cluster on the sheet — a G+2 CAD sheet with
+     * three floor plans yields three results. Ordered by significance (densest
+     * plan first); the caller decides how to stack them into storeys.
+     */
+    fun detectAll(pixels: IntArray, width: Int, height: Int): List<WallDetectionResult> {
         require(pixels.size >= width * height) { "pixel buffer smaller than width*height" }
-        val warnings = mutableListOf<String>()
 
         // -- 1. Binarise ------------------------------------------------------
+        // Two masks: `ink` (all drawing strokes — used for region finding and
+        // content bounds so dimension lines still define the drawing extents)
+        // and `wallInk` (neutral-coloured strokes only). CAD sheets draw site
+        // boundaries, dimension lines and labels in colour while walls are
+        // black/grey; coloured strokes must never become 3D walls.
         val ink = BooleanArray(width * height)
+        val wallInk = BooleanArray(width * height)
         var sum = 0L
         val gray = IntArray(width * height)
         for (i in 0 until width * height) {
@@ -66,23 +80,54 @@ class WallDetector(private val log: PlanLogger = PlanLog) {
         for (g in gray) if (g < threshold) darkCount++
         val inverted = darkCount > width * height / 2
         if (inverted) log.d(TAG, "Image appears inverted (dark background); flipping mask")
-        for (i in 0 until width * height) ink[i] = (gray[i] < threshold) != inverted
+        var neutralCount = 0
+        var allCount = 0
+        for (i in 0 until width * height) {
+            val isInk = (gray[i] < threshold) != inverted
+            ink[i] = isInk
+            if (isInk) {
+                allCount++
+                val p = pixels[i]
+                val r = (p shr 16) and 0xFF
+                val gch = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                val chroma = max(r, max(gch, b)) - min(r, min(gch, b))
+                if (chroma <= MAX_WALL_CHROMA) {
+                    wallInk[i] = true
+                    neutralCount++
+                }
+            }
+        }
+        // Plans drawn entirely in colour: fall back to using every stroke.
+        if (neutralCount * 10 < allCount) {
+            log.d(TAG, "Drawing is predominantly coloured; keeping coloured strokes as walls")
+            System.arraycopy(ink, 0, wallInk, 0, ink.size)
+        }
 
-        // -- 2. Isolate the main plan region -----------------------------------
-        val region = PlanRegionFinder.find(ink, width, height)
-        if (region == null) {
+        // -- 2. Isolate the plan region(s) ---------------------------------------
+        val regions = PlanRegionFinder.findAll(ink, width, height)
+        if (regions.isEmpty()) {
             log.w(TAG, "No dark content found in image at all")
-            return WallDetectionResult(
+            return listOf(WallDetectionResult(
                 emptyList(),
                 floatArrayOf(0f, 0f, width.toFloat(), height.toFloat()),
                 usedFallback = true,
                 warnings = listOf("The image appears blank; nothing could be extracted"),
-            )
+            ))
         }
+        return regions.map { region -> analyseRegion(ink, wallInk, width, region, threshold) }
+    }
+
+    private fun analyseRegion(
+        ink: BooleanArray,
+        wallInk: BooleanArray,
+        width: Int,
+        region: IntArray,
+        threshold: Int,
+    ): WallDetectionResult {
+        val warnings = mutableListOf<String>()
         val (rx0, ry0, rx1, ry1) = region
-        if ((rx1 - rx0 + 1) * (ry1 - ry0 + 1) < width.toLong() * height / 2) {
-            log.d(TAG, "Isolated plan region ($rx0,$ry0)-($rx1,$ry1) out of ${width}x$height sheet")
-        }
+        log.d(TAG, "Analysing plan region ($rx0,$ry0)-($rx1,$ry1)")
 
         // Ink bounds within the region.
         var minX = rx1 + 1; var minY = ry1 + 1; var maxX = rx0 - 1; var maxY = ry0 - 1
@@ -107,7 +152,8 @@ class WallDetector(private val log: PlanLogger = PlanLog) {
             val gy = (ry0 + y) * width + rx0
             for (x in 1 until rw - 1) {
                 val i = gy + x
-                core[y * rw + x] = ink[i] && ink[i - 1] && ink[i + 1] && ink[i - width] && ink[i + width]
+                core[y * rw + x] = wallInk[i] && wallInk[i - 1] && wallInk[i + 1] &&
+                    wallInk[i - width] && wallInk[i + width]
             }
         }
 
@@ -162,8 +208,16 @@ class WallDetector(private val log: PlanLogger = PlanLog) {
         log.d(TAG, "Detected ${horizontal.size} horizontal + ${vertical.size} vertical wall bands " +
             "(region ${rw}x$rh, grid ${gw}x$gh, scale=$scale, threshold=$threshold, minRun=$minRun)")
 
-        // -- 5. Fallback --------------------------------------------------------
-        if (walls.size < 4) {
+        // -- 5. Prune disconnected fragments ------------------------------------
+        // Walls form a connected network; furniture, counters and stair symbols
+        // survive erosion as short isolated strips floating inside rooms.
+        val kept = pruneDisconnected(walls)
+        if (kept.size < walls.size) {
+            log.d(TAG, "Pruned ${walls.size - kept.size} disconnected fragment(s) (furniture/symbols)")
+        }
+
+        // -- 6. Fallback --------------------------------------------------------
+        if (kept.size < 4) {
             log.w(TAG, "Only ${walls.size} walls detected; falling back to perimeter box")
             warnings += "Wall layout was unclear; showing the plan outline as a perimeter model"
             val t = max(3f, min(bounds[2] - bounds[0], bounds[3] - bounds[1]) * 0.02f)
@@ -178,7 +232,51 @@ class WallDetector(private val log: PlanLogger = PlanLog) {
                 bounds, usedFallback = true, warnings = warnings,
             )
         }
-        return WallDetectionResult(walls, bounds, usedFallback = false, warnings = warnings)
+        return WallDetectionResult(kept, bounds, usedFallback = false, warnings = warnings)
+    }
+
+    /**
+     * Keeps only wall components that carry a meaningful share of the total
+     * wall length. Two walls are connected when their strips (expanded by
+     * their thickness plus a small tolerance) touch — true walls meet at
+     * corners and junctions, furniture floats alone inside rooms.
+     */
+    private fun pruneDisconnected(walls: List<DetectedWall>): List<DetectedWall> {
+        val n = walls.size
+        if (n <= 4) return walls
+        val parent = IntArray(n) { it }
+        fun find(a: Int): Int {
+            var r = a
+            while (parent[r] != r) r = parent[r]
+            var c = a
+            while (parent[c] != c) { val next = parent[c]; parent[c] = r; c = next }
+            return r
+        }
+        fun union(a: Int, b: Int) { parent[find(a)] = find(b) }
+
+        fun touches(a: DetectedWall, b: DetectedWall): Boolean {
+            val tol = (max(a.thicknessPx, b.thicknessPx) / 2f) + CONNECT_TOLERANCE_PX
+            val ax1 = min(a.x1Px, a.x2Px) - tol; val ax2 = max(a.x1Px, a.x2Px) + tol
+            val ay1 = min(a.y1Px, a.y2Px) - tol; val ay2 = max(a.y1Px, a.y2Px) + tol
+            val bx1 = min(b.x1Px, b.x2Px); val bx2 = max(b.x1Px, b.x2Px)
+            val by1 = min(b.y1Px, b.y2Px); val by2 = max(b.y1Px, b.y2Px)
+            return ax1 <= bx2 && bx1 <= ax2 && ay1 <= by2 && by1 <= ay2
+        }
+
+        for (i in 0 until n) {
+            for (j in i + 1 until n) {
+                if (find(i) != find(j) && touches(walls[i], walls[j])) union(i, j)
+            }
+        }
+
+        fun length(w: DetectedWall): Float =
+            max(kotlin.math.abs(w.x2Px - w.x1Px), kotlin.math.abs(w.y2Px - w.y1Px))
+
+        val componentLength = HashMap<Int, Float>()
+        for (i in 0 until n) componentLength.merge(find(i), length(walls[i]), Float::plus)
+        val maxLength = componentLength.values.max()
+        val keep = componentLength.filterValues { it >= maxLength * MIN_COMPONENT_FRACTION }.keys
+        return walls.filterIndexed { i, _ -> find(i) in keep }
     }
 
     private operator fun IntArray.component1() = this[0]
@@ -245,6 +343,12 @@ class WallDetector(private val log: PlanLogger = PlanLog) {
         const val GRID_MAX = 600
         /** A wall must span at least this fraction of the plan region's larger dimension. */
         const val MIN_WALL_FRACTION = 0.035
+        /** Ink chroma (max−min channel) above this is coloured annotation, not a wall. */
+        const val MAX_WALL_CHROMA = 70
+        /** Extra reach when testing whether two wall strips touch. */
+        const val CONNECT_TOLERANCE_PX = 4f
+        /** Wall components shorter than this share of the biggest one are furniture. */
+        const val MIN_COMPONENT_FRACTION = 0.2f
     }
 }
 
@@ -262,8 +366,17 @@ object PlanRegionFinder {
     const val TILE = 16
     /** Minimum fraction of a tile that must be ink — a 1–2 px border line is ~6–12%. */
     const val MIN_TILE_INK = 0.13
+    /** Clusters scoring below this share of the best cluster are legends/labels, not plans. */
+    const val MIN_REGION_SCORE_FRACTION = 0.25
+    const val MAX_REGIONS = 4
+    /** Cluster boxes must interpenetrate this deep (both axes) to count as one plan. */
+    const val MERGE_MIN_OVERLAP_PX = 24
 
-    fun find(ink: BooleanArray, width: Int, height: Int): IntArray? {
+    fun find(ink: BooleanArray, width: Int, height: Int): IntArray? =
+        findAll(ink, width, height).firstOrNull()
+
+    /** All plan-sized regions, most significant first. Empty for a blank image. */
+    fun findAll(ink: BooleanArray, width: Int, height: Int): List<IntArray> {
         val tw = (width + TILE - 1) / TILE
         val th = (height + TILE - 1) / TILE
         val inkCount = IntArray(tw * th)
@@ -279,7 +392,7 @@ object PlanRegionFinder {
                 }
             }
         }
-        if (!any) return null
+        if (!any) return emptyList()
 
         val solid = BooleanArray(tw * th)
         for (ty in 0 until th) {
@@ -292,8 +405,7 @@ object PlanRegionFinder {
 
         // 8-connected components over solid tiles; score = total ink pixels.
         val label = IntArray(tw * th) { -1 }
-        var bestScore = -1L
-        var best: IntArray? = null
+        val components = mutableListOf<Pair<Long, IntArray>>() // score, tile bbox
         val stack = ArrayDeque<Int>()
         var currentLabel = 0
         for (start in 0 until tw * th) {
@@ -324,19 +436,56 @@ object PlanRegionFinder {
                     }
                 }
             }
-            if (score > bestScore) {
-                bestScore = score
-                best = intArrayOf(minTx, minTy, maxTx, maxTy)
-            }
+            components += score to intArrayOf(minTx, minTy, maxTx, maxTy)
             currentLabel++
         }
 
-        val b = best ?: return intArrayOf(0, 0, width - 1, height - 1)
+        if (components.isEmpty()) return listOf(intArrayOf(0, 0, width - 1, height - 1))
+
         // One-tile margin so wall edges and hugging dimension text stay inside.
-        val x0 = max(0, (b[0] - 1) * TILE)
-        val y0 = max(0, (b[1] - 1) * TILE)
-        val x1 = min(width - 1, (b[2] + 2) * TILE - 1)
-        val y1 = min(height - 1, (b[3] + 2) * TILE - 1)
-        return intArrayOf(x0, y0, x1, y1)
+        val boxes = components.map { (score, b) ->
+            score to intArrayOf(
+                max(0, (b[0] - 1) * TILE),
+                max(0, (b[1] - 1) * TILE),
+                min(width - 1, (b[2] + 2) * TILE - 1),
+                min(height - 1, (b[3] + 2) * TILE - 1),
+            )
+        }.toMutableList()
+
+        // A single plan often fragments into several clusters (open areas like
+        // car porches carry only hair-line ink). Sibling fragments genuinely
+        // interpenetrate, so require a solid two-way intersection before
+        // merging; separate plans keep clear white gutters, their boxes never
+        // intersect, and they stay apart.
+        fun intersectDeeply(a: IntArray, b: IntArray): Boolean {
+            val dx = min(a[2], b[2]) - max(a[0], b[0])
+            val dy = min(a[3], b[3]) - max(a[1], b[1])
+            return dx >= MERGE_MIN_OVERLAP_PX && dy >= MERGE_MIN_OVERLAP_PX
+        }
+        var merged = true
+        while (merged) {
+            merged = false
+            outer@ for (i in boxes.indices) {
+                for (j in i + 1 until boxes.size) {
+                    val a = boxes[i].second
+                    val b = boxes[j].second
+                    if (intersectDeeply(a, b)) {
+                        boxes[i] = (boxes[i].first + boxes[j].first) to intArrayOf(
+                            min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]),
+                        )
+                        boxes.removeAt(j)
+                        merged = true
+                        break@outer
+                    }
+                }
+            }
+        }
+
+        val bestScore = boxes.maxOf { it.first }
+        return boxes
+            .filter { it.first >= bestScore * MIN_REGION_SCORE_FRACTION }
+            .sortedByDescending { it.first }
+            .take(MAX_REGIONS)
+            .map { it.second }
     }
 }

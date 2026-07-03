@@ -47,6 +47,13 @@ class PlanRepository(
         return id
     }
 
+    /** Persists engineer edits (storey height etc.) back onto an existing plan. */
+    suspend fun updatePlan(id: Long, plan: FloorPlan) {
+        val entity = dao.findById(id) ?: return
+        dao.upsert(entity.copy(floorPlanJson = json.encodeToString(FloorPlan.serializer(), plan)))
+        log.d(TAG, "Updated plan #$id")
+    }
+
     suspend fun deletePlan(saved: SavedPlan) {
         dao.findById(saved.id)?.let { entity ->
             dao.delete(entity)

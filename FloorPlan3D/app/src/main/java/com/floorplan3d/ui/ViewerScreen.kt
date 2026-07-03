@@ -24,7 +24,10 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -32,10 +35,13 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -73,6 +79,7 @@ fun ViewerScreen(
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
+    var showHeightDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(planId) { viewModel.load(planId) }
 
@@ -85,9 +92,27 @@ fun ViewerScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+                actions = {
+                    if (state.plan != null) {
+                        IconButton(onClick = { showHeightDialog = true }) {
+                            Icon(Icons.Default.Tune, contentDescription = "Edit storey height")
+                        }
+                    }
+                },
             )
         },
     ) { padding ->
+        if (showHeightDialog && state.plan != null) {
+            StoreyHeightDialog(
+                currentMetres = state.plan!!.plan.wallHeightMm / 1000.0,
+                floorCount = state.plan!!.plan.floorCount,
+                onConfirm = { metres ->
+                    viewModel.setStoreyHeight(metres)
+                    showHeightDialog = false
+                },
+                onDismiss = { showHeightDialog = false },
+            )
+        }
         when {
             state.loading -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
@@ -114,6 +139,47 @@ fun ViewerScreen(
             }
         }
     }
+}
+
+/** Engineer input: storey (floor-to-floor) height in metres, IS residential range 2.75–3.6 m. */
+@Composable
+private fun StoreyHeightDialog(
+    currentMetres: Double,
+    floorCount: Int,
+    onConfirm: (Double) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember { mutableStateOf("%.2f".format(currentMetres)) }
+    val parsed = text.replace(',', '.').toDoubleOrNull()
+    val valid = parsed != null && parsed in 2.2..6.0
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Storey height") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Floor-to-floor height (m)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = !valid,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Applied to all $floorCount storey(s). NBC/IS residential norm is " +
+                        "2.75–3.6 m; allowed range 2.2–6.0 m.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = valid, onClick = { onConfirm(parsed!!) }) { Text("Apply") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable

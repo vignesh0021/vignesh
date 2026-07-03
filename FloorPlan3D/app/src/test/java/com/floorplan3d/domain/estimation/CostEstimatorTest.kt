@@ -87,6 +87,27 @@ class CostEstimatorTest {
     }
 
     @Test
+    fun `multiple floors multiply slab and flooring quantities`() {
+        val single = QuantityTakeoff.compute(plan(listOf(MaterialType.TILE, MaterialType.CONCRETE)))
+        val double = QuantityTakeoff.compute(
+            plan(listOf(MaterialType.TILE, MaterialType.CONCRETE)).copy(floorCount = 2))
+        assertEquals(single.floorAreaM2 * 2, double.floorAreaM2, 0.001)
+        assertEquals(single.slabVolumeM3 * 2, double.slabVolumeM3, 0.001)
+        assertEquals(
+            single.byMaterial[MaterialType.TILE]!! * 2,
+            double.byMaterial[MaterialType.TILE]!!, 0.1)
+        // Wall quantities come from the walls themselves, not the floor count.
+        assertEquals(single.wallVolumeM3, double.wallVolumeM3, 0.001)
+    }
+
+    @Test
+    fun `assumptions cite indian standard thumb rules`() {
+        val q = QuantityTakeoff.compute(plan(listOf(MaterialType.BRICK, MaterialType.CONCRETE)))
+        assertTrue(q.assumptions.any { it.contains("IS 456") })
+        assertTrue(q.assumptions.any { it.contains("IS 2212") || it.contains("CPWD") })
+    }
+
+    @Test
     fun `plan without walls still estimates floor materials`() {
         val estimate = estimator.estimate(
             plan(listOf(MaterialType.TILE)).copy(walls = emptyList()),

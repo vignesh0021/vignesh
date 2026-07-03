@@ -32,7 +32,13 @@ data class MeshLabel(val x: Float, val y: Float, val z: Float, val text: String,
  */
 object PlanMeshBuilder {
 
-    private val WALL_COLOR = floatArrayOf(0.82f, 0.78f, 0.72f, 1f)
+    /** One wall tint per storey so elevations read the building's floors at a glance. */
+    private val WALL_COLORS = arrayOf(
+        floatArrayOf(0.82f, 0.78f, 0.72f, 1f), // ground — warm sandstone
+        floatArrayOf(0.72f, 0.79f, 0.85f, 1f), // first — light blue
+        floatArrayOf(0.78f, 0.85f, 0.74f, 1f), // second — light green
+        floatArrayOf(0.86f, 0.80f, 0.70f, 1f), // third — tan
+    )
     private val FLOOR_COLOR = floatArrayOf(0.55f, 0.58f, 0.62f, 1f)
 
     fun build(plan: FloorPlan): PlanMesh {
@@ -47,14 +53,18 @@ object PlanMeshBuilder {
         fun mx(mm: Double) = (mm / 1000.0).toFloat() - cx
         fun mz(mm: Double) = (mm / 1000.0).toFloat() - cz
 
-        // Floor slab, top face at Y=0.
+        // One slab per storey; the ground slab's top face sits at Y=0.
         val slabT = (plan.floorThicknessMm / 1000.0).toFloat()
-        addBox(
-            verts, tris, lines,
-            mx(0.0), -slabT, mz(0.0),
-            mx(plan.widthMm), 0f, mz(plan.depthMm),
-            FLOOR_COLOR,
-        )
+        val storeyH = (plan.wallHeightMm / 1000.0).toFloat()
+        for (level in 0 until plan.floorCount.coerceAtLeast(1)) {
+            val top = level * storeyH
+            addBox(
+                verts, tris, lines,
+                mx(0.0), top - slabT, mz(0.0),
+                mx(plan.widthMm), top, mz(plan.depthMm),
+                FLOOR_COLOR,
+            )
+        }
 
         for (wall in plan.walls) {
             val half = (wall.thicknessMm / 2000.0).toFloat()
@@ -62,16 +72,22 @@ object PlanMeshBuilder {
             val x2 = mx(maxOf(wall.startXMm, wall.endXMm))
             val z1 = mz(minOf(wall.startYMm, wall.endYMm))
             val z2 = mz(maxOf(wall.startYMm, wall.endYMm))
-            val h = (wall.heightMm / 1000.0).toFloat()
+            val base = (wall.baseMm / 1000.0).toFloat()
+            val top = base + (wall.heightMm / 1000.0).toFloat()
+            val level = if (plan.wallHeightMm > 0) (wall.baseMm / plan.wallHeightMm).toInt() else 0
+            val color = WALL_COLORS[level.coerceIn(0, WALL_COLORS.size - 1)]
             if (wall.isHorizontal) {
-                addBox(verts, tris, lines, x1, 0f, z1 - half, x2, h, z1 + half, WALL_COLOR)
+                addBox(verts, tris, lines, x1, base, z1 - half, x2, top, z1 + half, color)
             } else {
-                addBox(verts, tris, lines, x1 - half, 0f, z1, x1 + half, h, z2, WALL_COLOR)
+                addBox(verts, tris, lines, x1 - half, base, z1, x1 + half, top, z2, color)
             }
-            // Dimension label floating above the wall midpoint.
-            val midX = (x1 + x2) / 2f
-            val midZ = (z1 + z2) / 2f
-            labels += MeshLabel(midX, h + 0.15f, midZ, formatMetres(wall.lengthMm), isElevation = false)
+            // Dimension label floating above the wall midpoint (ground floor only,
+            // to keep upper storeys readable).
+            if (wall.baseMm == 0.0) {
+                val midX = (x1 + x2) / 2f
+                val midZ = (z1 + z2) / 2f
+                labels += MeshLabel(midX, top + 0.15f, midZ, formatMetres(wall.lengthMm), isElevation = false)
+            }
         }
 
         // Elevation labels stacked at the model's front-left corner.
@@ -85,7 +101,7 @@ object PlanMeshBuilder {
 
         val radius = hypot(
             hypot((plan.widthMm / 2000.0), (plan.depthMm / 2000.0)),
-            plan.wallHeightMm / 1000.0,
+            plan.wallHeightMm / 1000.0 * plan.floorCount.coerceAtLeast(1),
         ).toFloat().coerceAtLeast(1f)
 
         return PlanMesh(
@@ -145,7 +161,7 @@ object PlanMeshBuilder {
 
     /** Trims a plan to the maximum wall count the mesh can index, longest walls first. */
     fun capWalls(walls: List<WallSegment>): List<WallSegment> {
-        val maxWalls = Short.MAX_VALUE / 24 - 2
+        val maxWalls = Short.MAX_VALUE / 24 - 8 // reserve boxes for per-storey slabs
         return if (walls.size <= maxWalls) walls
         else walls.sortedByDescending { it.lengthMm }.take(maxWalls)
     }

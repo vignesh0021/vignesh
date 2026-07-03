@@ -29,6 +29,8 @@ data class WallSegment(
     val endYMm: Double,
     val thicknessMm: Double,
     val heightMm: Double,
+    /** Bottom of the wall above ground level — storey index × storey height. */
+    val baseMm: Double = 0.0,
 ) {
     val lengthMm: Double get() = hypot(endXMm - startXMm, endYMm - startYMm)
     val isHorizontal: Boolean get() = kotlin.math.abs(endYMm - startYMm) <= kotlin.math.abs(endXMm - startXMm)
@@ -68,6 +70,8 @@ data class FloorPlan(
     val scaleMmPerPx: Double = 0.0,
     val scaleRatio: Int? = null,
     val warnings: List<String> = emptyList(),
+    /** Number of storeys stacked in the model (multi-plan sheets yield one per floor). */
+    val floorCount: Int = 1,
 ) {
     val floorAreaM2: Double get() = (widthMm / 1000.0) * (depthMm / 1000.0)
 

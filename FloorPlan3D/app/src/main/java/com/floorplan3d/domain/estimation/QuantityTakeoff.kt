@@ -36,19 +36,31 @@ object QuantityTakeoff {
 
     fun compute(plan: FloorPlan): Quantities {
         val assumptions = mutableListOf<String>()
+        val floors = plan.floorCount.coerceAtLeast(1)
 
+        // Walls carry their own storey via baseMm, so summing covers all floors.
         val wallVolume = plan.walls.sumOf {
             (it.lengthMm / 1000.0) * (it.heightMm / 1000.0) * (it.thicknessMm / 1000.0)
         }
         val wallSurface = plan.walls.sumOf {
             2.0 * (it.lengthMm / 1000.0) * (it.heightMm / 1000.0)
         }
-        val floorArea = plan.floorAreaM2
+        // Slabs, flooring and ceiling finishes repeat on every storey.
+        val floorArea = plan.floorAreaM2 * floors
         val slabVolume = floorArea * (plan.floorThicknessMm / 1000.0)
 
-        assumptions += "Wall volume %.1f m³, wall surface %.0f m², floor area %.0f m²"
+        if (floors > 1) assumptions += "$floors storeys: slab, flooring and finishes counted per floor"
+        assumptions += "Wall volume %.1f m³, wall surface %.0f m², floor area %.0f m² (all floors)"
             .format(wallVolume, wallSurface, floorArea)
-        assumptions += "Slab thickness ${(plan.floorThicknessMm).toInt()} mm; openings not deducted"
+        assumptions += "RCC slab ${(plan.floorThicknessMm).toInt()} mm thick; door/window openings not deducted"
+        assumptions += "Brickwork in CM 1:6: $BRICKS_PER_M3 bricks + " +
+            "$BRICKWORK_CEMENT_BAGS_PER_M3 bags cement + $BRICKWORK_SAND_M3_PER_M3 m³ sand per m³ (IS 2212 / CPWD norms)"
+        assumptions += "RCC M20 mix 1:1.5:3 (IS 456): $RCC_CEMENT_BAGS_PER_M3 bags cement, " +
+            "$RCC_SAND_M3_PER_M3 m³ sand, $RCC_AGGREGATE_M3_PER_M3 m³ aggregate, " +
+            "${RCC_STEEL_KG_PER_M3.toInt()} kg TMT steel per m³ slab"
+        assumptions += "Plaster 12 mm both faces in CM 1:4 (IS 1661): " +
+            "$PLASTER_CEMENT_BAGS_PER_M2 bag cement + $PLASTER_SAND_M3_PER_M2 m³ sand per m²"
+        assumptions += "Emulsion paint, two coats (IS 2395): $PAINT_LITRES_PER_M2 L per m² of wall"
 
         val materials = plan.materials.toSet()
         val q = mutableMapOf<MaterialType, Double>()

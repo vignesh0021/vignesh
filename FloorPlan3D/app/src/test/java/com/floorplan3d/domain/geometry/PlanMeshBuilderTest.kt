@@ -79,6 +79,22 @@ class PlanMeshBuilderTest {
     }
 
     @Test
+    fun `two storeys stack walls and slabs`() {
+        val twoFloors = plan(listOf(
+            wall(0.0, 0.0, 10_000.0, 0.0),
+            wall(0.0, 0.0, 10_000.0, 0.0).copy(baseMm = 3000.0),
+        )).copy(floorCount = 2)
+        val mesh = PlanMeshBuilder.build(twoFloors)
+        // 2 walls + 2 slabs = 4 boxes.
+        assertEquals(4 * 24, mesh.vertices.size / PlanMeshBuilder.FLOATS_PER_VERTEX)
+        var maxY = -Float.MAX_VALUE
+        for (i in mesh.vertices.indices step PlanMeshBuilder.FLOATS_PER_VERTEX) {
+            if (mesh.vertices[i + 1] > maxY) maxY = mesh.vertices[i + 1]
+        }
+        assertEquals("upper wall tops out at 6 m", 6.0f, maxY, 0.001f)
+    }
+
+    @Test
     fun `triangle indices are within vertex bounds`() {
         val mesh = PlanMeshBuilder.build(plan(listOf(
             wall(0.0, 0.0, 10_000.0, 0.0),

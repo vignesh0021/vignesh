@@ -22,6 +22,17 @@ cost estimate based on current market prices.
     dependency — deterministic and fully unit-tested.
   - *Scale*: resolved by matching the largest annotated dimension against the
     drawing extents; explicit fallbacks with user-visible warnings otherwise.
+- **Full-building projection** — professional CAD sheets carrying several floor
+  plans (G / 1st / 2nd) are recognised as one building: every plan region is
+  extracted, scaled from its own dimensions, and stacked into a multi-storey
+  3D model with a distinct wall tint per floor, so elevations read the
+  building's storeys at a glance. Coloured strokes (red site boundaries, blue
+  dimension lines) are excluded from wall geometry, and isolated fragments
+  (furniture, counters, stair symbols) are pruned via wall-network
+  connectivity.
+- **Engineer controls** — storey height is editable in the viewer (NBC/IS
+  residential norms shown inline); the model, elevations and estimate rebuild
+  instantly and the change is persisted.
 - **3D visualization** — custom OpenGL ES 2.0 renderer (zero external engine
   dependencies): extruded walls + floor slab, per-vertex lighting, wireframe
   edge pass. Orbit / pan / pinch-zoom gestures; instant view presets — Plan
@@ -31,8 +42,11 @@ cost estimate based on current market prices.
   shown alongside the 3D view. Rendering is dirty-driven (draws only on
   change), so mid-range devices stay fluid and cool.
 - **Material & cost calculation** — quantity take-off from the model geometry
-  (wall volume/surface, slab volume, floor area) via documented CPWD-style
-  thumb rules, priced from a Room-cached catalog that refreshes from a remote
+  (wall volume/surface, slab volume per storey, floor area) via documented
+  Indian-standard thumb rules — brickwork in CM 1:6 (IS 2212/CPWD), RCC M20
+  mix 1:1.5:3 with 80 kg/m³ TMT steel (IS 456), 12 mm plaster (IS 1661), two
+  coats emulsion (IS 2395) — each cited in the estimate's assumptions list.
+  Priced from a Room-cached catalog that refreshes from a remote
   market-price feed (`pricing/material-prices.json`) and works fully offline.
   Cost breakdown by material with quantities, unit prices, assumptions and
   price-as-of timestamp, displayed alongside the 3D view.
@@ -154,6 +168,17 @@ and refreshes it at launch and on demand from
 Edit that file to publish updated market prices to all installs — unknown
 materials and malformed feeds are ignored safely, and the app keeps working
 offline with the last cached prices.
+
+## Roadmap
+
+- Door/window opening detection (subtract from wall volume, add joinery costs
+  from the plan's joineries table)
+- Roof/parapet generation and textured facade materials for photo-real
+  elevations
+- Plan generation: input plot size, facing (N/S/E/W), room requirements and
+  vastu preferences → generate a compliant layout with FSI/setback checks
+- Per-floor cost breakdown and BOQ export (PDF/Excel)
+- IS-code calculators (load estimation, footing sizing) as engineer tools
 
 ## Known limitations
 

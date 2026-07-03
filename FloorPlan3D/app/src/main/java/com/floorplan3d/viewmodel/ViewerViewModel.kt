@@ -65,6 +65,30 @@ class ViewerViewModel(
         camera = CameraState.forMode(mode, radius)
     }
 
+    /**
+     * Engineer override: storey height drives the extrusion, elevations and
+     * every height-dependent quantity, so the mesh and estimate are rebuilt
+     * and the change is persisted.
+     */
+    fun setStoreyHeight(heightMetres: Double) {
+        val saved = _state.value.plan ?: return
+        val old = saved.plan
+        val oldHeight = old.wallHeightMm.takeIf { it > 0 } ?: return
+        val newHeight = (heightMetres * 1000).coerceIn(2200.0, 6000.0)
+        val walls = old.walls.map { wall ->
+            val level = Math.round(wall.baseMm / oldHeight).toInt()
+            wall.copy(baseMm = level * newHeight, heightMm = newHeight)
+        }
+        val updated = old.copy(walls = walls, wallHeightMm = newHeight)
+        viewModelScope.launch {
+            planRepository.updatePlan(saved.id, updated)
+            val capped = updated.copy(walls = PlanMeshBuilder.capWalls(updated.walls))
+            val mesh = PlanMeshBuilder.build(capped)
+            _state.value = _state.value.copy(plan = saved.copy(plan = updated), mesh = mesh)
+            recalculateCosts()
+        }
+    }
+
     fun refreshPrices() {
         _state.value = _state.value.copy(refreshingPrices = true)
         viewModelScope.launch {
