@@ -228,6 +228,7 @@ private fun LabelOverlay(mesh: PlanMesh, camera: CameraState, viewportSize: IntS
 /** Top-down 2D wall drawing shown alongside the 3D view. */
 @Composable
 fun PlanMiniMap(plan: FloorPlan, modifier: Modifier = Modifier) {
+    val wallColor = MaterialTheme.colorScheme.onSurface
     Surface(modifier = modifier, shape = RoundedCornerShape(8.dp), tonalElevation = 3.dp) {
         Canvas(Modifier.fillMaxSize().padding(8.dp)) {
             val extentX = plan.widthMm.toFloat().coerceAtLeast(1f)
@@ -237,7 +238,7 @@ fun PlanMiniMap(plan: FloorPlan, modifier: Modifier = Modifier) {
             val oy = (size.height - extentY * scale) / 2f
             plan.walls.forEach { wall ->
                 drawLine(
-                    color = Color(0xFF37474F),
+                    color = wallColor,
                     start = Offset(ox + wall.startXMm.toFloat() * scale, oy + wall.startYMm.toFloat() * scale),
                     end = Offset(ox + wall.endXMm.toFloat() * scale, oy + wall.endYMm.toFloat() * scale),
                     strokeWidth = (wall.thicknessMm.toFloat() * scale).coerceIn(1.5f, 8f),

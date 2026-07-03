@@ -95,6 +95,56 @@ class WallDetectorTest {
     }
 
     @Test
+    fun `detects thin CAD walls on a large raster`() {
+        // Regression: real CAD exports draw walls only ~6 px thick on a 2400 px
+        // sheet. Erosion must run at full resolution or these disappear.
+        val w = 2400; val h = 1200
+        val img = blankImage(w, h)
+        val t = 6
+        img.fillRect(w, 300, 300, 2100, 300 + t)
+        img.fillRect(w, 300, 900 - t, 2100, 900)
+        img.fillRect(w, 300, 300, 300 + t, 900)
+        img.fillRect(w, 2100 - t, 300, 2100, 900)
+
+        val result = detector.detect(img, w, h)
+        assertFalse("thin walls should be detected, not fallback", result.usedFallback)
+        assertTrue("expected >= 4 walls, got ${result.walls.size}", result.walls.size >= 4)
+    }
+
+    @Test
+    fun `multi-plan sheet isolates the largest plan block`() {
+        // Two floor plans side by side plus a hair-line sheet frame, as on a
+        // professional CAD sheet: analysis must stick to the bigger plan.
+        val w = 1600; val h = 800
+        val img = blankImage(w, h)
+        // 1px sheet frame — must not merge the blocks into one region.
+        img.fillRect(w, 20, 20, w - 21, 20)
+        img.fillRect(w, 20, h - 21, w - 21, h - 21)
+        img.fillRect(w, 20, 20, 20, h - 21)
+        img.fillRect(w, w - 21, 20, w - 21, h - 21)
+        val t = 10
+        // Big plan on the left: 600x500.
+        img.fillRect(w, 100, 150, 700, 150 + t)
+        img.fillRect(w, 100, 650 - t, 700, 650)
+        img.fillRect(w, 100, 150, 100 + t, 650)
+        img.fillRect(w, 700 - t, 150, 700, 650)
+        // Smaller plan on the right: 300x250.
+        img.fillRect(w, 1100, 200, 1400, 200 + t)
+        img.fillRect(w, 1100, 450 - t, 1400, 450)
+        img.fillRect(w, 1100, 200, 1100 + t, 450)
+        img.fillRect(w, 1400 - t, 200, 1400, 450)
+
+        val result = detector.detect(img, w, h)
+        assertFalse(result.usedFallback)
+        assertTrue(result.walls.size >= 4)
+        // Every wall belongs to the left block; the right block and frame are ignored.
+        assertTrue("walls leaked outside the main plan region",
+            result.walls.all { it.x1Px < 800f && it.x2Px < 800f })
+        assertTrue("content bounds should hug the left plan",
+            result.contentBounds[2] < 800f)
+    }
+
+    @Test
     fun `blank image reports fallback with warning`() {
         val result = detector.detect(blankImage(400, 300), 400, 300)
         assertTrue(result.usedFallback)

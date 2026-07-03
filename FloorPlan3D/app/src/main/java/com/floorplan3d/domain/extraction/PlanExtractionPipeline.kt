@@ -63,11 +63,30 @@ class PlanExtractionPipeline(
 
         onStage(ExtractionStage.ASSEMBLING)
         val annotations = annotationParser.parse(ocrLines)
-        val plan = planAssembler.assemble(planName, detection, annotations)
+        // On multi-plan sheets only the isolated region was analysed; dimensions
+        // annotated on other storeys or in the title block must not drive scale.
+        val regionAnnotations = annotations.copy(
+            dimensions = annotations.dimensions.filter { d ->
+                inRegion(d.xPx, d.yPx, detection.contentBounds)
+            },
+        )
+        val plan = planAssembler.assemble(planName, detection, regionAnnotations)
+
+        log.d(TAG, "Kept ${regionAnnotations.dimensions.size}/${annotations.dimensions.size} " +
+            "dimensions inside the analysed plan region")
 
         log.d(TAG, "Extraction finished in ${System.currentTimeMillis() - startedAt} ms " +
             "(${plan.walls.size} walls, ${plan.dimensions.size} dimensions)")
         ExtractionOutput(plan, loaded.localCopy, bitmap)
+    }
+
+    /** True when the point sits inside the bounds expanded by 10% (dimension text hugs the drawing). */
+    private fun inRegion(x: Float?, y: Float?, bounds: FloatArray): Boolean {
+        if (x == null || y == null || (x == 0f && y == 0f)) return true // unpositioned: keep
+        val marginX = (bounds[2] - bounds[0]) * 0.10f
+        val marginY = (bounds[3] - bounds[1]) * 0.10f
+        return x >= bounds[0] - marginX && x <= bounds[2] + marginX &&
+            y >= bounds[1] - marginY && y <= bounds[3] + marginY
     }
 
     private suspend fun runOcr(bitmap: Bitmap): List<OcrLine> = try {
