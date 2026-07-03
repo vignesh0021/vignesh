@@ -10,7 +10,7 @@ import kotlin.math.hypot
  * World space is metres: X = plan east, Y = up, Z = plan south. The model is
  * centred on the origin so the orbit camera pivots around its middle.
  *
- * Vertex layout: interleaved [px py pz nx ny nz r g b a] (10 floats).
+ * Vertex layout: interleaved px py pz nx ny nz r g b a (10 floats).
  */
 data class PlanMesh(
     val vertices: FloatArray,

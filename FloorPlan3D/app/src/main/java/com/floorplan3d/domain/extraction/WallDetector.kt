@@ -157,7 +157,7 @@ class WallDetector(private val log: PlanLogger = PlanLog) {
         return WallDetectionResult(walls, bounds, usedFallback = false, warnings = warnings)
     }
 
-    /** A merged band of runs: along-axis [start..end], across-axis [lo..hi] (grid cells). */
+    /** A merged band of runs: along-axis start..end, across-axis lo..hi (grid cells). */
     private data class Band(var start: Int, var end: Int, var lo: Int, var hi: Int)
 
     private fun scanBands(core: BooleanArray, gw: Int, gh: Int, minRun: Int, horizontal: Boolean): List<Band> {

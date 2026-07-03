@@ -90,7 +90,7 @@ object Mat4 {
     }
 
     /**
-     * Transforms [x,y,z,1] by [m] and returns normalised device coordinates + clip w.
+     * Transforms the point (x, y, z, 1) by [m] and returns normalised device coordinates + clip w.
      * Returns null when the point is behind the camera (w <= 0).
      */
     fun project(m: FloatArray, x: Float, y: Float, z: Float): FloatArray? {
