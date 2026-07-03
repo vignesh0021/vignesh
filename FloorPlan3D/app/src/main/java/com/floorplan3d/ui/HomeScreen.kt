@@ -14,11 +14,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.outlined.Architecture
+import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -42,9 +44,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import com.floorplan3d.core.PlanLog
 import com.floorplan3d.data.repository.SavedPlan
 import com.floorplan3d.viewmodel.HomeViewModel
 import com.floorplan3d.viewmodel.ImportState
@@ -85,8 +90,19 @@ fun HomeScreen(
         onOpenPlan(done.planId)
     }
 
+    var showDiagnostics by remember { mutableStateOf(false) }
+
     Scaffold(
-        topBar = { TopAppBar(title = { Text("FloorPlan 3D") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("FloorPlan 3D") },
+                actions = {
+                    IconButton(onClick = { showDiagnostics = true }) {
+                        Icon(Icons.Outlined.BugReport, contentDescription = "Extraction diagnostics")
+                    }
+                },
+            )
+        },
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SmallFloatingActionButton(onClick = {
@@ -139,6 +155,10 @@ fun HomeScreen(
         }
     }
 
+    if (showDiagnostics) {
+        DiagnosticsDialog(onDismiss = { showDiagnostics = false })
+    }
+
     when (val state = importState) {
         is ImportState.Processing -> {
             AlertDialog(
@@ -166,6 +186,43 @@ fun HomeScreen(
         }
         else -> Unit
     }
+}
+
+/**
+ * Read-only view of the extraction log ring buffer — lets users share exactly
+ * what OCR read and how walls/scale were resolved when a plan looks wrong.
+ */
+@Composable
+private fun DiagnosticsDialog(onDismiss: () -> Unit) {
+    val entries = remember { PlanLog.entries.asReversed() }
+    val timeFormat = remember { java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+        title = { Text("Extraction diagnostics") },
+        text = {
+            if (entries.isEmpty()) {
+                Text("No log entries yet. Upload a plan first.")
+            } else {
+                SelectionContainer {
+                    LazyColumn(modifier = Modifier.height(420.dp)) {
+                        items(entries.size) { i ->
+                            val e = entries[i]
+                            Text(
+                                "${timeFormat.format(Date(e.timeMillis))} ${e.level}/${e.tag}: ${e.message}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+    )
 }
 
 @Composable

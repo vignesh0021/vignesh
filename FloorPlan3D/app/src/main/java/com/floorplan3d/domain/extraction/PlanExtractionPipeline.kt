@@ -84,6 +84,7 @@ class PlanExtractionPipeline(
             }
         }
         log.d(TAG, "OCR recognised ${lines.size} text lines")
+        lines.forEach { log.d(TAG, "OCR \"${it.text}\" @(${it.centerXPx.toInt()},${it.centerYPx.toInt()})") }
         lines
     } catch (e: Exception) {
         // ML Kit can fail on devices without its native libs or on odd bitmaps —

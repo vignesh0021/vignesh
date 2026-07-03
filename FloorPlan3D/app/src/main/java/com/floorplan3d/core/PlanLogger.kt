@@ -22,7 +22,7 @@ data class LogEntry(val timeMillis: Long, val level: Char, val tag: String, val 
  * diagnostics panel) and forwards to an optional platform sink.
  */
 object PlanLog : PlanLogger {
-    private const val MAX_ENTRIES = 400
+    private const val MAX_ENTRIES = 800
 
     /** Platform-specific sink (android.util.Log on device, stdout in tests). */
     @Volatile

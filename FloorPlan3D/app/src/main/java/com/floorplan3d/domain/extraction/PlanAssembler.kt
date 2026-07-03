@@ -33,21 +33,28 @@ class PlanAssembler(private val log: PlanLogger = PlanLog) {
         val maxExtentPx = max(contentWidthPx, contentDepthPx).coerceAtLeast(1.0)
 
         val mmPerPx: Double = run {
+            // The scale reference must be a plausible overall building dimension:
+            // OCR often catches only door/toilet-sized annotations, and scaling a
+            // whole floor from a 3 ft reading collapses the model to a metre.
             val maxDim = annotations.dimensions.maxOfOrNull { it.valueMm }
-            if (maxDim != null) {
-                val ratio = maxDim / maxExtentPx
-                if (ratio in 0.5..500.0) {
+            val ratio = maxDim?.let { it / maxExtentPx }
+            when {
+                maxDim != null && maxDim >= MIN_SCALE_DIMENSION_MM && ratio!! in 0.5..500.0 -> {
                     log.d(TAG, "Scale from annotations: %.3f mm/px (dim %.0f mm over %.0f px)"
                         .format(ratio, maxDim, maxExtentPx))
                     ratio
-                } else {
-                    warnings += "Annotated dimensions did not match the drawing extents; scale estimated"
+                }
+                maxDim != null -> {
+                    log.w(TAG, "Rejected scale reference %.0f mm over %.0f px".format(maxDim, maxExtentPx))
+                    warnings += "Annotated dimensions were too small or did not match the drawing; " +
+                        "scale assumes the plan spans ${(DEFAULT_EXTENT_MM / 1000).toInt()} m"
                     DEFAULT_EXTENT_MM / maxExtentPx
                 }
-            } else {
-                warnings += "Assuming the plan spans ${(DEFAULT_EXTENT_MM / 1000).toInt()} m " +
-                    "across its longest side"
-                DEFAULT_EXTENT_MM / maxExtentPx
+                else -> {
+                    warnings += "Assuming the plan spans ${(DEFAULT_EXTENT_MM / 1000).toInt()} m " +
+                        "across its longest side"
+                    DEFAULT_EXTENT_MM / maxExtentPx
+                }
             }
         }
 
@@ -113,6 +120,8 @@ class PlanAssembler(private val log: PlanLogger = PlanLog) {
     companion object {
         private const val TAG = "PlanAssembler"
         const val DEFAULT_EXTENT_MM = 12_000.0
+        /** Smallest annotation trusted as an overall building dimension. */
+        const val MIN_SCALE_DIMENSION_MM = 3_000.0
         const val MIN_WALL_THICKNESS_MM = 75.0
         const val MAX_WALL_THICKNESS_MM = 600.0
         const val MIN_WALL_LENGTH_MM = 400.0

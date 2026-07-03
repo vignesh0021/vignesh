@@ -96,6 +96,19 @@ class PlanAssemblerTest {
     }
 
     @Test
+    fun `small annotations never drive scale`() {
+        // OCR that only catches a door-sized "3'-3\"" must not shrink the
+        // building to a metre — regression for a real CAD sheet upload.
+        val plan = assembler.assemble(
+            "test", detection(),
+            annotations(dimensions = listOf(Dimension(990.0, "3'-3\""))),
+        )
+        assertEquals(PlanAssembler.DEFAULT_EXTENT_MM, plan.widthMm, 1.0)
+        assertTrue(plan.walls.size >= 4)
+        assertTrue(plan.warnings.any { it.contains("scale", ignoreCase = true) })
+    }
+
+    @Test
     fun `keeps detected materials`() {
         val plan = assembler.assemble(
             "test", detection(),
