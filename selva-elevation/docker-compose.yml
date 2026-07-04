@@ -1,0 +1,66 @@
+# SELVA Elevation Studio — one-command run:  docker compose up
+# Open http://localhost:8080
+#
+# Core (backend + frontend) needs NO GPU and works everywhere. Photoreal renders
+# default to the zero-key `pollinations` provider.
+#
+# Optional exact-match photoreal (needs an NVIDIA GPU):
+#   docker compose --profile gpu up
+# then set IMAGE_PROVIDER=local_sd (see .env.example).
+
+services:
+  backend:
+    build: ./backend
+    environment:
+      # LLM (plan reading). 'none' -> uses built-in example. See backend/.env.example.
+      LLM_PROVIDER: ${LLM_PROVIDER:-none}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2-vision}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Image (photoreal). Default zero-key provider.
+      IMAGE_PROVIDER: ${IMAGE_PROVIDER:-pollinations}
+      SD_WEBUI_URL: ${SD_WEBUI_URL:-http://sd:7860}
+      SD_CONTROL_MODULE: ${SD_CONTROL_MODULE:-canny}
+      SD_CONTROL_MODEL: ${SD_CONTROL_MODEL:-control_v11p_sd15_canny}
+      HF_API_KEY: ${HF_API_KEY:-}
+      REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach a local Ollama on the host
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ---- OPTIONAL: local Stable Diffusion + ControlNet (exact-match photoreal) ----
+  # Requires an NVIDIA GPU + nvidia-container-toolkit. First run downloads models.
+  # Enable with:  docker compose --profile gpu up
+  sd:
+    image: universonic/stable-diffusion-webui:latest
+    profiles: ["gpu"]
+    command: >
+      --api --listen --port 7860 --xformers
+      --controlnet-dir /data/models/ControlNet
+    ports:
+      - "7860:7860"
+    volumes:
+      - sd-data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  sd-data:

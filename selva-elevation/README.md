@@ -40,6 +40,23 @@ hallucination, no dimensional drift.
 
 ## Quick start
 
+### 🐳 One-click (Docker) — recommended
+No Python/Node setup needed. From the project root:
+```bash
+docker compose up --build       # then open http://localhost:8080
+```
+That runs the backend + frontend (nginx serves the built UI and proxies `/api`).
+Works with **no GPU**; photoreal renders default to the zero-key `pollinations` provider.
+Copy `.env.example` → `.env` first if you want to plug in an LLM or a different image provider.
+
+**Optional exact-match photoreal** (needs an NVIDIA GPU + `nvidia-container-toolkit`):
+```bash
+docker compose --profile gpu up --build      # also starts a local SD+ControlNet at :7860
+# then set IMAGE_PROVIDER=local_sd in .env
+```
+
+### Or run the two services by hand
+
 ### 1. Backend
 ```bash
 cd backend
@@ -102,8 +119,9 @@ selva-elevation/
 │   ├── llm_providers.py   ollama / gemini / groq / openrouter
 │   ├── view_generator.py  spec → 6 SVG views (the deterministic core)
 │   └── requirements.txt
-├── frontend/              React + Vite + Tailwind UI
-└── start.sh
+├── frontend/              React + Vite + Tailwind UI (Dockerfile + nginx.conf)
+├── docker-compose.yml     one-click: backend + frontend (+ optional gpu SD)
+└── start.sh               bare-metal dev launcher
 ```
 
 ---
@@ -121,6 +139,8 @@ selva-elevation/
 - [x] **Photoreal — Route B:** in-app **AI render** (`/api/render3d`) that feeds the
       front line-art into **ControlNet (weight 1.0)** so geometry stays locked; free-first
       providers (local SD, Pollinations, Hugging Face, Replicate)
+- [x] **One-click Docker** (`docker compose up`) — backend + frontend, plus an
+      optional GPU profile that bundles local SD + ControlNet for exact-match photoreal
 - [ ] Dimension lines & auto scale bar
 - [ ] Multi-sheet upload (one file per floor) merged into one spec
 
