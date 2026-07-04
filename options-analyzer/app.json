@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "Options Payoff Analyzer",
+    "slug": "options-payoff-analyzer",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B0E11",
+    "assetBundlePatterns": ["**/*"],
+    "android": {
+      "package": "com.tradezone.optionsanalyzer",
+      "versionCode": 1,
+      "backgroundColor": "#0B0E11"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tradezone.optionsanalyzer"
+    },
+    "plugins": ["expo-document-picker"],
+    "newArchEnabled": false
+  }
+}
