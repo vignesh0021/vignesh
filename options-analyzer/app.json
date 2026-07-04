@@ -16,7 +16,20 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.tradezone.optionsanalyzer"
     },
-    "plugins": ["expo-document-picker"],
+    "splash": {
+      "backgroundColor": "#0B0E11",
+      "resizeMode": "contain"
+    },
+    "plugins": [
+      "expo-document-picker",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0B0E11",
+          "resizeMode": "contain"
+        }
+      ]
+    ],
     "newArchEnabled": false
   }
 }
