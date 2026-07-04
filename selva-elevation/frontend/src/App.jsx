@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import Building3D from "./Building3D.jsx";
+import { THEMES, themeById } from "./themes.js";
 
 const VIEWS = [
+  { key: "model3d", label: "3D Elevation", hint: "Real-time 3D · drag to orbit · pick a theme" },
   { key: "elevation", label: "Elevation", hint: "Coloured presentation front" },
   { key: "front", label: "Front", hint: "Front line elevation" },
   { key: "rear", label: "Rear", hint: "Rear line elevation" },
@@ -47,7 +50,8 @@ export default function App() {
   const [health, setHealth] = useState(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
-  const [active, setActive] = useState("elevation");
+  const [active, setActive] = useState("model3d");
+  const [themeId, setThemeId] = useState(THEMES[0].id);
   const [error, setError] = useState(null);
   const fileRef = useRef();
 
@@ -60,7 +64,7 @@ export default function App() {
     try {
       const r = await fetch("/api/example");
       setResult(await r.json());
-      setActive("elevation");
+      setActive("model3d");
     } catch (e) { setError(String(e)); }
     setBusy(false);
   }, []);
@@ -74,7 +78,7 @@ export default function App() {
       const r = await fetch("/api/analyze", { method: "POST", body: fd });
       if (!r.ok) throw new Error(`server ${r.status}`);
       setResult(await r.json());
-      setActive("elevation");
+      setActive("model3d");
     } catch (e) { setError(String(e)); }
     setBusy(false);
   }, []);
@@ -177,7 +181,7 @@ export default function App() {
                 <div className="text-5xl mb-3">🏛️</div>
                 <p className="font-semibold">Upload a plan or load the example</p>
                 <p className="text-sm text-slate-500 mt-1">
-                  You'll get front · rear · two sides · top · plus a coloured elevation.
+                  You'll get a real-time 3D elevation (5 themes) plus front · rear · two sides · top line views.
                 </p>
               </div>
             </div>
@@ -202,21 +206,54 @@ export default function App() {
                   <p className="text-xs text-slate-500">
                     {VIEWS.find((v) => v.key === active)?.hint}
                   </p>
-                  <div className="flex gap-2">
-                    <button onClick={() => downloadSvg(svg, `${spec.project}-${active}`)}
-                      className="text-xs px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200">SVG</button>
-                    <button onClick={() => downloadPng(svg, `${spec.project}-${active}`)}
-                      className="text-xs px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200">PNG</button>
-                  </div>
+                  {active !== "model3d" && (
+                    <div className="flex gap-2">
+                      <button onClick={() => downloadSvg(svg, `${spec.project}-${active}`)}
+                        className="text-xs px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200">SVG</button>
+                      <button onClick={() => downloadPng(svg, `${spec.project}-${active}`)}
+                        className="text-xs px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200">PNG</button>
+                    </div>
+                  )}
                 </div>
-                <div
-                  className="w-full overflow-auto rounded-lg bg-slate-50 grid place-items-center [&>svg]:max-w-full [&>svg]:h-auto"
-                  dangerouslySetInnerHTML={{ __html: svg || "" }}
-                />
+
+                {active === "model3d" ? (
+                  <div className="space-y-3">
+                    <Building3D spec={spec} theme={themeById(themeId)} />
+                    <div>
+                      <p className="text-xs text-slate-500 mb-1.5">
+                        Design theme — <b>5 different elevations</b>, same exact plan:
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {THEMES.map((t) => (
+                          <button
+                            key={t.id}
+                            onClick={() => setThemeId(t.id)}
+                            className={`flex items-center gap-2 pl-1.5 pr-3 py-1.5 rounded-full text-xs font-medium transition border ${
+                              themeId === t.id ? "border-amber-500 bg-amber-50 text-amber-800" : "border-slate-200 text-slate-600 hover:border-slate-300"
+                            }`}
+                          >
+                            <span className="flex -space-x-1">
+                              {[t.plaster, t.wood, t.accent].map((c, i) => (
+                                <span key={i} className="h-4 w-4 rounded-full border border-white" style={{ background: c }} />
+                              ))}
+                            </span>
+                            {t.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    className="w-full overflow-auto rounded-lg bg-slate-50 grid place-items-center [&>svg]:max-w-full [&>svg]:h-auto"
+                    dangerouslySetInnerHTML={{ __html: svg || "" }}
+                  />
+                )}
               </div>
 
               <p className="text-xs text-slate-400 px-1">
-                Line geometry is drawn deterministically from the extracted spec — it stays true to the plan.
+                Geometry is built deterministically from the extracted spec — every view (and the 3D model)
+                stays true to the plan. Themes change only materials/finish, never the structure.
                 Storey heights use a conventional assumption when the sheet has no vertical dimensions.
               </p>
             </div>
@@ -225,7 +262,7 @@ export default function App() {
       </main>
 
       <footer className="max-w-6xl mx-auto px-5 py-8 text-xs text-slate-400">
-        Roadmap: line views ✓ → shaded elevation ✓ → ultra-realistic 3D (ControlNet / 3D engine) — next.
+        Roadmap: line views ✓ → shaded elevation ✓ → parametric 3D + themes ✓ → photoreal render (export to Blender / ControlNet) — next.
       </footer>
     </div>
   );

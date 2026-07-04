@@ -32,7 +32,8 @@ hallucination, no dimensional drift.
 | Backend | **FastAPI (Python)** | great for file uploads + image/PDF work |
 | Plan → data | **Free vision LLM** (Ollama / Gemini / Groq / OpenRouter) | provider-agnostic, all have a free path |
 | PDF/Image | PyMuPDF + Pillow | render any upload to an image for the model |
-| Rendering | Pure-Python SVG generator | exact, reproducible geometry |
+| Line views | Pure-Python SVG generator | exact, reproducible geometry |
+| 3D | **Three.js** parametric model + themes | real-time, orbitable, plan-exact |
 
 ---
 
@@ -112,12 +113,19 @@ selva-elevation/
 - [x] Extract structured building spec via free vision LLM (+ deterministic fallback)
 - [x] Generate line views: front · rear · left · right · top
 - [x] Shaded colour elevation
-- [ ] **Ultra-realistic 3D elevation** — feed the generated front line-art into
-      ControlNet (Canny/MLSD, weight 1.0) + SDXL, *or* auto-build a 3D massing model
-      (extrude the spec) for a real render engine. The spec already carries everything
-      needed (footprints, heights, openings), so this plugs straight in.
+- [x] **Parametric 3D elevation** (Three.js) built from the spec — real-time, orbitable,
+      with **5 design themes** = 5 different elevations of the *same exact plan*
+- [ ] **Photoreal render** — the 3D model already exists, so next is either
+      (a) export the massing to glTF → Blender / a render engine, or
+      (b) feed the generated front line-art into ControlNet (Canny/MLSD, weight 1.0) + SDXL.
 - [ ] Dimension lines & auto scale bar
 - [ ] Multi-sheet upload (one file per floor) merged into one spec
+
+### 3D themes
+The 3D tab renders the building from the spec and lets you switch **material themes**
+(`frontend/src/themes.js`). Each theme changes only finishes (plaster / wood / accent /
+railing / glass) — never the structure — so all 5 stay 100% true to the plan. Add your own
+by appending to the `THEMES` array.
 
 ---
 
