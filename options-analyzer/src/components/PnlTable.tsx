@@ -15,6 +15,7 @@ interface Props {
   targetDate: string;
   ivShift: number;
   rate: number;
+  currency: string;
 }
 
 function contractLabel(p: OptionPosition): string {
@@ -24,7 +25,7 @@ function contractLabel(p: OptionPosition): string {
 }
 
 /** Module 3 — PNL Table: est price, entry, projected target PNL + totals. */
-function PnlTableBase({ open, closed, spot, targetSpot, targetDate, ivShift, rate }: Props) {
+function PnlTableBase({ open, closed, spot, targetSpot, targetDate, ivShift, rate, currency }: Props) {
   const today = todayIso();
 
   const projectedTotal =
@@ -86,13 +87,13 @@ function PnlTableBase({ open, closed, spot, targetSpot, targetDate, ivShift, rat
       <View style={styles.summaryRow}>
         <Text style={styles.sumLabel}>Total Projected PNL</Text>
         <Text style={[styles.sumVal, { color: projectedTotal >= 0 ? theme.colors.profit : theme.colors.loss }]}>
-          {fmtNum(projectedTotal, 2)} USD
+          {fmtNum(projectedTotal, 2)} {currency}
         </Text>
       </View>
       <View style={styles.summaryRow}>
         <Text style={styles.sumLabel}>Total Current UPNL</Text>
         <Text style={[styles.sumVal, { color: currentUpnl >= 0 ? theme.colors.profit : theme.colors.loss }]}>
-          {fmtNum(currentUpnl, 2)} USD
+          {fmtNum(currentUpnl, 2)} {currency}
         </Text>
       </View>
     </View>

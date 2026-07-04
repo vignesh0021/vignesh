@@ -1,15 +1,18 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { GreeksTable } from '../components/GreeksTable';
+import { InstrumentPicker } from '../components/InstrumentPicker';
 import { PayoffChart } from '../components/PayoffChart';
 import { PnlTable } from '../components/PnlTable';
+import { PortfolioSummary } from '../components/PortfolioSummary';
 import { PositionList } from '../components/PositionList';
 import { PositionSheet } from '../components/PositionSheet';
 import { RiskMatrix } from '../components/RiskMatrix';
 import { SimulationPanel } from '../components/SimulationPanel';
 import { TestingEngine } from '../components/TestingEngine';
+import { INSTRUMENTS } from '../constants/instruments';
 import { theme } from '../theme';
 import type { OptionPosition } from '../types';
 import { usePortfolioStore } from '../store/usePortfolioStore';
@@ -35,16 +38,30 @@ export function AnalyzerScreen() {
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('PAYOFF');
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [editing, setEditing] = useState<OptionPosition | null>(null);
 
   const open = usePortfolioStore((s) => s.openPositions);
   const closed = usePortfolioStore((s) => s.closedPositions);
+  const instrumentKey = usePortfolioStore((s) => s.instrumentKey);
   const instrument = usePortfolioStore((s) => s.instrument);
   const spotPrice = usePortfolioStore((s) => s.spotPrice);
   const targetSpot = usePortfolioStore((s) => s.targetSpot);
   const targetDate = usePortfolioStore((s) => s.targetDate);
   const ivShift = usePortfolioStore((s) => s.ivShift);
   const rate = usePortfolioStore((s) => s.rate);
+  const vix = usePortfolioStore((s) => s.vix);
+  const vixSource = usePortfolioStore((s) => s.vixSource);
+  const marketLoading = usePortfolioStore((s) => s.marketLoading);
+  const refreshMarket = usePortfolioStore((s) => s.refreshMarket);
+
+  const currency = INSTRUMENTS[instrumentKey].currency;
+
+  // Pull a live quote once on mount; failures fall back silently to the seed.
+  useEffect(() => {
+    refreshMarket().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const params: CurveParams = useMemo(
     () => ({ open, closed, rate, ivShift, evalDateIso: targetDate }),
@@ -70,19 +87,23 @@ export function AnalyzerScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* Header */}
+      {/* Header — tap the right block to switch script / edit market data */}
       <View style={styles.header}>
-        <View>
+        <View style={{ flexShrink: 1 }}>
           <Text style={styles.appTitle}>Options Payoff Analyzer</Text>
           <Text style={styles.subtitle}>Greeks · Payoff · Backtest</Text>
         </View>
-        <View style={styles.spotBox}>
-          <Text style={styles.instrument}>{instrument}</Text>
+        <TouchableOpacity style={styles.spotBox} onPress={() => setPickerOpen(true)} activeOpacity={0.7}>
+          <Text style={styles.instrument}>{instrument} ▾</Text>
           <Text style={styles.spot}>{fmtNum(spotPrice, 1)}</Text>
-        </View>
+          <Text style={styles.vix}>
+            {marketLoading ? 'fetching…' : `${INSTRUMENTS[instrumentKey].vixLabel} ${vix != null ? fmtNum(vix, 1) + '%' : '—'}`}
+            {vixSource ? ' ↻' : ' ↻'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      <RiskMatrix risk={risk} />
+      <RiskMatrix risk={risk} currency={currency} />
 
       {/* Tabs */}
       <View style={styles.tabBar}>
@@ -111,14 +132,15 @@ export function AnalyzerScreen() {
                   breakevens={risk.breakevens}
                 />
               </View>
-              <ProjectedBanner params={params} targetSpot={targetSpot} spot={spotPrice} />
+              <ProjectedBanner params={params} targetSpot={targetSpot} spot={spotPrice} currency={currency} />
+              <PortfolioSummary open={open} closed={closed} spot={spotPrice} rate={rate} params={params} targetSpot={targetSpot} currency={currency} />
               <SimulationPanel />
             </>
           )}
 
           {tab === 'PNL' && (
             <>
-              <PnlTable open={open} closed={closed} spot={spotPrice} targetSpot={targetSpot} targetDate={targetDate} ivShift={ivShift} rate={rate} />
+              <PnlTable open={open} closed={closed} spot={spotPrice} targetSpot={targetSpot} targetDate={targetDate} ivShift={ivShift} rate={rate} currency={currency} />
               <SimulationPanel />
             </>
           )}
@@ -130,7 +152,12 @@ export function AnalyzerScreen() {
             </>
           )}
 
-          {tab === 'POSITIONS' && <PositionList onEdit={openEdit} />}
+          {tab === 'POSITIONS' && (
+            <>
+              <PortfolioSummary open={open} closed={closed} spot={spotPrice} rate={rate} params={params} targetSpot={targetSpot} currency={currency} />
+              <PositionList onEdit={openEdit} />
+            </>
+          )}
         </ScrollView>
       )}
 
@@ -142,11 +169,22 @@ export function AnalyzerScreen() {
       ) : null}
 
       <PositionSheet visible={sheetOpen} editing={editing} onClose={() => setSheetOpen(false)} />
+      <InstrumentPicker visible={pickerOpen} onClose={() => setPickerOpen(false)} />
     </View>
   );
 }
 
-function ProjectedBanner({ params, targetSpot, spot }: { params: CurveParams; targetSpot: number; spot: number }) {
+function ProjectedBanner({
+  params,
+  targetSpot,
+  spot,
+  currency,
+}: {
+  params: CurveParams;
+  targetSpot: number;
+  spot: number;
+  currency: string;
+}) {
   const projected = useMemo(() => portfolioValuePnl(targetSpot, params), [params, targetSpot]);
   const pctMove = spot > 0 ? ((targetSpot - spot) / spot) * 100 : 0;
   const color = projected >= 0 ? theme.colors.profit : theme.colors.loss;
@@ -154,7 +192,7 @@ function ProjectedBanner({ params, targetSpot, spot }: { params: CurveParams; ta
     <View style={styles.banner}>
       <Text style={styles.bannerTxt}>
         Target {fmtNum(targetSpot, 0)} ({pctMove >= 0 ? '+' : ''}{fmtNum(pctMove, 1)}%) · Projected{' '}
-        <Text style={{ color, fontWeight: '700' }}>{fmtNum(projected, 2)} USD</Text>
+        <Text style={{ color, fontWeight: '700' }}>{fmtNum(projected, 2)} {currency}</Text>
       </Text>
     </View>
   );
@@ -168,6 +206,7 @@ const styles = StyleSheet.create({
   spotBox: { alignItems: 'flex-end' },
   instrument: { color: theme.colors.primary, fontSize: 13, fontWeight: '700' },
   spot: { color: theme.colors.text, fontSize: 18, fontWeight: '700' },
+  vix: { color: theme.colors.textDim, fontSize: 11, marginTop: 1 },
   tabBar: { flexDirection: 'row', backgroundColor: theme.colors.bg, borderBottomColor: theme.colors.border, borderBottomWidth: 1 },
   tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
   tabTxt: { color: theme.colors.textDim, fontSize: 12.5, fontWeight: '600' },

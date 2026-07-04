@@ -7,10 +7,11 @@ import type { RiskSummary } from '../utils/payoff';
 
 interface Props {
   risk: RiskSummary;
+  currency: string;
 }
 
 /** The header strip: Max Profit / Max Loss / Reward-Risk / Break-even. */
-function RiskMatrixBase({ risk }: Props) {
+function RiskMatrixBase({ risk, currency }: Props) {
   const be = risk.breakevens;
   const beText =
     be.length === 0
@@ -22,8 +23,8 @@ function RiskMatrixBase({ risk }: Props) {
 
   return (
     <View style={styles.row}>
-      <Cell label="Max Profit" value={risk.maxProfitUnbounded ? 'Unlimited' : `${fmtNum(risk.maxProfit)} USD`} color={risk.maxProfitUnbounded ? theme.colors.profit : theme.colors.profit} />
-      <Cell label="Max Loss" value={risk.maxLossUnbounded ? 'Unlimited' : `${fmtNum(risk.maxLoss)} USD`} color={theme.colors.loss} />
+      <Cell label="Max Profit" value={risk.maxProfitUnbounded ? 'Unlimited' : `${fmtNum(risk.maxProfit)} ${currency}`} color={theme.colors.profit} />
+      <Cell label="Max Loss" value={risk.maxLossUnbounded ? 'Unlimited' : `${fmtNum(risk.maxLoss)} ${currency}`} color={theme.colors.loss} />
       <Cell label="Reward / Risk" value={risk.rewardRisk == null ? 'NA' : fmtNum(risk.rewardRisk, 2)} color={theme.colors.text} />
       <Cell label="Breakeven" value={beText} color={theme.colors.text} align="right" />
     </View>

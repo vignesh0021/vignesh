@@ -51,7 +51,7 @@ export function legValuePnl(
     strike: pos.strike,
     timeYears: days / 365,
     rate,
-    iv: Math.max(pos.iv + ivShift, 0.0001),
+    iv: Math.max(pos.iv + ivShift, 0.005),
     type: pos.type,
   };
   const price = bsPrice(inputs);
@@ -61,6 +61,30 @@ export function legValuePnl(
 /** Sum of frozen realized PNL — the vertical baseline offset for the curves. */
 export function closedOffset(closed: OptionPosition[]): number {
   return closed.reduce((acc, p) => acc + (p.realizedPnl ?? 0), 0);
+}
+
+export interface PortfolioPnl {
+  realized: number; // banked PNL from closed legs
+  unrealized: number; // mark-to-market of open legs right now
+  total: number; // realized + unrealized
+}
+
+/**
+ * Whole-portfolio PNL split into realized (closed) and unrealized (open legs
+ * marked at the live spot / today). This is what makes tracking correct once
+ * some legs are closed: closed PNL is banked, open PNL still floats.
+ */
+export function portfolioPnl(
+  open: OptionPosition[],
+  closed: OptionPosition[],
+  spot: number,
+  todayIso: string,
+  rate: number,
+): PortfolioPnl {
+  const realized = closedOffset(closed);
+  let unrealized = 0;
+  for (const pos of open) unrealized += legValuePnl(pos, spot, todayIso, 0, rate);
+  return { realized, unrealized, total: realized + unrealized };
 }
 
 export interface CurveParams {
@@ -126,7 +150,7 @@ export function legGreeks(
     strike: pos.strike,
     timeYears: days / 365,
     rate,
-    iv: Math.max(pos.iv + ivShift, 0.0001),
+    iv: Math.max(pos.iv + ivShift, 0.005),
     type: pos.type,
   });
   const k = legSign(pos) * legSize(pos);
