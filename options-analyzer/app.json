@@ -1,22 +1,28 @@
 {
   "expo": {
-    "name": "Options Payoff Analyzer",
-    "slug": "options-payoff-analyzer",
-    "version": "1.0.0",
+    "name": "TradeLikeHunter",
+    "slug": "tradelikehunter",
+    "version": "1.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0B0E11",
+    "icon": "./assets/icon.png",
     "assetBundlePatterns": ["**/*"],
     "android": {
-      "package": "com.tradezone.optionsanalyzer",
-      "versionCode": 1,
-      "backgroundColor": "#0B0E11"
+      "package": "com.tradelikehunter.app",
+      "versionCode": 2,
+      "backgroundColor": "#0B0E11",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B0E11"
+      }
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.tradezone.optionsanalyzer"
+      "bundleIdentifier": "com.tradelikehunter.app"
     },
     "splash": {
+      "image": "./assets/splash.png",
       "backgroundColor": "#0B0E11",
       "resizeMode": "contain"
     },
@@ -25,6 +31,7 @@
       [
         "expo-splash-screen",
         {
+          "image": "./assets/splash.png",
           "backgroundColor": "#0B0E11",
           "resizeMode": "contain"
         }

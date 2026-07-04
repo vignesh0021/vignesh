@@ -11,7 +11,6 @@ import {
   View,
 } from 'react-native';
 
-import { INSTRUMENTS } from '../constants/instruments';
 import { theme } from '../theme';
 import type { OptionAction, OptionPosition, OptionType, PositionStatus } from '../types';
 import { usePortfolioStore, type NewPositionInput } from '../store/usePortfolioStore';
@@ -40,8 +39,8 @@ interface FormState {
 
 /** Slide-up sheet to Add / Edit / Close / Delete a leg. */
 export function PositionSheet({ visible, editing, onClose }: Props) {
-  const instrumentKey = usePortfolioStore((s) => s.instrumentKey);
-  const instrument = usePortfolioStore((s) => s.instrument);
+  const asset = usePortfolioStore((s) => s.asset);
+  const instrument = asset.symbol;
   const defaultIv = usePortfolioStore((s) => s.defaultIv);
   const addPosition = usePortfolioStore((s) => s.addPosition);
   const updatePosition = usePortfolioStore((s) => s.updatePosition);
@@ -60,7 +59,7 @@ export function PositionSheet({ visible, editing, onClose }: Props) {
     exitPremium: '',
     status: 'OPEN',
     lots: '1',
-    lotSize: String(INSTRUMENTS[instrumentKey].lotSize),
+    lotSize: String(asset.lotSize),
     iv: String(Math.round(defaultIv * 100)),
   });
 

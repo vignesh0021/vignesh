@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { GreeksTable } from '../components/GreeksTable';
@@ -11,8 +11,8 @@ import { PositionList } from '../components/PositionList';
 import { PositionSheet } from '../components/PositionSheet';
 import { RiskMatrix } from '../components/RiskMatrix';
 import { SimulationPanel } from '../components/SimulationPanel';
+import { StrategyLibrary } from '../components/StrategyLibrary';
 import { TestingEngine } from '../components/TestingEngine';
-import { INSTRUMENTS } from '../constants/instruments';
 import { theme } from '../theme';
 import type { OptionPosition } from '../types';
 import { usePortfolioStore } from '../store/usePortfolioStore';
@@ -24,13 +24,17 @@ import {
   type CurveParams,
 } from '../utils/payoff';
 
-type Tab = 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'BACKTEST';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const logo = require('../../assets/icon.png');
+
+type Tab = 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'STRATEGY' | 'BACKTEST';
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'PAYOFF', label: 'PNL Chart' },
   { key: 'PNL', label: 'PNL Table' },
   { key: 'GREEKS', label: 'Greeks' },
   { key: 'POSITIONS', label: 'Positions' },
+  { key: 'STRATEGY', label: 'Strategies' },
   { key: 'BACKTEST', label: 'Backtest' },
 ];
 
@@ -43,21 +47,18 @@ export function AnalyzerScreen() {
 
   const open = usePortfolioStore((s) => s.openPositions);
   const closed = usePortfolioStore((s) => s.closedPositions);
-  const instrumentKey = usePortfolioStore((s) => s.instrumentKey);
-  const instrument = usePortfolioStore((s) => s.instrument);
+  const asset = usePortfolioStore((s) => s.asset);
   const spotPrice = usePortfolioStore((s) => s.spotPrice);
   const targetSpot = usePortfolioStore((s) => s.targetSpot);
   const targetDate = usePortfolioStore((s) => s.targetDate);
   const ivShift = usePortfolioStore((s) => s.ivShift);
   const rate = usePortfolioStore((s) => s.rate);
   const vix = usePortfolioStore((s) => s.vix);
-  const vixSource = usePortfolioStore((s) => s.vixSource);
   const marketLoading = usePortfolioStore((s) => s.marketLoading);
   const refreshMarket = usePortfolioStore((s) => s.refreshMarket);
 
-  const currency = INSTRUMENTS[instrumentKey].currency;
+  const currency = asset.currency;
 
-  // Pull a live quote once on mount; failures fall back silently to the seed.
   useEffect(() => {
     refreshMarket().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -87,50 +88,48 @@ export function AnalyzerScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* Header — tap the right block to switch script / edit market data */}
+      {/* Header */}
       <View style={styles.header}>
-        <View style={{ flexShrink: 1 }}>
-          <Text style={styles.appTitle}>Options Payoff Analyzer</Text>
-          <Text style={styles.subtitle}>Greeks · Payoff · Backtest</Text>
+        <View style={styles.brand}>
+          <Image source={logo} style={styles.logo} />
+          <View style={{ flexShrink: 1 }}>
+            <Text style={styles.appTitle}>TradeLikeHunter</Text>
+            <Text style={styles.subtitle}>Payoff · Greeks · Strategies</Text>
+          </View>
         </View>
         <TouchableOpacity style={styles.spotBox} onPress={() => setPickerOpen(true)} activeOpacity={0.7}>
-          <Text style={styles.instrument}>{instrument} ▾</Text>
+          <Text style={styles.instrument}>{asset.symbol} ▾</Text>
           <Text style={styles.spot}>{fmtNum(spotPrice, 1)}</Text>
           <Text style={styles.vix}>
-            {marketLoading ? 'fetching…' : `${INSTRUMENTS[instrumentKey].vixLabel} ${vix != null ? fmtNum(vix, 1) + '%' : '—'}`}
-            {vixSource ? ' ↻' : ' ↻'}
+            {marketLoading ? 'fetching…' : `${asset.vixLabel} ${vix != null ? fmtNum(vix, 1) + '%' : '—'} ↻`}
           </Text>
         </TouchableOpacity>
       </View>
 
       <RiskMatrix risk={risk} currency={currency} />
 
-      {/* Tabs */}
-      <View style={styles.tabBar}>
-        {TABS.map((t) => (
-          <TouchableOpacity key={t.key} style={styles.tab} onPress={() => setTab(t.key)}>
-            <Text style={[styles.tabTxt, tab === t.key && styles.tabTxtActive]}>{t.label}</Text>
-            {tab === t.key ? <View style={styles.tabUnderline} /> : null}
-          </TouchableOpacity>
-        ))}
+      {/* Tabs (scrollable) */}
+      <View style={styles.tabBarWrap}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabBar}>
+          {TABS.map((t) => (
+            <TouchableOpacity key={t.key} style={styles.tab} onPress={() => setTab(t.key)}>
+              <Text style={[styles.tabTxt, tab === t.key && styles.tabTxtActive]}>{t.label}</Text>
+              {tab === t.key ? <View style={styles.tabUnderline} /> : null}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       </View>
 
       {tab === 'BACKTEST' ? (
         <TestingEngine />
+      ) : tab === 'STRATEGY' ? (
+        <StrategyLibrary onApplied={() => setTab('PAYOFF')} />
       ) : (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 96 }}>
           {tab === 'PAYOFF' && (
             <>
               <View style={styles.chartWrap}>
-                <PayoffChart
-                  width={chartW}
-                  height={300}
-                  params={params}
-                  spot={spotPrice}
-                  targetSpot={targetSpot}
-                  strikes={strikes}
-                  breakevens={risk.breakevens}
-                />
+                <PayoffChart width={chartW} height={300} params={params} spot={spotPrice} targetSpot={targetSpot} strikes={strikes} breakevens={risk.breakevens} />
               </View>
               <ProjectedBanner params={params} targetSpot={targetSpot} spot={spotPrice} currency={currency} />
               <PortfolioSummary open={open} closed={closed} spot={spotPrice} rate={rate} params={params} targetSpot={targetSpot} currency={currency} />
@@ -161,8 +160,7 @@ export function AnalyzerScreen() {
         </ScrollView>
       )}
 
-      {/* Add button */}
-      {tab !== 'BACKTEST' ? (
+      {tab !== 'BACKTEST' && tab !== 'STRATEGY' ? (
         <TouchableOpacity style={[styles.fab, { bottom: insets.bottom + 16 }]} onPress={openAdd} activeOpacity={0.85}>
           <Text style={styles.fabTxt}>＋ Add Contract</Text>
         </TouchableOpacity>
@@ -201,17 +199,20 @@ function ProjectedBanner({
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.colors.bg },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
-  appTitle: { color: theme.colors.text, fontSize: 17, fontWeight: '700' },
-  subtitle: { color: theme.colors.textDim, fontSize: 12, marginTop: 2 },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
+  logo: { width: 34, height: 34, borderRadius: 8 },
+  appTitle: { color: theme.colors.text, fontSize: 17, fontWeight: '800' },
+  subtitle: { color: theme.colors.textDim, fontSize: 11, marginTop: 2 },
   spotBox: { alignItems: 'flex-end' },
   instrument: { color: theme.colors.primary, fontSize: 13, fontWeight: '700' },
   spot: { color: theme.colors.text, fontSize: 18, fontWeight: '700' },
   vix: { color: theme.colors.textDim, fontSize: 11, marginTop: 1 },
-  tabBar: { flexDirection: 'row', backgroundColor: theme.colors.bg, borderBottomColor: theme.colors.border, borderBottomWidth: 1 },
-  tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
-  tabTxt: { color: theme.colors.textDim, fontSize: 12.5, fontWeight: '600' },
+  tabBarWrap: { borderBottomColor: theme.colors.border, borderBottomWidth: 1 },
+  tabBar: { paddingHorizontal: 4 },
+  tab: { paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center' },
+  tabTxt: { color: theme.colors.textDim, fontSize: 13, fontWeight: '600' },
   tabTxtActive: { color: theme.colors.text },
-  tabUnderline: { height: 2, backgroundColor: theme.colors.primary, width: '70%', marginTop: 8, borderRadius: 2 },
+  tabUnderline: { height: 2, backgroundColor: theme.colors.primary, width: '80%', marginTop: 8, borderRadius: 2 },
   chartWrap: { paddingTop: 8 },
   banner: { alignSelf: 'center', backgroundColor: theme.colors.surfaceAlt, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, marginTop: 4, marginBottom: 4 },
   bannerTxt: { color: theme.colors.textDim, fontSize: 12 },
