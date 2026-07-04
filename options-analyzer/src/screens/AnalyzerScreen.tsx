@@ -75,6 +75,10 @@ export function AnalyzerScreen() {
     [open, targetSpot, targetDate, ivShift, rate],
   );
   const strikes = useMemo(() => open.map((p) => p.strike), [open]);
+  const mixedUnderlyings = useMemo(
+    () => new Set(open.map((p) => p.instrument.toUpperCase())).size > 1,
+    [open],
+  );
   const chartW = Dimensions.get('window').width;
 
   const openAdd = () => {
@@ -107,6 +111,15 @@ export function AnalyzerScreen() {
       </View>
 
       <RiskMatrix risk={risk} currency={currency} />
+
+      {mixedUnderlyings ? (
+        <View style={styles.warn}>
+          <Text style={styles.warnTxt}>
+            ⚠ Legs span multiple underlyings — the payoff plots them on one price axis, so combined
+            numbers are only meaningful for a single instrument.
+          </Text>
+        </View>
+      ) : null}
 
       {/* Tabs (scrollable) */}
       <View style={styles.tabBarWrap}>
@@ -214,6 +227,8 @@ const styles = StyleSheet.create({
   tabTxtActive: { color: theme.colors.text },
   tabUnderline: { height: 2, backgroundColor: theme.colors.primary, width: '80%', marginTop: 8, borderRadius: 2 },
   chartWrap: { paddingTop: 8 },
+  warn: { backgroundColor: '#3a2a12', paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  warnTxt: { color: '#F7941E', fontSize: 11, lineHeight: 16 },
   banner: { alignSelf: 'center', backgroundColor: theme.colors.surfaceAlt, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, marginTop: 4, marginBottom: 4 },
   bannerTxt: { color: theme.colors.textDim, fontSize: 12 },
   fab: { position: 'absolute', alignSelf: 'center', backgroundColor: theme.colors.primary, paddingHorizontal: 24, paddingVertical: 14, borderRadius: 28 },

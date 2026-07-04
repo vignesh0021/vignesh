@@ -1,4 +1,6 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
+import { createJSONStorage, persist } from 'zustand/middleware';
 
 import {
   PRESET_ASSETS,
@@ -90,7 +92,9 @@ const seedOpen: OptionPosition[] = [
   { id: genId(), instrument: 'BTC', type: 'PUT', action: 'SELL', strike: 55000, expiry: SEED_EXPIRY, entryPremium: 1154.9, lots: 1, lotSize: 0.1, iv: 0.6, status: 'OPEN' },
 ];
 
-export const usePortfolioStore = create<PortfolioState>((set, get) => ({
+export const usePortfolioStore = create<PortfolioState>()(
+  persist(
+    (set, get) => ({
   openPositions: seedOpen,
   closedPositions: [],
 
@@ -214,4 +218,20 @@ export const usePortfolioStore = create<PortfolioState>((set, get) => ({
   setTargetDate: (iso) => set({ targetDate: iso }),
   resetTargetSpot: () => set((s) => ({ targetSpot: s.spotPrice })),
   resetTargetDate: () => set({ targetDate: todayIso() }),
-}));
+    }),
+    {
+      name: 'tlh-portfolio-v1',
+      storage: createJSONStorage(() => AsyncStorage),
+      // Persist only durable data — not transient market/loading state.
+      partialize: (s) => ({
+        openPositions: s.openPositions,
+        closedPositions: s.closedPositions,
+        asset: s.asset,
+        rate: s.rate,
+        defaultIv: s.defaultIv,
+        spotPrice: s.spotPrice,
+        targetSpot: s.targetSpot,
+      }),
+    },
+  ),
+);

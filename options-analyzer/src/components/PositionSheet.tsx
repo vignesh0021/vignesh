@@ -11,10 +11,11 @@ import {
   View,
 } from 'react-native';
 
+import { impliedVol } from '../hooks/useBlackScholes';
 import { theme } from '../theme';
 import type { OptionAction, OptionPosition, OptionType, PositionStatus } from '../types';
 import { usePortfolioStore, type NewPositionInput } from '../store/usePortfolioStore';
-import { addDaysIso, daysBetween, fmtDateShort, todayIso } from '../utils/format';
+import { addDaysIso, daysBetween, fmtDateShort, fmtNum, todayIso } from '../utils/format';
 import { CalendarPicker } from './CalendarPicker';
 
 interface Props {
@@ -30,6 +31,7 @@ interface FormState {
   strike: string;
   expiry: string; // ISO
   entryPremium: string;
+  currentPremium: string; // live mark / LTP (optional)
   exitPremium: string;
   status: PositionStatus;
   lots: string;
@@ -42,6 +44,8 @@ export function PositionSheet({ visible, editing, onClose }: Props) {
   const asset = usePortfolioStore((s) => s.asset);
   const instrument = asset.symbol;
   const defaultIv = usePortfolioStore((s) => s.defaultIv);
+  const spotPrice = usePortfolioStore((s) => s.spotPrice);
+  const rate = usePortfolioStore((s) => s.rate);
   const addPosition = usePortfolioStore((s) => s.addPosition);
   const updatePosition = usePortfolioStore((s) => s.updatePosition);
   const removePosition = usePortfolioStore((s) => s.removePosition);
@@ -56,6 +60,7 @@ export function PositionSheet({ visible, editing, onClose }: Props) {
     strike: '',
     expiry: addDaysIso(todayIso(), 30),
     entryPremium: '',
+    currentPremium: '',
     exitPremium: '',
     status: 'OPEN',
     lots: '1',
@@ -75,6 +80,7 @@ export function PositionSheet({ visible, editing, onClose }: Props) {
         strike: String(editing.strike),
         expiry: editing.expiry,
         entryPremium: String(editing.entryPremium),
+        currentPremium: editing.markPrice != null ? String(editing.markPrice) : '',
         exitPremium: editing.exitPremium != null ? String(editing.exitPremium) : '',
         status: editing.status,
         lots: String(editing.lots),
@@ -92,7 +98,34 @@ export function PositionSheet({ visible, editing, onClose }: Props) {
 
   const daysToExpiry = Math.max(Math.round(daysBetween(todayIso(), form.expiry)), 0);
 
+  // Entering a current mark back-solves the IV that reprices to it, so Greeks
+  // and the T+0 curve calibrate to the live market instead of a guessed vol.
+  const onCurrentChange = (v: string) => {
+    const mark = Number(v);
+    const strike = Number(form.strike);
+    if (mark > 0 && strike > 0 && spotPrice > 0 && daysToExpiry > 0) {
+      const iv = impliedVol(mark, {
+        spot: spotPrice,
+        strike,
+        timeYears: daysToExpiry / 365,
+        rate,
+        type: form.type,
+      });
+      setForm((f) => ({ ...f, currentPremium: v, iv: String(Math.round(iv * 1000) / 10) }));
+    } else {
+      setForm((f) => ({ ...f, currentPremium: v }));
+    }
+  };
+
+  // Live UPNL preview from the entered mark.
+  const sign = form.action === 'BUY' ? 1 : -1;
+  const size = (Number(form.lots) || 0) * (Number(form.lotSize) || 0);
+  const markNum = Number(form.currentPremium);
+  const livePnl =
+    markNum > 0 ? sign * (markNum - (Number(form.entryPremium) || 0)) * size : null;
+
   const onSubmit = () => {
+    const mark = Number(form.currentPremium);
     // IV is always clamped positive so Greeks never collapse to zero.
     const base: NewPositionInput = {
       instrument: form.instrument || instrument,
@@ -104,6 +137,7 @@ export function PositionSheet({ visible, editing, onClose }: Props) {
       lots: Number(form.lots) || 1,
       lotSize: Number(form.lotSize) || 1,
       iv: Math.max((Number(form.iv) || 0) / 100, 0.01),
+      markPrice: mark > 0 ? mark : undefined,
     };
 
     if (!editing) {
@@ -159,7 +193,23 @@ export function PositionSheet({ visible, editing, onClose }: Props) {
 
               <View style={styles.fieldRow}>
                 <Field label="Entry Premium" value={form.entryPremium} onChangeText={(v) => set('entryPremium', v)} keyboardType="numeric" />
+                <Field label="Current Price (LTP)" value={form.currentPremium} onChangeText={onCurrentChange} keyboardType="numeric" />
+              </View>
+
+              <View style={styles.fieldRow}>
                 <Field label="IV (%)" value={form.iv} onChangeText={(v) => set('iv', v)} keyboardType="numeric" />
+                <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+                  {livePnl != null ? (
+                    <>
+                      <Text style={styles.fieldLabel}>Current PNL</Text>
+                      <Text style={[styles.livePnl, { color: livePnl >= 0 ? theme.colors.profit : theme.colors.loss }]}>
+                        {livePnl >= 0 ? '+' : ''}{fmtNum(livePnl, 2)}
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={styles.ivHint}>Enter LTP to auto-calibrate IV & PNL</Text>
+                  )}
+                </View>
               </View>
 
               <View style={styles.fieldRow}>
@@ -300,6 +350,8 @@ const styles = StyleSheet.create({
   segTxt: { color: theme.colors.textDim, fontSize: 13 },
   input: { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, color: theme.colors.text, fontSize: 15 },
   inputDisabled: { opacity: 0.4 },
+  livePnl: { fontSize: 16, fontWeight: '700', paddingVertical: 10 },
+  ivHint: { color: theme.colors.textFaint, fontSize: 11, paddingBottom: 12, lineHeight: 15 },
   dateBtn: { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   dateTxt: { color: theme.colors.text, fontSize: 15, fontWeight: '600' },
   dateSub: { color: theme.colors.textDim, fontSize: 12 },

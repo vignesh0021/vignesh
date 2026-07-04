@@ -25,6 +25,12 @@ export interface OptionPosition {
   lotSize: number;
   /** Implied volatility as a decimal (0.60 = 60%). */
   iv: number;
+  /**
+   * Last known current market price (mark / LTP) per unit, if the user entered
+   * one. Used to calibrate `iv` to the live market so current PNL and Greeks
+   * reflect reality rather than a guessed vol. Optional.
+   */
+  markPrice?: number;
   status: PositionStatus;
   /**
    * Frozen realized PNL, only set once the leg is CLOSED. Once frozen it never

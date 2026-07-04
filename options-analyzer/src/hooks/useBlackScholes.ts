@@ -137,6 +137,30 @@ export function priceLeg(inputs: BsInputs): PricedLeg {
 }
 
 /**
+ * Back-solve the implied volatility that reprices an option to `targetPrice`.
+ * Bisection on σ ∈ [0.1%, 500%] — robust because price is monotonic in vol.
+ * Returns a small floor if the quote is at/below intrinsic (no time value).
+ */
+export function impliedVol(
+  targetPrice: number,
+  p: Omit<BsInputs, 'iv'>,
+): number {
+  if (p.timeYears <= 0) return 0.005;
+  const intrinsicV = intrinsic(p.type, p.spot, p.strike);
+  if (targetPrice <= intrinsicV + 1e-9) return 0.005;
+
+  let lo = 0.001;
+  let hi = 5.0;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    const price = bsPrice({ ...p, iv: mid });
+    if (price > targetPrice) hi = mid;
+    else lo = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/**
  * React hook wrapper — memoises pricing for a single set of inputs so
  * components re-render without recomputing on every frame.
  */

@@ -27,10 +27,12 @@ export function InstrumentPicker({ visible, onClose }: Props) {
   const marketError = usePortfolioStore((s) => s.marketError);
   const lastFetched = usePortfolioStore((s) => s.lastFetched);
 
+  const rate = usePortfolioStore((s) => s.rate);
   const selectAsset = usePortfolioStore((s) => s.selectAsset);
   const refreshMarket = usePortfolioStore((s) => s.refreshMarket);
   const setSpotPrice = usePortfolioStore((s) => s.setSpotPrice);
   const setDefaultIv = usePortfolioStore((s) => s.setDefaultIv);
+  const setRate = usePortfolioStore((s) => s.setRate);
 
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<MarketAsset[]>([]);
@@ -38,6 +40,7 @@ export function InstrumentPicker({ visible, onClose }: Props) {
   const [searchErr, setSearchErr] = useState<string | null>(null);
   const [spotEdit, setSpotEdit] = useState<string | null>(null);
   const [ivEdit, setIvEdit] = useState<string | null>(null);
+  const [rateEdit, setRateEdit] = useState<string | null>(null);
 
   const updated = lastFetched ? new Date(lastFetched).toLocaleTimeString() : '—';
 
@@ -74,6 +77,13 @@ export function InstrumentPicker({ visible, onClose }: Props) {
       const v = Number(ivEdit);
       if (v > 0) setDefaultIv(v / 100);
       setIvEdit(null);
+    }
+  };
+  const commitRate = () => {
+    if (rateEdit != null) {
+      const v = Number(rateEdit);
+      if (v >= 0) setRate(v / 100);
+      setRateEdit(null);
     }
   };
 
@@ -178,6 +188,22 @@ export function InstrumentPicker({ visible, onClose }: Props) {
                   onSubmitEditing={commitIv}
                 />
               </View>
+            </View>
+
+            <View style={styles.fieldRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.fieldLabel}>Risk-free rate (%)</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="numeric"
+                  value={rateEdit ?? fmtNum(rate * 100, 2)}
+                  onFocus={() => setRateEdit(String(fmtNum(rate * 100, 2)))}
+                  onChangeText={setRateEdit}
+                  onBlur={commitRate}
+                  onSubmitEditing={commitRate}
+                />
+              </View>
+              <View style={{ flex: 1 }} />
             </View>
           </ScrollView>
 
