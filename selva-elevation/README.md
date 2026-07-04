@@ -34,6 +34,7 @@ hallucination, no dimensional drift.
 | PDF/Image | PyMuPDF + Pillow | render any upload to an image for the model |
 | Line views | Pure-Python SVG generator | exact, reproducible geometry |
 | 3D | **Three.js** parametric model + themes | real-time, orbitable, plan-exact |
+| Photoreal | Provider-agnostic image gen (local SD + ControlNet / Pollinations / HF / Replicate) | free-first, geometry-locked |
 
 ---
 
@@ -115,9 +116,11 @@ selva-elevation/
 - [x] Shaded colour elevation
 - [x] **Parametric 3D elevation** (Three.js) built from the spec — real-time, orbitable,
       with **5 design themes** = 5 different elevations of the *same exact plan*
-- [ ] **Photoreal render** — the 3D model already exists, so next is either
-      (a) export the massing to glTF → Blender / a render engine, or
-      (b) feed the generated front line-art into ControlNet (Canny/MLSD, weight 1.0) + SDXL.
+- [x] **Photoreal — Route A:** one-click **`.glb` export** of the exact model →
+      open in Blender / Lumion / Twinmotion / D5 for offline photoreal stills
+- [x] **Photoreal — Route B:** in-app **AI render** (`/api/render3d`) that feeds the
+      front line-art into **ControlNet (weight 1.0)** so geometry stays locked; free-first
+      providers (local SD, Pollinations, Hugging Face, Replicate)
 - [ ] Dimension lines & auto scale bar
 - [ ] Multi-sheet upload (one file per floor) merged into one spec
 
@@ -126,6 +129,35 @@ The 3D tab renders the building from the spec and lets you switch **material the
 (`frontend/src/themes.js`). Each theme changes only finishes (plaster / wood / accent /
 railing / glass) — never the structure — so all 5 stay 100% true to the plan. Add your own
 by appending to the `THEMES` array.
+
+### Photoreal rendering (two routes, so you're never stuck)
+
+**Route A — export & render offline (highest quality).**
+Click **“Download 3D (.glb)”** on the 3D tab. The exported model is the exact geometry
+(no drift). Open it in **Blender / Lumion / Twinmotion / D5 Render**, drop an HDRI, and
+render photoreal stills or a walkaround. Because the mesh is already correct, you only
+tune materials and lighting.
+
+**Route B — one-click AI render (in-app).**
+Click **“Generate photoreal”**. The backend builds a plan-specific prompt and calls an
+image provider (`IMAGE_PROVIDER` in `.env`). Options, free-first:
+
+| Provider | Free? | ControlNet (exact geometry) | Setup |
+|----------|-------|------------------------------|-------|
+| `pollinations` | ✅ zero-key | ✗ prompt-only | works out of the box |
+| **`local_sd`** | ✅ local | ✅ **yes** | run Automatic1111/Forge `--api` at :7860 + a ControlNet model |
+| `huggingface` | ✅ tier | ✗ prompt-only | `HF_API_KEY` |
+| `replicate` | trial | optional | `REPLICATE_API_TOKEN` |
+
+For a render that **exactly matches the plan**, use `local_sd`: the app sends the
+generated front line-art as the ControlNet image at weight 1.0, so the AI can only
+repaint *within* your geometry. Example `.env`:
+```
+IMAGE_PROVIDER=local_sd
+SD_WEBUI_URL=http://localhost:7860
+SD_CONTROL_MODULE=canny
+SD_CONTROL_MODEL=control_v11p_sd15_canny
+```
 
 ---
 

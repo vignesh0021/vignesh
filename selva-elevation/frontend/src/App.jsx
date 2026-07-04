@@ -46,6 +46,21 @@ function downloadSvg(svg, name) {
   a.click();
 }
 
+// rasterize an SVG string to a base64 PNG (no data: prefix) — used as ControlNet input
+async function svgToPngB64(svg, w = 1024) {
+  const url = svgToBlobUrl(svg);
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+  const h = Math.round((w * img.height) / img.width);
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+  URL.revokeObjectURL(url);
+  return c.toDataURL("image/png").split(",")[1];
+}
+
 export default function App() {
   const [health, setHealth] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -53,7 +68,27 @@ export default function App() {
   const [active, setActive] = useState("model3d");
   const [themeId, setThemeId] = useState(THEMES[0].id);
   const [error, setError] = useState(null);
+  const [render, setRender] = useState({ busy: false, img: null, note: null, err: null });
   const fileRef = useRef();
+
+  const photoreal = useCallback(async () => {
+    if (!result?.spec) return;
+    setRender({ busy: true, img: null, note: null, err: null });
+    try {
+      const control = result.views?.front ? await svgToPngB64(result.views.front) : null;
+      const r = await fetch("/api/render3d", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spec: result.spec, theme_id: themeId, control_png_b64: control }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `server ${r.status}`);
+      setRender({ busy: false, img: `data:image/png;base64,${data.image_b64}`,
+        note: `${data.provider}${data.controlnet_used ? " · ControlNet" : ""} — ${data.note}`, err: null });
+    } catch (e) {
+      setRender({ busy: false, img: null, note: null, err: String(e.message || e) });
+    }
+  }, [result, themeId]);
 
   useEffect(() => {
     fetch("/api/health").then((r) => r.json()).then(setHealth).catch(() => {});
@@ -218,7 +253,7 @@ export default function App() {
 
                 {active === "model3d" ? (
                   <div className="space-y-3">
-                    <Building3D spec={spec} theme={themeById(themeId)} />
+                    <Building3D spec={spec} theme={themeById(themeId)} projectName={spec.project} />
                     <div>
                       <p className="text-xs text-slate-500 mb-1.5">
                         Design theme — <b>5 different elevations</b>, same exact plan:
@@ -241,6 +276,44 @@ export default function App() {
                           </button>
                         ))}
                       </div>
+                    </div>
+
+                    {/* Route B: AI photoreal render */}
+                    <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold">📸 Photoreal render</p>
+                        <button
+                          onClick={photoreal}
+                          disabled={render.busy}
+                          className="text-xs px-3 py-1.5 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-500 disabled:opacity-60"
+                        >
+                          {render.busy ? "Rendering…" : "Generate photoreal"}
+                        </button>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Uses the current theme + the front line-art as a ControlNet constraint
+                        (when your provider supports it) so the render stays true to the plan.
+                        Provider: <b>{health?.image?.provider || "…"}</b>
+                        {health?.image?.controlnet ? " · ControlNet ✓" : ""}
+                      </p>
+                      {render.busy && (
+                        <div className="mt-3 h-52 grid place-items-center rounded-lg bg-slate-200 animate-pulse text-xs text-slate-500">
+                          generating photoreal image…
+                        </div>
+                      )}
+                      {render.err && (
+                        <p className="mt-2 text-xs text-red-600">Render error: {render.err}</p>
+                      )}
+                      {render.img && (
+                        <div className="mt-3 space-y-1.5">
+                          <img src={render.img} alt="photoreal render" className="w-full rounded-lg border border-slate-200" />
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-slate-500">{render.note}</span>
+                            <a href={render.img} download={`${spec.project}-${themeId}-photoreal.png`}
+                              className="text-xs px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200">⬇ PNG</a>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (

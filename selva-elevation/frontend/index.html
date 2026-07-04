@@ -4,15 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SELVA Elevation Studio</title>
-    <!-- Tailwind via CDN keeps the local project zero-config to run -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: { extend: { fontFamily: { sans: ["Inter", "system-ui", "sans-serif"] } } },
-      };
-    </script>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <!-- Tailwind is bundled at build time (see src/index.css) — works fully offline -->
   </head>
   <body class="bg-slate-50 text-slate-800 font-sans antialiased">
     <div id="root"></div>

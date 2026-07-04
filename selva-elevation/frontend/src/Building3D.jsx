@@ -1,12 +1,35 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { buildBuilding, buildCompound } from "./building3d.js";
 
 // Real-time 3D elevation viewer. Rebuilds geometry when spec/theme change.
-export default function Building3D({ spec, theme }) {
+export default function Building3D({ spec, theme, projectName = "building" }) {
   const mountRef = useRef();
   const api = useRef({});
+  const [exporting, setExporting] = useState(false);
+
+  // Route A: export the exact model as .glb for Blender / Lumion / Twinmotion
+  const exportGlb = () => {
+    const { buildingGroup } = api.current;
+    if (!buildingGroup) return;
+    setExporting(true);
+    new GLTFExporter().parse(
+      buildingGroup,
+      (result) => {
+        const blob = new Blob([result], { type: "model/gltf-binary" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `${projectName}-${theme.id}.glb`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        setExporting(false);
+      },
+      (err) => { console.error(err); setExporting(false); },
+      { binary: true }
+    );
+  };
 
   // one-time scene setup
   useEffect(() => {
@@ -116,5 +139,17 @@ export default function Building3D({ spec, theme }) {
     controls.update();
   }, [spec, theme]);
 
-  return <div ref={mountRef} className="w-full h-[460px] rounded-lg overflow-hidden bg-slate-200" />;
+  return (
+    <div className="relative">
+      <div ref={mountRef} className="w-full h-[460px] rounded-lg overflow-hidden bg-slate-200" />
+      <button
+        onClick={exportGlb}
+        disabled={exporting}
+        title="Export the exact model for Blender / Lumion / Twinmotion photoreal rendering"
+        className="absolute top-2 right-2 text-xs px-3 py-1.5 rounded-lg bg-white/90 hover:bg-white border border-slate-300 shadow-sm font-medium disabled:opacity-60"
+      >
+        {exporting ? "Exporting…" : "⬇ Download 3D (.glb)"}
+      </button>
+    </div>
+  );
 }
