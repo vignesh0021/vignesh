@@ -1,0 +1,81 @@
+name: selva-elevation CI
+
+on:
+  push:
+    paths:
+      - "selva-elevation/**"
+      - ".github/workflows/selva-elevation-ci.yml"
+  pull_request:
+    paths:
+      - "selva-elevation/**"
+      - ".github/workflows/selva-elevation-ci.yml"
+
+defaults:
+  run:
+    working-directory: selva-elevation
+
+jobs:
+  backend:
+    name: Backend smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          pip install -r backend/requirements.txt httpx
+      - name: Generate all views + render endpoint (provider=none)
+        working-directory: selva-elevation/backend
+        env:
+          LLM_PROVIDER: none
+          IMAGE_PROVIDER: none
+        run: |
+          python - <<'PY'
+          from fastapi.testclient import TestClient
+          import app
+          c = TestClient(app.app)
+          assert c.get("/api/health").json()["ok"] is True
+          ex = c.get("/api/example").json()
+          need = {"front","rear","left","right","top","elevation"}
+          assert need <= set(ex["views"]), ex["views"].keys()
+          assert [f["name"] for f in ex["spec"]["floors"]] == ["Ground","First","Second"]
+          # render endpoint builds prompts even when no image provider is configured
+          r = c.post("/api/render3d", json={"spec": ex["spec"], "theme_id": "mono"})
+          assert "positive" in r.json()["prompts"]
+          print("backend OK — 6 views, spec, prompts")
+          PY
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: selva-elevation/frontend/package-lock.json
+      - name: Install & build
+        working-directory: selva-elevation/frontend
+        run: |
+          npm ci
+          npm run build
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: selva-elevation/backend
+          push: false
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: selva-elevation/frontend
+          push: false
