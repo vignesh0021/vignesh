@@ -10,7 +10,7 @@ on:
       - ".github/workflows/tradelikehunter-ci.yml"
 
 jobs:
-  test:
+  packages:
     name: typecheck + test (${{ matrix.pkg }})
     runs-on: ubuntu-latest
     strategy:
@@ -31,3 +31,30 @@ jobs:
       - name: Test
         working-directory: tradelikehunter/packages/${{ matrix.pkg }}
         run: npm test
+
+  web:
+    name: web — typecheck + test + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        working-directory: tradelikehunter/apps/web
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        working-directory: tradelikehunter/apps/web
+        run: npm run typecheck
+      - name: Test
+        working-directory: tradelikehunter/apps/web
+        run: npm test
+      - name: Build
+        working-directory: tradelikehunter/apps/web
+        run: npm run build
+      - name: Upload web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: tlh-web-dist
+          path: tradelikehunter/apps/web/dist
+          retention-days: 14

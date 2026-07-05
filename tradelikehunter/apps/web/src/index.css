@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens (mirror @tlh/config + @tlh/ui). Theme via prefers-color-scheme,
+   overridden by data-theme on <html> in both directions. */
+:root {
+  --bg: 11 14 17; --surface: 20 26 32; --surface-2: 27 34 43; --border: 36 45 56;
+  --text: 242 244 246; --muted: 138 148 160; --faint: 91 101 114;
+  --brand: 247 148 30; --profit: 37 208 165; --loss: 234 57 67; --accent: 120 130 246;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: 244 246 249; --surface: 255 255 255; --surface-2: 240 243 247; --border: 224 229 235;
+    --text: 17 24 33; --muted: 88 100 114; --faint: 150 160 172;
+    --brand: 198 110 6; --profit: 12 150 108; --loss: 206 44 52; --accent: 79 82 210;
+  }
+}
+:root[data-theme='dark'] {
+  --bg: 11 14 17; --surface: 20 26 32; --surface-2: 27 34 43; --border: 36 45 56;
+  --text: 242 244 246; --muted: 138 148 160; --faint: 91 101 114;
+  --brand: 247 148 30; --profit: 37 208 165; --loss: 234 57 67; --accent: 120 130 246;
+}
+:root[data-theme='light'] {
+  --bg: 244 246 249; --surface: 255 255 255; --surface-2: 240 243 247; --border: 224 229 235;
+  --text: 17 24 33; --muted: 88 100 114; --faint: 150 160 172;
+  --brand: 198 110 6; --profit: 12 150 108; --loss: 206 44 52; --accent: 79 82 210;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: rgb(var(--bg));
+  color: rgb(var(--text));
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+* { font-variant-numeric: tabular-nums; }
