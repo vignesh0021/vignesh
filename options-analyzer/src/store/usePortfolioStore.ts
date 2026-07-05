@@ -8,7 +8,7 @@ import {
   niceStrikeStep,
   type MarketAsset,
 } from '../constants/instruments';
-import { fetchSpotForAsset, fetchVolForAsset } from '../services/marketData';
+import { fetchSpotForAsset, fetchVolForAsset, type DeltaRegion } from '../services/marketData';
 import type { OptionPosition } from '../types';
 import { addDaysIso, todayIso } from '../utils/format';
 import { realizedPnlFor } from '../utils/payoff';
@@ -50,6 +50,7 @@ interface PortfolioState {
   targetDate: string;
   defaultIv: number; // default IV (decimal) for new legs, driven by the vol index
   vix: number | null; // last fetched volatility index (percent)
+  deltaRegion: DeltaRegion; // Delta Exchange venue for crypto quotes
 
   // Live quote status
   spotSource: string | null;
@@ -74,6 +75,7 @@ interface PortfolioState {
   refreshMarket: () => Promise<void>;
   setSpotPrice: (v: number) => void;
   setDefaultIv: (v: number) => void;
+  setDeltaRegion: (r: DeltaRegion) => void;
   setTargetSpot: (v: number) => void;
   setRate: (v: number) => void;
   setIvShift: (v: number) => void;
@@ -106,6 +108,7 @@ export const usePortfolioStore = create<PortfolioState>()(
   targetDate: todayIso(),
   defaultIv: fallbackIvForClass(SEED_ASSET.assetClass),
   vix: null,
+  deltaRegion: 'india',
 
   spotSource: null,
   vixSource: null,
@@ -176,7 +179,7 @@ export const usePortfolioStore = create<PortfolioState>()(
     const asset = get().asset;
     set({ marketLoading: true, marketError: null });
     const [spotRes, volRes] = await Promise.allSettled([
-      fetchSpotForAsset(asset),
+      fetchSpotForAsset(asset, get().deltaRegion),
       fetchVolForAsset(asset),
     ]);
 
@@ -212,6 +215,10 @@ export const usePortfolioStore = create<PortfolioState>()(
 
   setSpotPrice: (v) => set({ spotPrice: v, targetSpot: v, spotSource: 'manual' }),
   setDefaultIv: (v) => set({ defaultIv: v, vix: v * 100, vixSource: 'manual' }),
+  setDeltaRegion: (r) => {
+    set({ deltaRegion: r });
+    void get().refreshMarket();
+  },
   setTargetSpot: (v) => set({ targetSpot: v }),
   setRate: (v) => set({ rate: v }),
   setIvShift: (v) => set({ ivShift: v }),
@@ -231,6 +238,7 @@ export const usePortfolioStore = create<PortfolioState>()(
         defaultIv: s.defaultIv,
         spotPrice: s.spotPrice,
         targetSpot: s.targetSpot,
+        deltaRegion: s.deltaRegion,
       }),
     },
   ),

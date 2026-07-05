@@ -48,6 +48,21 @@ async function binanceSpot(base: string): Promise<number> {
   return price;
 }
 
+export type DeltaRegion = 'india' | 'global';
+
+function deltaBase(region: DeltaRegion): string {
+  return region === 'global' ? 'https://api.delta.exchange' : 'https://api.india.delta.exchange';
+}
+
+/** Delta Exchange public ticker (no auth) — live spot for a crypto underlying. */
+async function deltaSpot(base: 'BTC' | 'ETH', region: DeltaRegion): Promise<number> {
+  const json = await getJson(`${deltaBase(region)}/v2/tickers/${base}USD`);
+  const r = json?.result ?? json?.data ?? json;
+  const price = Number(r?.spot_price ?? r?.mark_price ?? r?.close);
+  if (!(price > 0)) throw new Error('no delta price');
+  return price;
+}
+
 /** Deribit DVOL — 30-day annualised implied-vol index for BTC or ETH, as %. */
 async function deribitDvol(currency: 'BTC' | 'ETH'): Promise<number> {
   const end = Date.now();
@@ -68,9 +83,23 @@ export interface Quote {
   source: string;
 }
 
-/** Live spot for any asset (Binance fast-path for BTC/ETH, else Yahoo). */
-export async function fetchSpotForAsset(asset: MarketAsset): Promise<Quote> {
+/**
+ * Live spot for any asset. For crypto it prefers Delta Exchange (the user's
+ * venue) → Binance → Yahoo; for everything else Yahoo.
+ */
+export async function fetchSpotForAsset(
+  asset: MarketAsset,
+  deltaRegion: DeltaRegion = 'india',
+): Promise<Quote> {
   if (asset.assetClass === 'crypto' && (asset.symbol === 'BTC' || asset.symbol === 'ETH')) {
+    try {
+      return {
+        value: await deltaSpot(asset.symbol as 'BTC' | 'ETH', deltaRegion),
+        source: `Delta ${deltaRegion === 'india' ? 'India' : 'Global'}`,
+      };
+    } catch {
+      /* fall through */
+    }
     try {
       return { value: await binanceSpot(asset.symbol), source: 'Binance' };
     } catch {

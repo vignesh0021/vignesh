@@ -28,6 +28,8 @@ export function InstrumentPicker({ visible, onClose }: Props) {
   const lastFetched = usePortfolioStore((s) => s.lastFetched);
 
   const rate = usePortfolioStore((s) => s.rate);
+  const deltaRegion = usePortfolioStore((s) => s.deltaRegion);
+  const setDeltaRegion = usePortfolioStore((s) => s.setDeltaRegion);
   const selectAsset = usePortfolioStore((s) => s.selectAsset);
   const refreshMarket = usePortfolioStore((s) => s.refreshMarket);
   const setSpotPrice = usePortfolioStore((s) => s.setSpotPrice);
@@ -162,6 +164,25 @@ export function InstrumentPicker({ visible, onClose }: Props) {
             </View>
             {marketError ? <Text style={styles.error}>{marketError}</Text> : null}
 
+            {asset.assetClass === 'crypto' ? (
+              <View style={styles.deltaRow}>
+                <Text style={styles.deltaLabel}>Delta Exchange venue (live crypto spot)</Text>
+                <View style={styles.deltaToggle}>
+                  {(['india', 'global'] as const).map((r) => (
+                    <TouchableOpacity
+                      key={r}
+                      style={[styles.deltaBtn, deltaRegion === r && styles.deltaBtnActive]}
+                      onPress={() => setDeltaRegion(r)}
+                    >
+                      <Text style={[styles.deltaBtnTxt, deltaRegion === r && styles.deltaBtnTxtActive]}>
+                        {r === 'india' ? 'India' : 'Global'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
             {/* manual overrides */}
             <View style={styles.fieldRow}>
               <View style={{ flex: 1 }}>
@@ -247,6 +268,13 @@ const styles = StyleSheet.create({
   statusTxt: { color: theme.colors.textDim, fontSize: 12, flexShrink: 1 },
   refresh: { color: theme.colors.primary, fontSize: 13, fontWeight: '600' },
   error: { color: theme.colors.loss, fontSize: 12, marginTop: 8 },
+  deltaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 },
+  deltaLabel: { color: theme.colors.textDim, fontSize: 12, flexShrink: 1 },
+  deltaToggle: { flexDirection: 'row', gap: 6 },
+  deltaBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 7, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceAlt },
+  deltaBtnActive: { borderColor: theme.colors.primary, backgroundColor: theme.colors.primary + '22' },
+  deltaBtnTxt: { color: theme.colors.textDim, fontSize: 12, fontWeight: '600' },
+  deltaBtnTxtActive: { color: theme.colors.primary },
   fieldRow: { flexDirection: 'row', gap: 12 },
   input: { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, color: theme.colors.text, fontSize: 15 },
   doneBtn: { backgroundColor: theme.colors.primary, borderRadius: 10, paddingVertical: 14, alignItems: 'center', marginTop: 14 },
