@@ -1,0 +1,33 @@
+name: TradeLikeHunter CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/options-payoff-analyzer-app-9jsuls
+    paths:
+      - "tradelikehunter/**"
+      - ".github/workflows/tradelikehunter-ci.yml"
+
+jobs:
+  test:
+    name: typecheck + test (${{ matrix.pkg }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: [domain, contracts, ui]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        working-directory: tradelikehunter/packages/${{ matrix.pkg }}
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        working-directory: tradelikehunter/packages/${{ matrix.pkg }}
+        run: npm run typecheck
+      - name: Test
+        working-directory: tradelikehunter/packages/${{ matrix.pkg }}
+        run: npm test
