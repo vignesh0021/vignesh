@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Dimensions, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { BrokersScreen } from '../components/BrokersScreen';
 import { GreeksTable } from '../components/GreeksTable';
 import { InstrumentPicker } from '../components/InstrumentPicker';
 import { PayoffChart } from '../components/PayoffChart';
@@ -27,7 +28,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const logo = require('../../assets/icon.png');
 
-type Tab = 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'STRATEGY' | 'BACKTEST';
+type Tab = 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'STRATEGY' | 'BACKTEST' | 'BROKERS';
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'PAYOFF', label: 'PNL Chart' },
@@ -35,6 +36,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'GREEKS', label: 'Greeks' },
   { key: 'POSITIONS', label: 'Positions' },
   { key: 'STRATEGY', label: 'Strategies' },
+  { key: 'BROKERS', label: 'Brokers' },
   { key: 'BACKTEST', label: 'Backtest' },
 ];
 
@@ -135,6 +137,8 @@ export function AnalyzerScreen() {
 
       {tab === 'BACKTEST' ? (
         <TestingEngine />
+      ) : tab === 'BROKERS' ? (
+        <BrokersScreen />
       ) : tab === 'STRATEGY' ? (
         <StrategyLibrary onApplied={() => setTab('PAYOFF')} />
       ) : (
@@ -173,7 +177,7 @@ export function AnalyzerScreen() {
         </ScrollView>
       )}
 
-      {tab !== 'BACKTEST' && tab !== 'STRATEGY' ? (
+      {tab !== 'BACKTEST' && tab !== 'STRATEGY' && tab !== 'BROKERS' ? (
         <TouchableOpacity style={[styles.fab, { bottom: insets.bottom + 16 }]} onPress={openAdd} activeOpacity={0.85}>
           <Text style={styles.fabTxt}>＋ Add Contract</Text>
         </TouchableOpacity>
