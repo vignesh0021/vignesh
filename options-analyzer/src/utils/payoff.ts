@@ -30,6 +30,9 @@ export function realizedPnlFor(pos: OptionPosition, exitPremium: number): number
 
 /** PNL of a single OPEN leg at expiry for a given terminal spot X. */
 export function legExpiryPnl(pos: OptionPosition, spot: number): number {
+  if (pos.instrumentType === 'FUTURE') {
+    return legSign(pos) * (spot - pos.entryPremium) * legSize(pos);
+  }
   const value = intrinsic(pos.type, spot, pos.strike);
   return legSign(pos) * (value - pos.entryPremium) * legSize(pos);
 }
@@ -45,6 +48,10 @@ export function legValuePnl(
   ivShift: number,
   rate: number,
 ): number {
+  if (pos.instrumentType === 'FUTURE') {
+    // Linear: a future tracks spot with no time value.
+    return legSign(pos) * (spot - pos.entryPremium) * legSize(pos);
+  }
   const days = Math.max(daysBetween(evalDateIso, pos.expiry), 0);
   const inputs: BsInputs = {
     spot,
@@ -144,6 +151,10 @@ export function legGreeks(
   ivShift: number,
   rate: number,
 ): Greeks {
+  if (pos.instrumentType === 'FUTURE') {
+    // A future is pure delta: ±1 per unit, no gamma/theta/vega.
+    return { delta: legSign(pos) * legSize(pos), gamma: 0, theta: 0, vega: 0 };
+  }
   const days = Math.max(daysBetween(evalDateIso, pos.expiry), 0);
   const g = bsGreeks({
     spot,

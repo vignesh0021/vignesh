@@ -1,6 +1,8 @@
 export type OptionType = 'CALL' | 'PUT';
 export type OptionAction = 'BUY' | 'SELL';
 export type PositionStatus = 'OPEN' | 'CLOSED';
+/** A leg is either an option or a linear future/underlying used to hedge. */
+export type InstrumentType = 'OPTION' | 'FUTURE';
 
 /**
  * A single option leg in the portfolio.
@@ -12,6 +14,8 @@ export type PositionStatus = 'OPEN' | 'CLOSED';
 export interface OptionPosition {
   id: string;
   instrument: string; // e.g. "BTC"
+  /** OPTION (default) or FUTURE. Futures ignore strike/iv and are linear. */
+  instrumentType?: InstrumentType;
   type: OptionType;
   action: OptionAction;
   strike: number;

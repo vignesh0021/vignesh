@@ -11,9 +11,11 @@ import {
   View,
 } from 'react-native';
 
+import type { MarketAsset } from '../constants/instruments';
 import { impliedVol } from '../hooks/useBlackScholes';
+import { searchSymbols } from '../services/marketData';
 import { theme } from '../theme';
-import type { OptionAction, OptionPosition, OptionType, PositionStatus } from '../types';
+import type { InstrumentType, OptionAction, OptionPosition, OptionType, PositionStatus } from '../types';
 import { usePortfolioStore, type NewPositionInput } from '../store/usePortfolioStore';
 import { addDaysIso, daysBetween, fmtDateShort, fmtNum, todayIso } from '../utils/format';
 import { CalendarPicker } from './CalendarPicker';
@@ -26,6 +28,7 @@ interface Props {
 
 interface FormState {
   instrument: string;
+  instrumentType: InstrumentType;
   type: OptionType;
   action: OptionAction;
   strike: string;
@@ -55,6 +58,7 @@ export function PositionSheet({ visible, editing, onClose }: Props) {
 
   const emptyForm = (): FormState => ({
     instrument,
+    instrumentType: 'OPTION',
     type: 'CALL',
     action: 'BUY',
     strike: '',
@@ -70,11 +74,35 @@ export function PositionSheet({ visible, editing, onClose }: Props) {
 
   const [form, setForm] = useState<FormState>(emptyForm());
   const [calOpen, setCalOpen] = useState(false);
+  const [symQuery, setSymQuery] = useState('');
+  const [symResults, setSymResults] = useState<MarketAsset[]>([]);
+  const [symSearching, setSymSearching] = useState(false);
+
+  const isFuture = form.instrumentType === 'FUTURE';
+
+  const runSymSearch = async () => {
+    if (symQuery.trim().length < 1) return;
+    setSymSearching(true);
+    try {
+      setSymResults(await searchSymbols(symQuery));
+    } catch {
+      setSymResults([]);
+    } finally {
+      setSymSearching(false);
+    }
+  };
+
+  const pickSymbol = (a: MarketAsset) => {
+    setSymResults([]);
+    setSymQuery('');
+    setForm((f) => ({ ...f, instrument: a.symbol, lotSize: String(a.lotSize) }));
+  };
 
   useEffect(() => {
     if (editing) {
       setForm({
         instrument: editing.instrument,
+        instrumentType: editing.instrumentType ?? 'OPTION',
         type: editing.type,
         action: editing.action,
         strike: String(editing.strike),
@@ -129,14 +157,15 @@ export function PositionSheet({ visible, editing, onClose }: Props) {
     // IV is always clamped positive so Greeks never collapse to zero.
     const base: NewPositionInput = {
       instrument: form.instrument || instrument,
+      instrumentType: form.instrumentType,
       type: form.type,
       action: form.action,
-      strike: Number(form.strike) || 0,
+      strike: isFuture ? 0 : Number(form.strike) || 0,
       expiry: form.expiry,
       entryPremium: Number(form.entryPremium) || 0,
       lots: Number(form.lots) || 1,
       lotSize: Number(form.lotSize) || 1,
-      iv: Math.max((Number(form.iv) || 0) / 100, 0.01),
+      iv: isFuture ? 0.01 : Math.max((Number(form.iv) || 0) / 100, 0.01),
       markPrice: mark > 0 ? mark : undefined,
     };
 
@@ -175,13 +204,48 @@ export function PositionSheet({ visible, editing, onClose }: Props) {
 
             <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 520 }}>
               <View style={styles.segRow}>
-                <Segmented label="Buy / Sell" options={['BUY', 'SELL']} value={form.action} onChange={(v) => set('action', v as OptionAction)} colors={[theme.colors.buy, theme.colors.sell]} />
-                <Segmented label="Call / Put" options={['CALL', 'PUT']} value={form.type} onChange={(v) => set('type', v as OptionType)} />
+                <Segmented label="Buy / Sell (short = Sell)" options={['BUY', 'SELL']} value={form.action} onChange={(v) => set('action', v as OptionAction)} colors={[theme.colors.buy, theme.colors.sell]} />
+                <Segmented label="Type" options={['OPTION', 'FUTURE']} value={form.instrumentType} onChange={(v) => set('instrumentType', v as InstrumentType)} />
               </View>
+
+              {!isFuture ? (
+                <View style={styles.segRow}>
+                  <Segmented label="Call / Put" options={['CALL', 'PUT']} value={form.type} onChange={(v) => set('type', v as OptionType)} />
+                  <View style={{ flex: 1 }} />
+                </View>
+              ) : null}
+
+              {/* Instrument search (stocks · index · futures · crypto) */}
+              <Text style={styles.fieldLabel}>Instrument — search or type</Text>
+              <View style={styles.searchRow}>
+                <TextInput
+                  style={styles.searchInput}
+                  value={symQuery}
+                  onChangeText={setSymQuery}
+                  onSubmitEditing={runSymSearch}
+                  placeholder={`Search e.g. RELIANCE, NIFTY, ETH  ·  current: ${form.instrument}`}
+                  placeholderTextColor={theme.colors.textFaint}
+                  autoCapitalize="characters"
+                  returnKeyType="search"
+                />
+                <TouchableOpacity style={styles.searchBtn} onPress={runSymSearch}>
+                  <Text style={styles.searchBtnTxt}>{symSearching ? '…' : '🔍'}</Text>
+                </TouchableOpacity>
+              </View>
+              {symResults.map((a) => (
+                <TouchableOpacity key={a.yahoo} style={styles.resultRow} onPress={() => pickSymbol(a)}>
+                  <Text style={styles.resultSym}>{a.symbol}</Text>
+                  <Text style={styles.resultName}>{a.label}</Text>
+                </TouchableOpacity>
+              ))}
 
               <View style={styles.fieldRow}>
                 <Field label="Instrument" value={form.instrument} onChangeText={(v) => set('instrument', v)} autoCapitalize="characters" />
-                <Field label="Strike" value={form.strike} onChangeText={(v) => set('strike', v)} keyboardType="numeric" />
+                {isFuture ? (
+                  <View style={{ flex: 1 }} />
+                ) : (
+                  <Field label="Strike" value={form.strike} onChangeText={(v) => set('strike', v)} keyboardType="numeric" />
+                )}
               </View>
 
               {/* Expiry via calendar */}
@@ -192,12 +256,16 @@ export function PositionSheet({ visible, editing, onClose }: Props) {
               </TouchableOpacity>
 
               <View style={styles.fieldRow}>
-                <Field label="Entry Premium" value={form.entryPremium} onChangeText={(v) => set('entryPremium', v)} keyboardType="numeric" />
+                <Field label={isFuture ? 'Entry Price' : 'Entry Premium'} value={form.entryPremium} onChangeText={(v) => set('entryPremium', v)} keyboardType="numeric" />
                 <Field label="Current Price (LTP)" value={form.currentPremium} onChangeText={onCurrentChange} keyboardType="numeric" />
               </View>
 
               <View style={styles.fieldRow}>
-                <Field label="IV (%)" value={form.iv} onChangeText={(v) => set('iv', v)} keyboardType="numeric" />
+                {isFuture ? (
+                  <View style={{ flex: 1 }} />
+                ) : (
+                  <Field label="IV (%)" value={form.iv} onChangeText={(v) => set('iv', v)} keyboardType="numeric" />
+                )}
                 <View style={{ flex: 1, justifyContent: 'flex-end' }}>
                   {livePnl != null ? (
                     <>
@@ -350,6 +418,13 @@ const styles = StyleSheet.create({
   segTxt: { color: theme.colors.textDim, fontSize: 13 },
   input: { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, color: theme.colors.text, fontSize: 15 },
   inputDisabled: { opacity: 0.4 },
+  searchRow: { flexDirection: 'row', gap: 8 },
+  searchInput: { flex: 1, backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, color: theme.colors.text, fontSize: 14 },
+  searchBtn: { backgroundColor: theme.colors.primary, borderRadius: 8, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
+  searchBtnTxt: { fontSize: 16 },
+  resultRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  resultSym: { color: theme.colors.text, fontSize: 14, fontWeight: '700' },
+  resultName: { color: theme.colors.textDim, fontSize: 12, flexShrink: 1 },
   livePnl: { fontSize: 16, fontWeight: '700', paddingVertical: 10 },
   ivHint: { color: theme.colors.textFaint, fontSize: 11, paddingBottom: 12, lineHeight: 15 },
   dateBtn: { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

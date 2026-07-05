@@ -17,8 +17,9 @@ interface Props {
 }
 
 function contractLabel(p: OptionPosition): string {
-  const t = p.type === 'CALL' ? 'C' : 'P';
   const d = p.expiry.replace(/-/g, '').slice(2); // yymmdd
+  if (p.instrumentType === 'FUTURE') return `${p.instrument} FUT-${d}`;
+  const t = p.type === 'CALL' ? 'C' : 'P';
   return `${t}-${p.strike}-${d}`;
 }
 
