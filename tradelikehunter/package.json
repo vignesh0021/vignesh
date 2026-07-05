@@ -1,0 +1,19 @@
+{
+  "name": "tradelikehunter",
+  "private": true,
+  "packageManager": "pnpm@9.7.0",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "db:migrate": "pnpm --filter @tlh/db migrate",
+    "docker:up": "docker compose -f infra/docker/docker-compose.yml up -d"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.5.0"
+  }
+}
