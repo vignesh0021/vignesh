@@ -9,6 +9,21 @@ The core design principle: **the LLM only extracts numbers, a deterministic rend
 draws the geometry.** That keeps every view *100% faithful to the plan* — no pixel
 hallucination, no dimensional drift.
 
+### How the output stays 100% exact (no AI hallucination)
+The renderer never invents anything — it draws *only* what's in the spec. The one place
+error could enter is reading the plan into the spec, so that step is never trusted blindly:
+
+1. **Extraction = draft only.** Whatever reads the plan (a vision LLM, or the built-in
+   example) is treated as a *draft* and clearly flagged `source: llm / fallback`.
+2. **Verify & Edit gate.** You review and correct **every number** — footprints, window
+   positions, and the storey **heights** (a floor plan has no vertical dimensions, so
+   heights are yours to set) — in the editor. Nothing is rendered from unreviewed AI output.
+3. **Approve → render.** Only the values you approve go to the deterministic renderer via
+   `POST /api/views` (server-validated). The result is flagged `source: edited` — exact,
+   with no AI involved at render time.
+
+So the AI is optional and assistive; **your approval is the source of truth.**
+
 ```
  plan (pdf/jpg/png)
         │
@@ -103,7 +118,8 @@ ollama pull llama3.2-vision      # or llava / qwen2.5-vl / minicpm-v
 |--------|-------|---------|
 | `GET`  | `/api/health`  | status + which LLM provider is active |
 | `GET`  | `/api/example` | built-in SELVA spec + all views |
-| `POST` | `/api/analyze` | multipart `file=` → `{spec, views, source}` |
+| `POST` | `/api/analyze` | multipart `file=` → `{spec, views, source}` (a **draft**) |
+| `POST` | `/api/views`   | `{spec}` (edited/approved) → validated `{spec, views}` |
 
 `views` is a map of `{front, rear, left, right, top, elevation}` → SVG strings.
 
@@ -130,6 +146,8 @@ selva-elevation/
 
 - [x] Upload PDF/JPG/PNG, per-floor or full sheet
 - [x] Extract structured building spec via free vision LLM (+ deterministic fallback)
+- [x] **Verify & Edit gate** — review/correct every number + set real storey heights
+      before rendering, so output is exact regardless of how the draft was extracted
 - [x] Generate line views: front · rear · left · right · top
 - [x] Shaded colour elevation
 - [x] **Parametric 3D elevation** (Three.js) built from the spec — real-time, orbitable,

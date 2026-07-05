@@ -38,6 +38,24 @@ def health():
             "image": image_providers.status()}
 
 
+class SpecReq(BaseModel):
+    spec: dict
+
+
+@app.post("/api/views")
+def views(req: SpecReq):
+    """Re-generate all line views from an edited spec (the Verify & Edit gate).
+    Validates the spec via pydantic, so a bad edit returns a clear error and the
+    model is only ever built from numbers the user has approved."""
+    try:
+        spec = BuildingSpec(**req.spec)
+    except Exception as e:                      # noqa: BLE001
+        return JSONResponse(status_code=400, content={"error": f"invalid spec: {e}"})
+    if not spec.floors:
+        return JSONResponse(status_code=400, content={"error": "spec has no floors"})
+    return {"spec": spec.model_dump(), "views": generate_all(spec)}
+
+
 class RenderReq(BaseModel):
     spec: dict
     theme_id: str = "white-teak"

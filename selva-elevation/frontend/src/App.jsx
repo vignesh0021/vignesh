@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Building3D from "./Building3D.jsx";
+import SpecEditor from "./SpecEditor.jsx";
 import { THEMES, themeById } from "./themes.js";
 
 const VIEWS = [
+  { key: "edit", label: "✎ Verify & Edit", hint: "Review & correct every number — the model is built only from these" },
   { key: "model3d", label: "3D Elevation", hint: "Real-time 3D · drag to orbit · pick a theme" },
   { key: "elevation", label: "Elevation", hint: "Coloured presentation front" },
   { key: "front", label: "Front", hint: "Front line elevation" },
@@ -69,7 +71,26 @@ export default function App() {
   const [themeId, setThemeId] = useState(THEMES[0].id);
   const [error, setError] = useState(null);
   const [render, setRender] = useState({ busy: false, img: null, note: null, err: null });
+  const [applying, setApplying] = useState(false);
+  const [applyErr, setApplyErr] = useState(null);
   const fileRef = useRef();
+
+  // Verify & Edit gate: re-generate views from the user-approved spec.
+  const applyEdits = useCallback(async (newSpec) => {
+    setApplying(true); setApplyErr(null);
+    try {
+      const r = await fetch("/api/views", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spec: newSpec }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `server ${r.status}`);
+      setResult((prev) => ({ ...prev, spec: data.spec, views: data.views, source: "edited",
+        note: "Built from your reviewed & approved values — exact, no AI at render time." }));
+    } catch (e) { setApplyErr(String(e.message || e)); }
+    setApplying(false);
+  }, []);
 
   const photoreal = useCallback(async () => {
     if (!result?.spec) return;
@@ -178,8 +199,18 @@ export default function App() {
           {error && <p className="text-sm text-red-600">Error: {error}</p>}
 
           {result?.note && (
-            <div className={`text-xs rounded-lg p-3 ${result.source === "llm" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`}>
+            <div className={`text-xs rounded-lg p-3 ${
+              result.source === "edited" ? "bg-emerald-50 text-emerald-800"
+              : result.source === "example" ? "bg-slate-100 text-slate-600"
+              : "bg-amber-50 text-amber-800"}`}>
               <b>Source: {result.source}</b> — {result.note}
+              {(result.source === "llm" || result.source === "fallback") && (
+                <div className="mt-1 font-semibold">
+                  ⚠ This is a DRAFT. Open <span className="underline cursor-pointer"
+                    onClick={() => setActive("edit")}>✎ Verify &amp; Edit</span> and confirm every
+                  number before trusting the model.
+                </div>
+              )}
             </div>
           )}
 
@@ -251,7 +282,12 @@ export default function App() {
                   )}
                 </div>
 
-                {active === "model3d" ? (
+                {active === "edit" ? (
+                  <div>
+                    {applyErr && <p className="mb-2 text-xs text-red-600">Apply error: {applyErr}</p>}
+                    <SpecEditor spec={spec} onApply={applyEdits} busy={applying} />
+                  </div>
+                ) : active === "model3d" ? (
                   <div className="space-y-3">
                     <Building3D spec={spec} theme={themeById(themeId)} projectName={spec.project} />
                     <div>

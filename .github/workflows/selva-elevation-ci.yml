@@ -44,7 +44,14 @@ jobs:
           # render endpoint builds prompts even when no image provider is configured
           r = c.post("/api/render3d", json={"spec": ex["spec"], "theme_id": "mono"})
           assert "positive" in r.json()["prompts"]
-          print("backend OK — 6 views, spec, prompts")
+          # Verify & Edit gate: an edited spec re-generates views; bad spec is rejected
+          spec = ex["spec"]; spec["floors"][0]["height"] = 14
+          v = c.post("/api/views", json={"spec": spec})
+          assert v.status_code == 200 and v.json()["spec"]["floors"][0]["height"] == 14
+          assert need <= set(v.json()["views"])
+          bad = c.post("/api/views", json={"spec": {"floors": "nope"}})
+          assert bad.status_code == 400
+          print("backend OK — 6 views, spec, prompts, edit-gate")
           PY
 
   frontend:
