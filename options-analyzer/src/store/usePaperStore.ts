@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { priceContract } from '../services/optionChain';
-import type { OptionAction, OptionType } from '../types';
+import type { OptionAction, OptionPosition, OptionType } from '../types';
 
 /**
  * Paper-trading engine. Places, fills and manages virtual orders against the
@@ -100,6 +100,24 @@ function chargesFor(turnover: number, action: OptionAction, enabled: boolean): n
 
 export function positionPnl(pos: PaperPosition): number {
   return sign(pos.action) * (pos.ltp - pos.avgPrice) * pos.lots * pos.lotSize;
+}
+
+/** Map live paper positions into analyzer OptionPositions so the payoff/greeks reflect them. */
+export function paperToOptionPositions(positions: PaperPosition[]): OptionPosition[] {
+  return positions.map((p) => ({
+    id: p.id,
+    instrument: p.underlying,
+    type: p.optType,
+    action: p.action,
+    strike: p.strike,
+    expiry: p.expiryIso,
+    entryPremium: p.avgPrice,
+    lots: p.lots,
+    lotSize: p.lotSize,
+    iv: p.iv,
+    status: 'OPEN',
+    markPrice: p.ltp,
+  }));
 }
 
 export function positionMargin(pos: PaperPosition): number {

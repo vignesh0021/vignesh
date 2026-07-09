@@ -1,12 +1,20 @@
-import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useMemo } from 'react';
+import { Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { theme } from '../theme';
-import { fmtNum } from '../utils/format';
-import { usePaperStore, positionPnl, type PaperOrder, type PaperPosition } from '../store/usePaperStore';
+import { fmtNum, todayIso } from '../utils/format';
+import { computeRisk, type CurveParams } from '../utils/payoff';
+import {
+  usePaperStore,
+  paperToOptionPositions,
+  positionPnl,
+  type PaperOrder,
+  type PaperPosition,
+} from '../store/usePaperStore';
+import { PayoffChart } from './PayoffChart';
 
 /** Live paper positions with mark-to-market P&L and one-tap square-off. */
-export function PaperPositions({ currency }: { currency: string }) {
+export function PaperPositions({ currency, spot, rate }: { currency: string; spot: number; rate: number }) {
   const positions = usePaperStore((s) => s.positions);
   const squareOff = usePaperStore((s) => s.squareOff);
   const squareOffAll = usePaperStore((s) => s.squareOffAll);
@@ -24,6 +32,7 @@ export function PaperPositions({ currency }: { currency: string }) {
 
   return (
     <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 40 }}>
+      <LivePayoff positions={positions} spot={spot} rate={rate} currency={currency} />
       <View style={styles.topRow}>
         <Text style={styles.count}>{positions.length} open</Text>
         <TouchableOpacity style={styles.sqAll} onPress={squareOffAll}>
@@ -41,6 +50,50 @@ export function PaperPositions({ currency }: { currency: string }) {
         </Text>
       </View>
     </ScrollView>
+  );
+}
+
+/** Live payoff diagram that redraws every tick as paper positions are taken. */
+function LivePayoff({
+  positions,
+  spot,
+  rate,
+  currency,
+}: {
+  positions: PaperPosition[];
+  spot: number;
+  rate: number;
+  currency: string;
+}) {
+  const legs = useMemo(() => paperToOptionPositions(positions), [positions]);
+  const params: CurveParams = useMemo(
+    () => ({ open: legs, closed: [], rate, ivShift: 0, evalDateIso: todayIso() }),
+    [legs, rate],
+  );
+  const risk = useMemo(() => computeRisk(params, spot), [params, spot]);
+  const strikes = useMemo(() => legs.map((l) => l.strike), [legs]);
+  const width = Dimensions.get('window').width - 24;
+
+  if (spot <= 0) return null;
+  return (
+    <View style={styles.payoffCard}>
+      <View style={styles.payoffHead}>
+        <Text style={styles.payoffTitle}>Live Payoff</Text>
+        <Text style={styles.payoffMeta}>
+          Max P {risk.maxProfitUnbounded ? '∞' : fmtNum(risk.maxProfit, 0)} · Max L{' '}
+          {risk.maxLossUnbounded ? '∞' : fmtNum(Math.abs(risk.maxLoss), 0)} {currency}
+        </Text>
+      </View>
+      <PayoffChart
+        width={width}
+        height={210}
+        params={params}
+        spot={spot}
+        targetSpot={spot}
+        strikes={strikes}
+        breakevens={risk.breakevens}
+      />
+    </View>
   );
 }
 
@@ -178,6 +231,10 @@ function Metric({
 }
 
 const styles = StyleSheet.create({
+  payoffCard: { backgroundColor: theme.colors.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, paddingVertical: 8, marginBottom: 12 },
+  payoffHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, marginBottom: 2 },
+  payoffTitle: { color: theme.colors.text, fontSize: 13, fontWeight: '800' },
+  payoffMeta: { color: theme.colors.textDim, fontSize: 11 },
   emptyWrap: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 30 },
   emptyBig: { color: theme.colors.text, fontSize: 15, fontWeight: '700', marginBottom: 8 },
   emptySmall: { color: theme.colors.textDim, fontSize: 13, textAlign: 'center', lineHeight: 19 },

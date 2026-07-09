@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { niceStrikeStep } from '../constants/instruments';
 import { liveFeed, type FeedSource } from '../services/liveFeed';
@@ -40,6 +40,7 @@ export function PaperTradingScreen() {
   const startingFunds = usePaperStore((s) => s.startingFunds);
   const chargesEnabled = usePaperStore((s) => s.chargesEnabled);
   const setChargesEnabled = usePaperStore((s) => s.setChargesEnabled);
+  const setStartingFunds = usePaperStore((s) => s.setStartingFunds);
   const resetPaper = usePaperStore((s) => s.resetPaper);
 
   const [subTab, setSubTab] = useState<SubTab>('CHAIN');
@@ -47,6 +48,7 @@ export function PaperTradingScreen() {
   const [source, setSource] = useState<FeedSource>('sim');
   const [refSpot, setRefSpot] = useState(0);
   const [ticket, setTicket] = useState<{ contract: Contract; action: OptionAction } | null>(null);
+  const [fundsDraft, setFundsDraft] = useState(String(startingFunds));
 
   const expiries = useMemo(() => upcomingExpiries(asset, 6), [asset]);
   const [expiryIso, setExpiryIso] = useState(expiries[0]);
@@ -196,10 +198,32 @@ export function PaperTradingScreen() {
           onSelect={onSelect}
         />
       ) : subTab === 'POSITIONS' ? (
-        <PaperPositions currency={currency} />
+        <PaperPositions currency={currency} spot={spot} rate={rate} />
       ) : (
         <View style={{ flex: 1 }}>
           <PaperOrders />
+          <View style={styles.fundsEditRow}>
+            <Text style={styles.chargesTxt}>Starting capital ({currency})</Text>
+            <View style={styles.fundsEditRight}>
+              <TextInput
+                style={styles.fundsInput}
+                value={fundsDraft}
+                onChangeText={setFundsDraft}
+                keyboardType="number-pad"
+                selectTextOnFocus
+              />
+              <TouchableOpacity
+                style={styles.applyBtn}
+                onPress={() => {
+                  const n = Math.max(0, Math.floor(Number(fundsDraft) || 0));
+                  setStartingFunds(n);
+                  setFundsDraft(String(n));
+                }}
+              >
+                <Text style={styles.applyTxt}>Apply</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
           <View style={styles.chargesRow}>
             <Text style={styles.chargesTxt}>Apply estimated brokerage & taxes</Text>
             <Switch
@@ -263,4 +287,9 @@ const styles = StyleSheet.create({
   subUnderline: { height: 2, backgroundColor: theme.colors.primary, width: '60%', marginTop: 8, borderRadius: 2 },
   chargesRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: theme.colors.border },
   chargesTxt: { color: theme.colors.textDim, fontSize: 12 },
+  fundsEditRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: theme.colors.border },
+  fundsEditRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  fundsInput: { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, color: theme.colors.text, fontSize: 14, fontWeight: '700', minWidth: 110, textAlign: 'right' },
+  applyBtn: { backgroundColor: theme.colors.primary, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 9 },
+  applyTxt: { color: '#0B0E11', fontSize: 13, fontWeight: '800' },
 });

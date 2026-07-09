@@ -37,6 +37,7 @@ export function OrderTicket({
   const [orderType, setOrderType] = useState<PaperOrderType>('MARKET');
   const [product, setProduct] = useState<ProductType>('NRML');
   const [lots, setLots] = useState('1');
+  const [lotSizeStr, setLotSizeStr] = useState('');
   const [limit, setLimit] = useState('');
   const [flash, setFlash] = useState<string | null>(null);
 
@@ -45,10 +46,11 @@ export function OrderTicket({
       setAction(initialAction);
       setOrderType('MARKET');
       setLots('1');
+      setLotSizeStr(contract ? String(contract.lotSize) : '');
       setLimit('');
       setFlash(null);
     }
-  }, [visible, initialAction, contract?.key]);
+  }, [visible, initialAction, contract?.key, contract?.lotSize]);
 
   const ltp = useMemo(
     () =>
@@ -63,7 +65,8 @@ export function OrderTicket({
   if (!contract) return null;
 
   const lotsNum = Math.max(0, Math.floor(Number(lots) || 0));
-  const qty = lotsNum * contract.lotSize;
+  const lotSizeNum = Math.max(0, Number(lotSizeStr) || 0);
+  const qty = lotsNum * lotSizeNum;
   const priceUsed = orderType === 'MARKET' ? ltp : Number(limit) || ltp;
   const turnover = priceUsed * qty;
   const isBuy = action === 'BUY';
@@ -74,9 +77,14 @@ export function OrderTicket({
       setFlash('Enter at least 1 lot');
       return;
     }
+    if (lotSizeNum <= 0) {
+      setFlash('Enter a valid lot size');
+      return;
+    }
     const res = placeOrder(
       {
         ...contract,
+        lotSize: lotSizeNum,
         action,
         orderType,
         product,
@@ -145,6 +153,21 @@ export function OrderTicket({
             </TouchableOpacity>
           </View>
           <Text style={styles.qtyHint}>= {fmtNum(qty, qty % 1 === 0 ? 0 : 2)} qty</Text>
+        </View>
+
+        {/* Lot size (editable) */}
+        <View style={styles.fieldRow}>
+          <Text style={styles.fieldLabel}>Lot size</Text>
+          <TextInput
+            style={styles.lotSizeInput}
+            value={lotSizeStr}
+            onChangeText={setLotSizeStr}
+            keyboardType="decimal-pad"
+            selectTextOnFocus
+            placeholder={String(contract.lotSize)}
+            placeholderTextColor={theme.colors.textFaint}
+          />
+          <Text style={styles.qtyHint}>units / lot</Text>
         </View>
 
         {/* Order type */}
@@ -238,6 +261,7 @@ const styles = StyleSheet.create({
   stepBtn: { paddingHorizontal: 16, paddingVertical: 8 },
   stepTxt: { color: theme.colors.text, fontSize: 20, fontWeight: '700' },
   lotInput: { color: theme.colors.text, fontSize: 16, fontWeight: '700', minWidth: 48, textAlign: 'center', paddingVertical: 8 },
+  lotSizeInput: { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9, color: theme.colors.text, fontSize: 15, fontWeight: '700', minWidth: 80, textAlign: 'center' },
   qtyHint: { color: theme.colors.textFaint, fontSize: 12 },
   pillRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 },
   pill: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, backgroundColor: theme.colors.surfaceAlt, borderWidth: 1, borderColor: theme.colors.border },
