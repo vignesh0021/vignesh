@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - claude/options-payoff-analyzer-app-9jsuls
+      - claude/options-paper-trading-mode-sywt0f
     paths:
       - "options-analyzer/**"
       - ".github/workflows/build-options-apk.yml"
