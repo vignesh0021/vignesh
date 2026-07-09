@@ -1,13 +1,12 @@
-import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import React, { useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { buildAuthUrl, exchangeCode } from '../services/brokers/fyers';
+import { buildAuthUrl, exchangeCode, parseAuthCode } from '../services/brokers/fyers';
 import { verify as deltaVerify } from '../services/brokers/delta';
 import type { BrokerPosition } from '../services/brokers/types';
 import { theme } from '../theme';
-import { useBrokerStore } from '../store/useBrokerStore';
+import { DEFAULT_FYERS_REDIRECT, useBrokerStore } from '../store/useBrokerStore';
 import { fmtNum } from '../utils/format';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -25,6 +24,7 @@ export function BrokersScreen() {
   const lastFetched = useBrokerStore((s) => s.lastFetched);
 
   const setFyersApp = useBrokerStore((s) => s.setFyersApp);
+  const setFyersRedirect = useBrokerStore((s) => s.setFyersRedirect);
   const setFyersToken = useBrokerStore((s) => s.setFyersToken);
   const clearFyers = useBrokerStore((s) => s.clearFyers);
   const setDelta = useBrokerStore((s) => s.setDelta);
@@ -33,39 +33,59 @@ export function BrokersScreen() {
 
   const [appId, setAppId] = useState(fyers.appId);
   const [secret, setSecret] = useState(fyers.secret);
+  const [redirectUri, setRedirectUri] = useState(fyers.redirectUri || DEFAULT_FYERS_REDIRECT);
+  const [pastedCode, setPastedCode] = useState('');
   const [dKey, setDKey] = useState(delta.apiKey);
   const [dSecret, setDSecret] = useState(delta.apiSecret);
   const [busy, setBusy] = useState<string | null>(null);
   const [localErr, setLocalErr] = useState<string | null>(null);
 
-  const redirectUri = Linking.createURL('fyers');
   const fyersConnected = !!fyers.accessToken;
   const deltaConnected = !!delta.apiKey && !!delta.apiSecret;
 
-  const onFyersLogin = async () => {
+  // Step 1 — open the Fyers login page in the browser.
+  const onOpenFyersLogin = async () => {
     setLocalErr(null);
     if (!appId || !secret) {
       setLocalErr('Enter your Fyers App ID and Secret first.');
       return;
     }
+    if (!/^https?:\/\//i.test(redirectUri)) {
+      setLocalErr('Redirect URI must be an https URL (Fyers rejects app:// schemes).');
+      return;
+    }
     setFyersApp(appId, secret);
+    setFyersRedirect(redirectUri);
     setBusy('fyers');
     try {
-      const url = buildAuthUrl(appId, redirectUri);
-      const result = await WebBrowser.openAuthSessionAsync(url, redirectUri);
-      if (result.type === 'success' && result.url) {
-        const parsed = Linking.parse(result.url);
-        const raw = parsed.queryParams?.auth_code ?? parsed.queryParams?.code;
-        const code = Array.isArray(raw) ? raw[0] : raw;
-        if (!code) throw new Error('No auth code returned. Check the redirect URI matches.');
-        const { accessToken, refreshToken } = await exchangeCode(appId, secret, code);
-        setFyersToken(accessToken, refreshToken);
-        await refresh();
-      } else if (result.type !== 'cancel' && result.type !== 'dismiss') {
-        throw new Error('Login was not completed.');
-      }
+      await WebBrowser.openBrowserAsync(buildAuthUrl(appId, redirectUri));
     } catch (e) {
-      setLocalErr(`Fyers login failed: ${(e as Error).message}`);
+      setLocalErr(`Couldn't open the login page: ${(e as Error).message}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Step 2 — user pastes the redirected URL (or bare auth_code); exchange it.
+  const onSubmitCode = async () => {
+    setLocalErr(null);
+    if (!appId || !secret) {
+      setLocalErr('Enter your Fyers App ID and Secret first.');
+      return;
+    }
+    const code = parseAuthCode(pastedCode);
+    if (!code) {
+      setLocalErr('Paste the full redirect URL (contains auth_code=…) or the auth code itself.');
+      return;
+    }
+    setBusy('fyers-code');
+    try {
+      const { accessToken, refreshToken } = await exchangeCode(appId, secret, code);
+      setFyersToken(accessToken, refreshToken);
+      setPastedCode('');
+      await refresh();
+    } catch (e) {
+      setLocalErr(`Fyers token exchange failed: ${(e as Error).message}`);
     } finally {
       setBusy(null);
     }
@@ -111,13 +131,50 @@ export function BrokersScreen() {
         <TextInput style={styles.input} value={appId} onChangeText={setAppId} autoCapitalize="none" placeholder="XXXXXX-100" placeholderTextColor={theme.colors.textFaint} />
         <Text style={styles.fieldLabel}>Secret ID</Text>
         <TextInput style={styles.input} value={secret} onChangeText={setSecret} autoCapitalize="none" secureTextEntry placeholder="secret key" placeholderTextColor={theme.colors.textFaint} />
+
+        <Text style={styles.fieldLabel}>Redirect URI (https)</Text>
+        <TextInput
+          style={styles.input}
+          value={redirectUri}
+          onChangeText={setRedirectUri}
+          autoCapitalize="none"
+          keyboardType="url"
+          placeholder="https://127.0.0.1/"
+          placeholderTextColor={theme.colors.textFaint}
+        />
         <Text style={styles.redirectNote}>
-          Add this exact redirect URI in your Fyers API app:{'\n'}
-          <Text style={styles.redirectUri}>{redirectUri}</Text>
+          Paste this <Text style={styles.redirectUri}>exact</Text> URL as the Redirect URI when creating your
+          Fyers API app. Fyers only accepts an <Text style={styles.redirectUri}>https://</Text> URL — a{' '}
+          <Text style={styles.redirectUri}>tradelikehunter://</Text> scheme is rejected. Also tick the{' '}
+          <Text style={styles.redirectUri}>Quotes & Market data</Text> permission.
         </Text>
+
+        <View style={styles.stepRow}>
+          <Text style={styles.stepBadge}>1</Text>
+          <Text style={styles.stepTxt}>Open the Fyers login, sign in, and approve.</Text>
+        </View>
+        <TouchableOpacity style={[styles.btn, styles.btnPrimary]} onPress={onOpenFyersLogin} disabled={busy === 'fyers'}>
+          {busy === 'fyers' ? <ActivityIndicator color="#0B0E11" /> : <Text style={styles.btnPrimaryTxt}>{fyersConnected ? 'Re-login with Fyers' : 'Open Fyers Login'}</Text>}
+        </TouchableOpacity>
+
+        <View style={[styles.stepRow, { marginTop: 14 }]}>
+          <Text style={styles.stepBadge}>2</Text>
+          <Text style={styles.stepTxt}>
+            After approving you land on the redirect URL. Copy that whole URL from the address bar and paste it
+            here (it contains <Text style={styles.redirectUri}>auth_code=…</Text>).
+          </Text>
+        </View>
+        <TextInput
+          style={styles.input}
+          value={pastedCode}
+          onChangeText={setPastedCode}
+          autoCapitalize="none"
+          placeholder="https://127.0.0.1/?auth_code=…  (or just the code)"
+          placeholderTextColor={theme.colors.textFaint}
+        />
         <View style={styles.btnRow}>
-          <TouchableOpacity style={[styles.btn, styles.btnPrimary]} onPress={onFyersLogin} disabled={busy === 'fyers'}>
-            {busy === 'fyers' ? <ActivityIndicator color="#0B0E11" /> : <Text style={styles.btnPrimaryTxt}>{fyersConnected ? 'Re-login' : 'Login with Fyers'}</Text>}
+          <TouchableOpacity style={[styles.btn, styles.btnPrimary]} onPress={onSubmitCode} disabled={busy === 'fyers-code'}>
+            {busy === 'fyers-code' ? <ActivityIndicator color="#0B0E11" /> : <Text style={styles.btnPrimaryTxt}>Connect Fyers</Text>}
           </TouchableOpacity>
           {fyersConnected ? (
             <TouchableOpacity style={[styles.btn, styles.btnOutline]} onPress={clearFyers}>
@@ -225,6 +282,9 @@ const styles = StyleSheet.create({
   input: { backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, color: theme.colors.text, fontSize: 14 },
   redirectNote: { color: theme.colors.textFaint, fontSize: 11, lineHeight: 16, marginTop: 10 },
   redirectUri: { color: theme.colors.primary, fontSize: 12, fontWeight: '600' },
+  stepRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 12, marginBottom: 8 },
+  stepBadge: { color: '#0B0E11', backgroundColor: theme.colors.primary, width: 18, height: 18, borderRadius: 9, textAlign: 'center', fontSize: 11, fontWeight: '800', overflow: 'hidden', lineHeight: 18 },
+  stepTxt: { color: theme.colors.textDim, fontSize: 12, lineHeight: 17, flex: 1 },
   btnRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
   btn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   btnPrimary: { backgroundColor: theme.colors.primary },

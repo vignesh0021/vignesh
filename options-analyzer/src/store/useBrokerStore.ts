@@ -16,9 +16,14 @@ import type { BrokerPosition } from '../services/brokers/types';
 interface FyersCreds {
   appId: string;
   secret: string;
+  /** https redirect URI registered in the Fyers API app (custom schemes are rejected by Fyers). */
+  redirectUri: string;
   accessToken?: string;
   refreshToken?: string;
 }
+
+/** Default redirect URI — a valid https URL Fyers accepts; the auth_code is read back from it. */
+export const DEFAULT_FYERS_REDIRECT = 'https://127.0.0.1/';
 
 interface DeltaCreds {
   apiKey: string;
@@ -34,6 +39,7 @@ interface BrokerState {
   lastFetched: number | null;
 
   setFyersApp: (appId: string, secret: string) => void;
+  setFyersRedirect: (redirectUri: string) => void;
   setFyersToken: (accessToken: string, refreshToken?: string) => void;
   clearFyers: () => void;
   setDelta: (apiKey: string, apiSecret: string) => void;
@@ -44,7 +50,7 @@ interface BrokerState {
 export const useBrokerStore = create<BrokerState>()(
   persist(
     (set, get) => ({
-      fyers: { appId: '', secret: '' },
+      fyers: { appId: '', secret: '', redirectUri: DEFAULT_FYERS_REDIRECT },
       delta: { apiKey: '', apiSecret: '' },
       positions: [],
       loading: false,
@@ -52,9 +58,13 @@ export const useBrokerStore = create<BrokerState>()(
       lastFetched: null,
 
       setFyersApp: (appId, secret) => set((s) => ({ fyers: { ...s.fyers, appId, secret } })),
+      setFyersRedirect: (redirectUri) => set((s) => ({ fyers: { ...s.fyers, redirectUri } })),
       setFyersToken: (accessToken, refreshToken) =>
         set((s) => ({ fyers: { ...s.fyers, accessToken, refreshToken } })),
-      clearFyers: () => set((s) => ({ fyers: { appId: s.fyers.appId, secret: s.fyers.secret } })),
+      clearFyers: () =>
+        set((s) => ({
+          fyers: { appId: s.fyers.appId, secret: s.fyers.secret, redirectUri: s.fyers.redirectUri },
+        })),
       setDelta: (apiKey, apiSecret) => set({ delta: { apiKey, apiSecret } }),
       clearDelta: () => set({ delta: { apiKey: '', apiSecret: '' } }),
 

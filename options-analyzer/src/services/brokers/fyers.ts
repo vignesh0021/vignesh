@@ -42,6 +42,21 @@ export function buildAuthUrl(appId: string, redirectUri: string, state = 'tlh'):
   return `${AUTH}/generate-authcode?${q.toString()}`;
 }
 
+/**
+ * Extract the auth_code from whatever the user pastes back after login — either
+ * the full redirected URL (`https://…?auth_code=XXX&state=…`) or the bare code.
+ */
+export function parseAuthCode(input: string): string | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  // Try to pull auth_code / code out of a URL or query string.
+  const m = raw.match(/[?&](?:auth_code|code)=([^&#\s]+)/i);
+  if (m) return decodeURIComponent(m[1]);
+  // Otherwise treat the whole thing as the code, unless it's clearly a URL.
+  if (/^https?:\/\//i.test(raw)) return null;
+  return raw;
+}
+
 /** Step 2 — exchange the returned auth_code for an access token. */
 export async function exchangeCode(
   appId: string,
