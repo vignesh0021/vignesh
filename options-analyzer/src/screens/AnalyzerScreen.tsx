@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BrokersScreen } from '../components/BrokersScreen';
 import { GreeksTable } from '../components/GreeksTable';
 import { InstrumentPicker } from '../components/InstrumentPicker';
+import { PaperTradingScreen } from '../components/PaperTradingScreen';
 import { PayoffChart } from '../components/PayoffChart';
 import { PnlTable } from '../components/PnlTable';
 import { PortfolioSummary } from '../components/PortfolioSummary';
@@ -28,9 +29,10 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const logo = require('../../assets/icon.png');
 
-type Tab = 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'STRATEGY' | 'BACKTEST' | 'BROKERS';
+type Tab = 'PAPER' | 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'STRATEGY' | 'BACKTEST' | 'BROKERS';
 
 const TABS: { key: Tab; label: string }[] = [
+  { key: 'PAPER', label: '📝 Paper Trade' },
   { key: 'PAYOFF', label: 'PNL Chart' },
   { key: 'PNL', label: 'PNL Table' },
   { key: 'GREEKS', label: 'Greeks' },
@@ -42,7 +44,7 @@ const TABS: { key: Tab; label: string }[] = [
 
 export function AnalyzerScreen() {
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<Tab>('PAYOFF');
+  const [tab, setTab] = useState<Tab>('PAPER');
   const [sheetOpen, setSheetOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editing, setEditing] = useState<OptionPosition | null>(null);
@@ -112,9 +114,9 @@ export function AnalyzerScreen() {
         </TouchableOpacity>
       </View>
 
-      <RiskMatrix risk={risk} currency={currency} />
+      {tab !== 'PAPER' ? <RiskMatrix risk={risk} currency={currency} /> : null}
 
-      {mixedUnderlyings ? (
+      {tab !== 'PAPER' && mixedUnderlyings ? (
         <View style={styles.warn}>
           <Text style={styles.warnTxt}>
             ⚠ Legs span multiple underlyings — the payoff plots them on one price axis, so combined
@@ -135,7 +137,9 @@ export function AnalyzerScreen() {
         </ScrollView>
       </View>
 
-      {tab === 'BACKTEST' ? (
+      {tab === 'PAPER' ? (
+        <PaperTradingScreen />
+      ) : tab === 'BACKTEST' ? (
         <TestingEngine />
       ) : tab === 'BROKERS' ? (
         <BrokersScreen />
@@ -177,7 +181,7 @@ export function AnalyzerScreen() {
         </ScrollView>
       )}
 
-      {tab !== 'BACKTEST' && tab !== 'STRATEGY' && tab !== 'BROKERS' ? (
+      {tab !== 'PAPER' && tab !== 'BACKTEST' && tab !== 'STRATEGY' && tab !== 'BROKERS' ? (
         <TouchableOpacity style={[styles.fab, { bottom: insets.bottom + 16 }]} onPress={openAdd} activeOpacity={0.85}>
           <Text style={styles.fabTxt}>＋ Add Contract</Text>
         </TouchableOpacity>

@@ -19,7 +19,8 @@ tool in the spirit of Opstra and Delta Exchange. All pricing and risk math runs
 | **2. Portfolio store + Closed-Position Baseline** | `openPositions` / `closedPositions` slices; closing a leg freezes realized PNL and zeroes its Greeks; curves shift by the cumulative closed offset | `src/store/usePortfolioStore.ts`, `src/utils/payoff.ts` |
 | **3. Interactive UI** | Dual-line payoff canvas (orange = expiry, cyan = T+0) with profit/loss shading + draggable crosshair; spot / date / IV simulation sliders; risk matrix (Max P/L, R:R, break-evens); Greeks & PNL tables; slide-up add/edit sheet | `src/components/*`, `src/screens/AnalyzerScreen.tsx` |
 | **4. Backtesting & Forward testing** | `papaparse` CSV ingestion of option-chain snapshots; backtest → cumulative equity curve; forward test → tick-by-tick stepping into the live graph/Greeks | `src/components/TestingEngine.tsx` |
-| **5. Automated APK build** | GitHub Actions → `expo prebuild` + Gradle `assembleRelease`; `eas.json` for EAS cloud builds | `.github/workflows/build-options-apk.yml`, `eas.json` |
+| **5. Paper Trading** | Market-Pulse-style one-screen option chain + virtual order engine on a live/simulated tape; place BUY/SELL market & limit orders, live MTM positions, order book, trade log, ₹10L virtual funds | `src/components/PaperTradingScreen.tsx`, `src/store/usePaperStore.ts`, `src/services/liveFeed.ts` |
+| **6. Automated APK build** | GitHub Actions → `expo prebuild` + Gradle `assembleRelease`; `eas.json` for EAS cloud builds | `.github/workflows/build-options-apk.yml`, `eas.json` |
 
 ---
 
@@ -50,6 +51,37 @@ Portfolio(X)   = ActivePositionsPayoff(X) + ClosedOffset
 ```
 
 so both the expiry line and the T+0 line reflect already-banked P&L.
+
+## Paper Trading (Module 5)
+
+The **📝 Paper Trade** tab is a full trading simulator built around a
+Market-Pulse-style option chain — Call LTP · **STRIKE** · Put LTP with OI on the
+outer columns. Tap any strike to open an order ticket and place a simulated
+BUY/SELL (market or resting limit), then watch positions mark to market tick by
+tick with zero money at risk.
+
+**Live tape.** A single [`liveFeed`](src/services/liveFeed.ts) singleton is the
+source of the underlying spot. It always runs a synthetic random-walk engine so
+the tape is live 24/7 (nights, weekends, no broker). When a **Fyers** account is
+connected (Brokers tab), [`fyersSocket`](src/services/brokers/fyersSocket.ts)
+attaches the Fyers v3 data WebSocket and real last-traded prices seamlessly
+override the walk; if the socket goes quiet the walk resumes. The whole chain and
+every open position are **repriced from that one spot via Black-Scholes**, so
+calls, puts and P&L stay mutually consistent exactly like a real option tape.
+
+**Real fill mechanics.** [`usePaperStore`](src/store/usePaperStore.ts) mirrors a
+broker: weighted-average entries, reduce/close/flip on the opposite side, frozen
+realized P&L on closed quantity, resting limit orders that fill when price is
+hit, optional estimated brokerage + STT, and margin/available accounting.
+
+```
+equity      = startingFunds + realizedPnl + Σ unrealised MTM
+usedMargin  = premium debit (longs) + SPAN-style block (shorts)
+available   = startingFunds + realizedPnl − usedMargin
+```
+
+Everything persists on-device (AsyncStorage). Connect Fyers for a real live feed,
+or just open the tab and trade against the simulated tape.
 
 ---
 
