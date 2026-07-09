@@ -1,4 +1,5 @@
 import { bsGreeks, bsPrice } from '../hooks/useBlackScholes';
+import type { FyersOptionChain } from './brokers/fyers';
 import type { Greeks, OptionType } from '../types';
 import { daysBetween, todayIso } from '../utils/format';
 import { displayOptionSymbol, fyersOptionSymbol, optionKey } from '../utils/options';
@@ -108,6 +109,55 @@ export function buildChain(p: ChainParams): { rows: ChainRow[]; atm: number } {
       put: quoteFor(p, strike, 'PUT', timeYears),
     });
   }
+  return { rows, atm };
+}
+
+/**
+ * Convert a live Fyers option chain into the same ChainRow shape the UI uses,
+ * so the Market-Pulse view renders real LTP / OI / expiries when connected.
+ * Greeks are still derived locally (Fyers omits them) using `iv` for context.
+ */
+export function fyersChainToRows(
+  chain: FyersOptionChain,
+  underlying: string,
+  expiryIso: string,
+  iv: number,
+  rate: number,
+): { rows: ChainRow[]; atm: number } {
+  const spot = chain.underlyingLtp;
+  const timeYears = timeYearsFor(expiryIso);
+  // ATM = strike closest to the underlying.
+  let atm = 0;
+  let best = Infinity;
+  for (const r of chain.rows) {
+    const d = Math.abs(r.strike - spot);
+    if (d < best) {
+      best = d;
+      atm = r.strike;
+    }
+  }
+
+  const toQuote = (strike: number, type: OptionType, q?: { symbol: string; ltp: number; chg: number; oi: number }): ChainQuote => {
+    const itm = type === 'CALL' ? spot > strike : spot < strike;
+    return {
+      key: optionKey(underlying, expiryIso, strike, type),
+      symbol: q?.symbol || displayOptionSymbol(underlying, expiryIso, strike, type),
+      fyersSymbol: q?.symbol || fyersOptionSymbol(underlying, expiryIso, strike, type),
+      type,
+      ltp: q ? Math.max(q.ltp, 0.05) : 0,
+      chg: q?.chg ?? 0,
+      oiLacs: q ? q.oi / 1e5 : 0,
+      greeks: bsGreeks({ spot, strike, timeYears, rate, iv, type }),
+      itm,
+    };
+  };
+
+  const rows: ChainRow[] = chain.rows.map((r) => ({
+    strike: r.strike,
+    atm: r.strike === atm,
+    call: toQuote(r.strike, 'CALL', r.call),
+    put: toQuote(r.strike, 'PUT', r.put),
+  }));
   return { rows, atm };
 }
 

@@ -97,6 +97,91 @@ export async function getPositions(appId: string, accessToken: string): Promise<
     }));
 }
 
+export interface FyersExpiry {
+  /** ISO yyyy-mm-dd derived from the expiry epoch. */
+  iso: string;
+  /** Epoch (seconds) used as the `timestamp` param to pick this expiry. */
+  epoch: string;
+  /** Human label as returned by Fyers (e.g. "25-07-2024"). */
+  label: string;
+}
+
+export interface FyersChainQuote {
+  symbol: string;
+  strike: number;
+  optType: 'CE' | 'PE';
+  ltp: number;
+  chg: number; // absolute change vs previous close
+  oi: number; // open interest (contracts)
+}
+
+export interface FyersOptionChain {
+  underlyingLtp: number;
+  expiries: FyersExpiry[];
+  rows: { strike: number; call?: FyersChainQuote; put?: FyersChainQuote }[];
+}
+
+function epochToIso(epoch: number): string {
+  return new Date(epoch * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * Live option chain from Fyers API v3 (`/data/options-chain-v3`). Returns the
+ * expiry list, the underlying LTP, and call/put quotes grouped by strike.
+ * Pass `timestamp` (an expiry epoch from a prior call) to select an expiry.
+ * Docs: https://myapi.fyers.in/docsv3#tag/Data-Api/Option-Chain
+ */
+export async function getOptionChain(
+  appId: string,
+  accessToken: string,
+  symbol: string,
+  strikeCount = 12,
+  timestamp?: string,
+): Promise<FyersOptionChain> {
+  const q = new URLSearchParams({ symbol, strikecount: String(strikeCount) });
+  if (timestamp) q.set('timestamp', timestamp);
+  const json = await req(`${DATA}/data/options-chain-v3?${q.toString()}`, {
+    headers: authHeader(appId, accessToken),
+  });
+  if (json?.s !== 'ok' && json?.code !== 200) {
+    throw new Error(json?.message || 'Fyers option chain failed');
+  }
+  const d = json?.data ?? {};
+  const expiries: FyersExpiry[] = (Array.isArray(d.expiryData) ? d.expiryData : []).map((e: any) => {
+    const epoch = Number(e?.expiry ?? e?.date);
+    return { iso: epochToIso(epoch), epoch: String(e?.expiry ?? ''), label: String(e?.date ?? '') };
+  });
+
+  const chain: any[] = Array.isArray(d.optionsChain) ? d.optionsChain : [];
+  let underlyingLtp = 0; // set from the underlying row (blank option_type) below
+  const byStrike = new Map<number, { strike: number; call?: FyersChainQuote; put?: FyersChainQuote }>();
+  for (const it of chain) {
+    const ot = it?.option_type;
+    if (ot !== 'CE' && ot !== 'PE') {
+      // The underlying itself is included with a blank option_type.
+      const lp = Number(it?.ltp);
+      if (lp > 0) underlyingLtp = lp;
+      continue;
+    }
+    const strike = Number(it?.strike_price);
+    if (!(strike > 0)) continue;
+    const quote: FyersChainQuote = {
+      symbol: String(it?.symbol ?? ''),
+      strike,
+      optType: ot,
+      ltp: Number(it?.ltp) || 0,
+      chg: Number(it?.ltpch) || 0,
+      oi: Number(it?.oi) || 0,
+    };
+    const row = byStrike.get(strike) ?? { strike };
+    if (ot === 'CE') row.call = quote;
+    else row.put = quote;
+    byStrike.set(strike, row);
+  }
+  const rows = [...byStrike.values()].sort((a, b) => a.strike - b.strike);
+  return { underlyingLtp, expiries, rows };
+}
+
 /** Optional: live quotes for a set of Fyers symbols (e.g. "NSE:SBIN-EQ"). */
 export async function getQuotes(
   appId: string,

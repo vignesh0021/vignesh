@@ -120,6 +120,11 @@ class LiveFeed {
     this.emit();
   }
 
+  /** Push a real spot obtained out-of-band (e.g. from the REST option-chain poll). */
+  pushExternalSpot(ltp: number) {
+    this.applyLive(ltp);
+  }
+
   private step() {
     // If a real quote arrived recently, let it lead and skip synthetic drift.
     if (this.source === 'live' && Date.now() - this.lastLiveAt < 6000) return;

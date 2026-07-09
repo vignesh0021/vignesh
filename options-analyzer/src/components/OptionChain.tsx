@@ -19,6 +19,8 @@ export function OptionChain({
   step,
   expiryIso,
   strikesEachSide = 12,
+  externalRows,
+  externalAtm,
   onSelect,
 }: {
   underlying: string;
@@ -29,14 +31,19 @@ export function OptionChain({
   step: number;
   expiryIso: string;
   strikesEachSide?: number;
+  /** When provided (Fyers connected), render these real rows instead of the synthetic chain. */
+  externalRows?: ChainRow[];
+  externalAtm?: number;
   onSelect: (quote: ChainQuote, strike: number) => void;
 }) {
   const scrollRef = useRef<ScrollView>(null);
 
-  const { rows, atm } = useMemo(
+  const synthetic = useMemo(
     () => buildChain({ underlying, spot, refSpot, iv, rate, expiryIso, step, strikesEachSide }),
     [underlying, spot, refSpot, iv, rate, expiryIso, step, strikesEachSide],
   );
+  const rows = externalRows && externalRows.length > 0 ? externalRows : synthetic.rows;
+  const atm = externalRows && externalRows.length > 0 ? externalAtm ?? synthetic.atm : synthetic.atm;
 
   return (
     <View style={styles.wrap}>

@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { niceStrikeStep } from '../constants/instruments';
+import { getOptionChain, type FyersExpiry } from '../services/brokers/fyers';
 import { liveFeed, type FeedSource } from '../services/liveFeed';
-import type { ChainQuote } from '../services/optionChain';
+import { fyersChainToRows, type ChainQuote, type ChainRow } from '../services/optionChain';
 import { theme } from '../theme';
 import type { OptionAction } from '../types';
 import { fmtCompact, fmtNum } from '../utils/format';
@@ -50,14 +51,27 @@ export function PaperTradingScreen() {
   const [ticket, setTicket] = useState<{ contract: Contract; action: OptionAction } | null>(null);
   const [fundsDraft, setFundsDraft] = useState(String(startingFunds));
 
-  const expiries = useMemo(() => upcomingExpiries(asset, 6), [asset]);
-  const [expiryIso, setExpiryIso] = useState(expiries[0]);
+  // Real Fyers chain state (populated only when connected to the Indian market).
+  const [fyersRows, setFyersRows] = useState<ChainRow[] | null>(null);
+  const [fyersAtm, setFyersAtm] = useState(0);
+  const [fyersExpiries, setFyersExpiries] = useState<FyersExpiry[]>([]);
+  const [chainErr, setChainErr] = useState<string | null>(null);
+  const expiriesRef = useRef<FyersExpiry[]>([]);
+
+  const fyersConnected = !!(fyers.appId && fyers.accessToken);
+  const useFyers = fyersConnected && asset.assetClass === 'india_equity';
+
+  const [expiryIso, setExpiryIso] = useState(upcomingExpiries(asset, 6)[0]);
   const step = asset.strikeStep > 0 ? asset.strikeStep : niceStrikeStep(spot || spotPrice || 1);
 
-  // Reset the session reference + expiry when the underlying changes.
+  // Reset the session reference + expiry + cached chain when the underlying changes.
   useEffect(() => {
     setRefSpot(0);
     setExpiryIso(upcomingExpiries(asset, 6)[0]);
+    expiriesRef.current = [];
+    setFyersExpiries([]);
+    setFyersRows(null);
+    setChainErr(null);
   }, [asset.symbol]);
 
   // Seed the walk around the last known spot and capture the day's reference.
@@ -84,15 +98,44 @@ export function PaperTradingScreen() {
     };
   }, []);
 
-  // Attach / detach the real Fyers data socket when credentials change.
+  // Poll the real Fyers option chain when connected to the Indian market.
   useEffect(() => {
-    if (fyers.appId && fyers.accessToken) {
-      liveFeed.connectFyers(fyers.appId, fyers.accessToken, fyersUnderlyingSymbol(asset));
-    } else {
-      liveFeed.disconnectFyers();
+    if (!useFyers) {
+      setFyersRows(null);
+      return;
     }
-    return () => liveFeed.disconnectFyers();
-  }, [fyers.appId, fyers.accessToken, asset.symbol]);
+    let cancelled = false;
+    const symbol = fyersUnderlyingSymbol(asset);
+
+    const tick = async () => {
+      try {
+        const epoch = expiriesRef.current.find((e) => e.iso === expiryIso)?.epoch;
+        const chain = await getOptionChain(fyers.appId, fyers.accessToken!, symbol, 12, epoch);
+        if (cancelled) return;
+        if (chain.expiries.length) {
+          expiriesRef.current = chain.expiries;
+          setFyersExpiries(chain.expiries);
+        }
+        if (chain.underlyingLtp > 0) liveFeed.pushExternalSpot(chain.underlyingLtp);
+        // Keep the selected expiry valid against the broker's real list.
+        const validExpiry = chain.expiries.find((e) => e.iso === expiryIso)?.iso ?? chain.expiries[0]?.iso ?? expiryIso;
+        if (validExpiry !== expiryIso) setExpiryIso(validExpiry);
+        const mapped = fyersChainToRows(chain, asset.symbol, validExpiry, defaultIv, rate);
+        setFyersRows(mapped.rows);
+        setFyersAtm(mapped.atm);
+        setChainErr(null);
+      } catch (e) {
+        if (!cancelled) setChainErr((e as Error).message);
+      }
+    };
+
+    tick();
+    const timer = setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [useFyers, fyers.appId, fyers.accessToken, asset.symbol, expiryIso, defaultIv, rate]);
 
   const onSelect = (quote: ChainQuote, strike: number) => {
     setTicket({
@@ -118,6 +161,13 @@ export function PaperTradingScreen() {
   const dayPnl = realizedPnl + unrealized;
   const currency = asset.currency;
   const live = source === 'live';
+  const realChain = useFyers && !!fyersRows && fyersRows.length > 0;
+
+  // Expiry chips: real Fyers expiries when connected, else synthetic weeklies.
+  const expiryList: { iso: string; label: string }[] =
+    useFyers && fyersExpiries.length > 0
+      ? fyersExpiries.map((e) => ({ iso: e.iso, label: e.label || expiryTag(e.iso) }))
+      : upcomingExpiries(asset, 6).map((iso) => ({ iso, label: expiryTag(iso) }));
 
   return (
     <View style={styles.root}>
@@ -127,8 +177,8 @@ export function PaperTradingScreen() {
           <View style={styles.paperBadge}>
             <Text style={styles.paperTxt}>PAPER</Text>
           </View>
-          <View style={[styles.liveDot, { backgroundColor: live ? theme.colors.profit : theme.colors.primary }]} />
-          <Text style={styles.modeTxt}>{live ? 'LIVE · Fyers' : 'SIM feed'}</Text>
+          <View style={[styles.liveDot, { backgroundColor: realChain ? theme.colors.profit : live ? theme.colors.profit : theme.colors.primary }]} />
+          <Text style={styles.modeTxt}>{realChain ? 'LIVE · Fyers chain' : live ? 'LIVE · Fyers' : 'SIM feed'}</Text>
         </View>
         <TouchableOpacity onPress={resetPaper} hitSlop={8}>
           <Text style={styles.reset}>↺ Reset</Text>
@@ -163,16 +213,17 @@ export function PaperTradingScreen() {
         style={styles.expiryScroll}
         contentContainerStyle={styles.expiryRow}
       >
-        {expiries.map((e) => (
+        {expiryList.map((e) => (
           <TouchableOpacity
-            key={e}
-            style={[styles.expChip, expiryIso === e && styles.expChipOn]}
-            onPress={() => setExpiryIso(e)}
+            key={e.iso}
+            style={[styles.expChip, expiryIso === e.iso && styles.expChipOn]}
+            onPress={() => setExpiryIso(e.iso)}
           >
-            <Text style={[styles.expTxt, expiryIso === e && styles.expTxtOn]}>{expiryTag(e)}</Text>
+            <Text style={[styles.expTxt, expiryIso === e.iso && styles.expTxtOn]}>{e.label}</Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
+      {useFyers && chainErr ? <Text style={styles.chainErr}>Fyers chain: {chainErr} · showing last data</Text> : null}
 
       {/* Sub tabs */}
       <View style={styles.subTabs}>
@@ -195,6 +246,8 @@ export function PaperTradingScreen() {
           rate={rate}
           step={step}
           expiryIso={expiryIso}
+          externalRows={realChain ? fyersRows! : undefined}
+          externalAtm={realChain ? fyersAtm : undefined}
           onSelect={onSelect}
         />
       ) : subTab === 'POSITIONS' ? (
@@ -280,6 +333,7 @@ const styles = StyleSheet.create({
   expChipOn: { backgroundColor: theme.colors.primaryDim, borderColor: theme.colors.primary },
   expTxt: { color: theme.colors.textDim, fontSize: 12, fontWeight: '600' },
   expTxtOn: { color: theme.colors.text },
+  chainErr: { color: theme.colors.loss, fontSize: 11, paddingHorizontal: 14, paddingTop: 4 },
   subTabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: theme.colors.border, marginTop: 8 },
   subTab: { flex: 1, alignItems: 'center', paddingVertical: 10 },
   subTabTxt: { color: theme.colors.textDim, fontSize: 13, fontWeight: '600' },
