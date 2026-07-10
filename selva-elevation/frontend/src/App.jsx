@@ -200,15 +200,20 @@ export default function App() {
 
           {result?.note && (
             <div className={`text-xs rounded-lg p-3 ${
-              result.source === "edited" ? "bg-emerald-50 text-emerald-800"
+              result.source === "edited" || result.source === "vector" ? "bg-emerald-50 text-emerald-800"
               : result.source === "example" ? "bg-slate-100 text-slate-600"
               : "bg-amber-50 text-amber-800"}`}>
-              <b>Source: {result.source}</b> — {result.note}
-              {(result.source === "llm" || result.source === "fallback") && (
+              <b>Source: {result.source === "vector" ? "vector (exact CAD dimensions)" : result.source}</b> — {result.note}
+              {(result.source === "llm" || result.source === "fallback" || result.source === "vector") && (
                 <div className="mt-1 font-semibold">
-                  ⚠ This is a DRAFT. Open <span className="underline cursor-pointer"
-                    onClick={() => setActive("edit")}>✎ Verify &amp; Edit</span> and confirm every
-                  number before trusting the model.
+                  {result.source === "vector"
+                    ? <>Dimensions are exact. Open </>
+                    : <>⚠ This is a DRAFT. Open </>}
+                  <span className="underline cursor-pointer"
+                    onClick={() => setActive("edit")}>✎ Verify &amp; Edit</span>
+                  {result.source === "vector"
+                    ? <> to confirm window positions &amp; set storey heights.</>
+                    : <> and confirm every number before trusting the model.</>}
                 </div>
               )}
             </div>

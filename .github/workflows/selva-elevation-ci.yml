@@ -51,7 +51,11 @@ jobs:
           assert need <= set(v.json()["views"])
           bad = c.post("/api/views", json={"spec": {"floors": "nope"}})
           assert bad.status_code == 400
-          print("backend OK — 6 views, spec, prompts, edit-gate")
+          # vector parser: non-vector input degrades gracefully (no crash, no false spec)
+          import vector_parser
+          s, notes = vector_parser.parse(b"not a pdf")
+          assert s is None and notes
+          print("backend OK — 6 views, spec, prompts, edit-gate, vector-parser")
           PY
 
   frontend:

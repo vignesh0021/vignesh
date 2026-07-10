@@ -5,9 +5,20 @@ clean **line diagrams for all views** — *front, rear, left side, right side, t
 plus a **shaded colour elevation**. Built as the foundation for a future
 **ultra-realistic 3D elevation** step.
 
-The core design principle: **the LLM only extracts numbers, a deterministic renderer
-draws the geometry.** That keeps every view *100% faithful to the plan* — no pixel
-hallucination, no dimensional drift.
+The core design principle: **the geometry is only ever drawn from a structured spec,
+never from pixels.** For CAD PDFs the spec's dimensions come from the drawing's own
+text layer (no AI at all); for other files a vision LLM produces a *draft*. Either way
+you confirm it in the Verify & Edit gate before anything renders — so the output stays
+*100% faithful to the plan*, no hallucination, no dimensional drift.
+
+### Extraction order (most exact first)
+1. **Deterministic vector parser** — for CAD-exported PDFs, reads exact plot/building
+   dimensions, floor areas and setbacks straight from the embedded text (`source: vector`,
+   **no AI**). Footprint depths are derived from the exact areas, which captures upper-floor
+   step-backs.
+2. **Vision LLM** — for photos/scans with no text layer, a free model produces a draft
+   (`source: llm`).
+3. **Built-in example** — when neither applies (`source: fallback`).
 
 ### How the output stays 100% exact (no AI hallucination)
 The renderer never invents anything — it draws *only* what's in the spec. The one place
@@ -146,6 +157,8 @@ selva-elevation/
 
 - [x] Upload PDF/JPG/PNG, per-floor or full sheet
 - [x] Extract structured building spec via free vision LLM (+ deterministic fallback)
+- [x] **Deterministic vector-PDF parser** — exact plot/building dims, floor areas and
+      setbacks read from a CAD PDF's text layer with no AI (`source: vector`)
 - [x] **Verify & Edit gate** — review/correct every number + set real storey heights
       before rendering, so output is exact regardless of how the draft was extracted
 - [x] Generate line views: front · rear · left · right · top

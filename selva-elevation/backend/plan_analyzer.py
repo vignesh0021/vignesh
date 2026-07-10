@@ -10,6 +10,7 @@ import fitz                       # pymupdf
 from PIL import Image
 
 import llm_providers
+import vector_parser
 from spec_schema import BuildingSpec, SELVA_EXAMPLE
 
 MAX_W = 1600
@@ -75,7 +76,26 @@ def _extract_json(text: str) -> dict:
 
 
 def analyze(data: bytes, filename: str) -> dict:
-    """Returns {spec: BuildingSpec, source: 'llm'|'fallback', provider, note}."""
+    """Returns {spec, source, provider, note}.
+
+    Order of preference:
+      1. deterministic vector parse (exact dims from a CAD PDF's own text — no AI)
+      2. vision LLM (draft) if configured
+      3. built-in example (fallback)
+    Any result is a *draft* the user confirms in the Verify & Edit gate.
+    """
+    name = (filename or "").lower()
+    if name.endswith(".pdf") or data[:5] == b"%PDF-":
+        try:
+            spec, vnotes = vector_parser.parse(data)
+        except Exception as e:                  # noqa: BLE001
+            spec, vnotes = None, [f"vector parse error: {e}"]
+        if spec and len(spec.floors) >= 1:
+            return {"spec": spec, "source": "vector", "provider": "vector-parser",
+                    "note": "Read exactly from the CAD PDF's text layer (no AI): "
+                            + "; ".join(vnotes[:1])
+                            + ". Confirm window positions & heights in Verify & Edit."}
+
     prov = llm_providers.available()
     if prov["provider"] == "none" or not prov["configured"]:
         return {"spec": SELVA_EXAMPLE, "source": "fallback",
