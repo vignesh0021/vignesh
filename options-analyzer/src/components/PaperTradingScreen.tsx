@@ -50,7 +50,7 @@ export function PaperTradingScreen() {
   const [spot, setSpot] = useState(spotPrice > 0 ? spotPrice : 0);
   const [source, setSource] = useState<FeedSource>('sim');
   const [refSpot, setRefSpot] = useState(0);
-  const [ticket, setTicket] = useState<{ contract: Contract; action: OptionAction } | null>(null);
+  const [ticket, setTicket] = useState<{ contract: Contract; action: OptionAction; ltp: number } | null>(null);
   const [fundsDraft, setFundsDraft] = useState(String(startingFunds));
 
   // Real Fyers chain state (populated only when connected to the Indian market).
@@ -122,6 +122,7 @@ export function PaperTradingScreen() {
           setFyersExpiries(chain.expiries);
         }
         if (chain.underlyingLtp > 0) liveFeed.pushExternalSpot(chain.underlyingLtp);
+        if (chain.underlyingPrevClose > 0) setRefSpot(chain.underlyingPrevClose);
         // Keep the selected expiry valid against the broker's real list.
         const validExpiry = chain.expiries.find((e) => e.iso === expiryIso)?.iso ?? chain.expiries[0]?.iso ?? expiryIso;
         if (validExpiry !== expiryIso) setExpiryIso(validExpiry);
@@ -176,6 +177,8 @@ export function PaperTradingScreen() {
   const onSelect = (quote: ChainQuote, strike: number) => {
     setTicket({
       action: 'BUY',
+      // Snapshot the real chain LTP when connected so the fill matches what was tapped.
+      ltp: realChain ? quote.ltp : 0,
       contract: {
         key: quote.key,
         symbol: quote.symbol,
@@ -390,6 +393,7 @@ export function PaperTradingScreen() {
         visible={!!ticket}
         contract={ticket?.contract ?? null}
         initialAction={ticket?.action ?? 'BUY'}
+        liveLtp={ticket?.ltp ?? 0}
         spot={spot}
         currency={currency}
         onClose={() => setTicket(null)}

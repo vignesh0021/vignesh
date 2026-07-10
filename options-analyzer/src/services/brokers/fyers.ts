@@ -117,6 +117,8 @@ export interface FyersChainQuote {
 
 export interface FyersOptionChain {
   underlyingLtp: number;
+  /** Underlying previous close (LTP − change), for an accurate day-change %. */
+  underlyingPrevClose: number;
   expiries: FyersExpiry[];
   rows: { strike: number; call?: FyersChainQuote; put?: FyersChainQuote }[];
 }
@@ -155,13 +157,17 @@ export async function getOptionChain(
 
   const chain: any[] = Array.isArray(d.optionsChain) ? d.optionsChain : [];
   let underlyingLtp = 0; // set from the underlying row (blank option_type) below
+  let underlyingPrevClose = 0;
   const byStrike = new Map<number, { strike: number; call?: FyersChainQuote; put?: FyersChainQuote }>();
   for (const it of chain) {
     const ot = it?.option_type;
     if (ot !== 'CE' && ot !== 'PE') {
       // The underlying itself is included with a blank option_type.
       const lp = Number(it?.ltp);
-      if (lp > 0) underlyingLtp = lp;
+      if (lp > 0) {
+        underlyingLtp = lp;
+        underlyingPrevClose = lp - (Number(it?.ltpch) || 0);
+      }
       continue;
     }
     const strike = Number(it?.strike_price);
@@ -180,7 +186,7 @@ export async function getOptionChain(
     byStrike.set(strike, row);
   }
   const rows = [...byStrike.values()].sort((a, b) => a.strike - b.strike);
-  return { underlyingLtp, expiries, rows };
+  return { underlyingLtp, underlyingPrevClose, expiries, rows };
 }
 
 /** Optional: live quotes for a set of Fyers symbols (e.g. "NSE:SBIN-EQ"). */

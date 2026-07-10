@@ -21,6 +21,7 @@ export function OrderTicket({
   visible,
   contract,
   initialAction,
+  liveLtp = 0,
   spot,
   currency,
   onClose,
@@ -28,6 +29,8 @@ export function OrderTicket({
   visible: boolean;
   contract: Contract | null;
   initialAction: OptionAction;
+  /** Real broker LTP snapshot (from the chain) — preferred over Black-Scholes when > 0. */
+  liveLtp?: number;
   spot: number;
   currency: string;
   onClose: () => void;
@@ -52,11 +55,12 @@ export function OrderTicket({
     }
   }, [visible, initialAction, contract?.key, contract?.lotSize]);
 
-  const ltp = useMemo(
-    () =>
-      contract ? priceContract(spot, contract.strike, contract.optType, contract.expiryIso, contract.iv, contract.rate) : 0,
-    [contract, spot],
-  );
+  const ltp = useMemo(() => {
+    if (liveLtp > 0) return liveLtp; // real broker price snapshot
+    return contract
+      ? priceContract(spot, contract.strike, contract.optType, contract.expiryIso, contract.iv, contract.rate)
+      : 0;
+  }, [contract, spot, liveLtp]);
 
   useEffect(() => {
     if (visible && orderType === 'LIMIT' && limit === '' && ltp > 0) setLimit(ltp.toFixed(2));
