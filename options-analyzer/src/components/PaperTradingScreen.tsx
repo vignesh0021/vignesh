@@ -2,13 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { niceStrikeStep } from '../constants/instruments';
-import { getOptionChain, type FyersExpiry } from '../services/brokers/fyers';
+import type { Strategy } from '../constants/strategies';
+import { getOptionChain, getQuotes, type FyersExpiry } from '../services/brokers/fyers';
 import { liveFeed, type FeedSource } from '../services/liveFeed';
-import { fyersChainToRows, type ChainQuote, type ChainRow } from '../services/optionChain';
+import { atmStrikeFor, fyersChainToRows, priceContract, type ChainQuote, type ChainRow } from '../services/optionChain';
 import { theme } from '../theme';
 import type { OptionAction } from '../types';
-import { fmtCompact, fmtNum } from '../utils/format';
-import { expiryTag, fyersUnderlyingSymbol, upcomingExpiries } from '../utils/options';
+import { daysBetween, fmtCompact, fmtNum } from '../utils/format';
+import { displayOptionSymbol, expiryTag, fyersUnderlyingSymbol, optionKey, upcomingExpiries } from '../utils/options';
 import { useBrokerStore } from '../store/useBrokerStore';
 import { usePortfolioStore } from '../store/usePortfolioStore';
 import {
@@ -20,8 +21,9 @@ import {
 import { OptionChain } from './OptionChain';
 import { OrderTicket } from './OrderTicket';
 import { PaperOrders, PaperPositions } from './PaperPositions';
+import { PaperStrategyDeploy } from './PaperStrategyDeploy';
 
-type SubTab = 'CHAIN' | 'POSITIONS' | 'ORDERS';
+type SubTab = 'CHAIN' | 'STRATEGY' | 'POSITIONS' | 'ORDERS';
 
 /**
  * Paper Trading — a live option chain (Market-Pulse style) wired to a virtual
@@ -145,6 +147,32 @@ export function PaperTradingScreen() {
     };
   }, [useFyers, fyers.appId, fyers.accessToken, asset.symbol, expiryIso, defaultIv, rate]);
 
+  // Poll real broker LTPs for open positions + resting orders so they mark to
+  // the live market (not the Black-Scholes tape) when Fyers is connected.
+  useEffect(() => {
+    if (!fyersConnected) return;
+    let cancelled = false;
+    const poll = async () => {
+      const st = usePaperStore.getState();
+      const syms = new Set<string>();
+      for (const p of st.positions) if (p.symbol.includes(':')) syms.add(p.symbol);
+      for (const o of st.orders) if (o.status === 'PENDING' && o.symbol.includes(':')) syms.add(o.symbol);
+      if (syms.size === 0) return;
+      try {
+        const map = await getQuotes(fyers.appId, fyers.accessToken!, [...syms]);
+        if (!cancelled && Object.keys(map).length) usePaperStore.getState().applyLtps(map);
+      } catch {
+        /* ignore — BS tape keeps positions live in the meantime */
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [fyersConnected, fyers.appId, fyers.accessToken]);
+
   const onSelect = (quote: ChainQuote, strike: number) => {
     setTicket({
       action: 'BUY',
@@ -160,6 +188,44 @@ export function PaperTradingScreen() {
         rate,
       },
     });
+  };
+
+  // Deploy a whole strategy as paper orders at the live strikes/prices.
+  const deployStrategy = (strategy: Strategy, baseLots: number) => {
+    const atm = atmStrikeFor(spot, step);
+    const place = usePaperStore.getState().placeOrder;
+    for (const leg of strategy.legs) {
+      const strike = Math.max(atm + leg.stepOffset * step, step);
+      // Calendar legs use a later expiry; everything else uses the selected one.
+      let legExpiry = expiryIso;
+      if (leg.dteOffset) {
+        const later = expiryList.find((e) => daysBetween(expiryIso, e.iso) >= leg.dteOffset!);
+        legExpiry = later?.iso ?? expiryIso;
+      }
+      // Prefer the live chain quote (real LTP + Fyers symbol) for the near expiry.
+      const row = legExpiry === expiryIso && realChain ? fyersRows!.find((r) => r.strike === strike) : undefined;
+      const q = row ? (leg.type === 'CALL' ? row.call : row.put) : undefined;
+      const ltp = q?.ltp ?? priceContract(spot, strike, leg.type, legExpiry, defaultIv, rate);
+      place(
+        {
+          key: q?.key ?? optionKey(asset.symbol, legExpiry, strike, leg.type),
+          symbol: q?.symbol ?? displayOptionSymbol(asset.symbol, legExpiry, strike, leg.type),
+          underlying: asset.symbol,
+          strike,
+          optType: leg.type,
+          expiryIso: legExpiry,
+          lotSize: asset.lotSize,
+          iv: defaultIv,
+          rate,
+          action: leg.action,
+          orderType: 'MARKET',
+          product: 'NRML',
+          lots: leg.ratio * baseLots,
+        },
+        ltp,
+      );
+    }
+    setSubTab('POSITIONS');
   };
 
   const unrealized = positions.reduce((a, p) => a + positionPnl(p), 0);
@@ -250,10 +316,16 @@ export function PaperTradingScreen() {
 
       {/* Sub tabs */}
       <View style={styles.subTabs}>
-        {(['CHAIN', 'POSITIONS', 'ORDERS'] as SubTab[]).map((t) => (
+        {(['CHAIN', 'STRATEGY', 'POSITIONS', 'ORDERS'] as SubTab[]).map((t) => (
           <TouchableOpacity key={t} style={styles.subTab} onPress={() => setSubTab(t)}>
             <Text style={[styles.subTabTxt, subTab === t && styles.subTabTxtOn]}>
-              {t === 'CHAIN' ? 'Option Chain' : t === 'POSITIONS' ? `Positions${positions.length ? ` (${positions.length})` : ''}` : 'Orders'}
+              {t === 'CHAIN'
+                ? 'Chain'
+                : t === 'STRATEGY'
+                  ? 'Strategy'
+                  : t === 'POSITIONS'
+                    ? `Positions${positions.length ? ` (${positions.length})` : ''}`
+                    : 'Orders'}
             </Text>
             {subTab === t ? <View style={styles.subUnderline} /> : null}
           </TouchableOpacity>
@@ -273,6 +345,8 @@ export function PaperTradingScreen() {
           externalAtm={realChain ? fyersAtm : undefined}
           onSelect={onSelect}
         />
+      ) : subTab === 'STRATEGY' ? (
+        <PaperStrategyDeploy live={realChain} onDeploy={deployStrategy} />
       ) : subTab === 'POSITIONS' ? (
         <PaperPositions currency={currency} spot={spot} rate={rate} />
       ) : (

@@ -55,8 +55,13 @@ export interface PaperPosition extends Contract {
   lots: number; // net (> 0)
   avgPrice: number;
   ltp: number;
+  /** Timestamp of the last real (broker) LTP applied — while fresh, the BS tape won't overwrite it. */
+  ltpLiveAt?: number;
   openedAt: number;
 }
+
+/** How long a broker LTP is trusted before the synthetic tape takes over again. */
+const LIVE_LTP_TTL_MS = 20000;
 
 export interface PaperTrade {
   id: string;
@@ -169,6 +174,8 @@ interface PaperState {
   squareOffAll: () => void;
   /** Reprice positions and try to fill pending limit orders from a fresh spot. */
   onSpot: (spot: number) => void;
+  /** Apply real broker LTPs (keyed by option symbol) to positions + pending limit orders. */
+  applyLtps: (ltps: Record<string, number>) => void;
   resetPaper: () => void;
 }
 
@@ -350,10 +357,12 @@ export const usePaperStore = create<PaperState>()(
           const hasPending = s.orders.some((o) => o.status === 'PENDING');
           if (s.positions.length === 0 && !hasPending) return;
 
-          const reprice = (p: PaperPosition): PaperPosition => ({
-            ...p,
-            ltp: priceContract(spot, p.strike, p.optType, p.expiryIso, p.iv, p.rate),
-          });
+          const now = Date.now();
+          const reprice = (p: PaperPosition): PaperPosition => {
+            // Don't let the synthetic tape overwrite a fresh real broker LTP.
+            if (p.ltpLiveAt && now - p.ltpLiveAt < LIVE_LTP_TTL_MS) return p;
+            return { ...p, ltp: priceContract(spot, p.strike, p.optType, p.expiryIso, p.iv, p.rate) };
+          };
 
           // 1. Mark open positions to the live spot.
           if (s.positions.length > 0) set({ positions: s.positions.map(reprice) });
@@ -380,6 +389,47 @@ export const usePaperStore = create<PaperState>()(
                   : o,
               ),
               positions: st.positions.map(reprice),
+            }));
+          }
+        },
+
+        applyLtps: (ltps) => {
+          const s = get();
+          const now = Date.now();
+
+          // Mark positions to their real broker LTP.
+          let posChanged = false;
+          const positions = s.positions.map((p) => {
+            const lp = ltps[p.symbol];
+            if (lp != null && lp > 0) {
+              posChanged = true;
+              return { ...p, ltp: lp, ltpLiveAt: now };
+            }
+            return p;
+          });
+          if (posChanged) set({ positions });
+
+          // Fill pending limit orders that the real LTP now satisfies.
+          if (!s.orders.some((o) => o.status === 'PENDING')) return;
+          const filledAt: Record<string, number> = {};
+          for (const o of get().orders) {
+            if (o.status !== 'PENDING' || o.limitPrice == null) continue;
+            const lp = ltps[o.symbol];
+            if (!(lp > 0)) continue;
+            const hit =
+              (o.action === 'BUY' && lp <= o.limitPrice) || (o.action === 'SELL' && lp >= o.limitPrice);
+            if (hit) {
+              applyFill({ contract: o, action: o.action, product: o.product, lots: o.lots, price: o.limitPrice });
+              filledAt[o.id] = o.limitPrice;
+            }
+          }
+          if (Object.keys(filledAt).length > 0) {
+            set((st) => ({
+              orders: st.orders.map((o) =>
+                filledAt[o.id] != null
+                  ? { ...o, status: 'FILLED', avgFillPrice: filledAt[o.id], updatedAt: Date.now() }
+                  : o,
+              ),
             }));
           }
         },
