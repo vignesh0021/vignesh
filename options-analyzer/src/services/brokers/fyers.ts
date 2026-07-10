@@ -138,13 +138,14 @@ export async function getOptionChain(
   strikeCount = 12,
   timestamp?: string,
 ): Promise<FyersOptionChain> {
-  const q = new URLSearchParams({ symbol, strikecount: String(strikeCount) });
-  if (timestamp) q.set('timestamp', timestamp);
+  // Fyers expects the timestamp param present (empty = nearest expiry).
+  const q = new URLSearchParams({ symbol, strikecount: String(strikeCount), timestamp: timestamp ?? '' });
   const json = await req(`${DATA}/data/options-chain-v3?${q.toString()}`, {
     headers: authHeader(appId, accessToken),
   });
   if (json?.s !== 'ok' && json?.code !== 200) {
-    throw new Error(json?.message || 'Fyers option chain failed');
+    // Surface the real broker reason (e.g. missing "Quotes & Market data" permission, invalid token).
+    throw new Error(json?.message || json?.s || `Fyers option chain failed (${symbol})`);
   }
   const d = json?.data ?? {};
   const expiries: FyersExpiry[] = (Array.isArray(d.expiryData) ? d.expiryData : []).map((e: any) => {

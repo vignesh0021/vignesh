@@ -8,19 +8,55 @@ import type { OptionType } from '../types';
 
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
-/** Weekly expiry weekday by asset class (Thu for NSE indices, Fri for crypto). */
+/**
+ * Weekly expiry weekday per instrument (0=Sun … 6=Sat). Current NSE/BSE rules:
+ * NIFTY weekly = Tuesday, SENSEX weekly = Thursday, other NSE indices = Thursday,
+ * crypto = Friday. This is only the *offline* fallback — when Fyers is connected
+ * the real expiry dates come straight from the broker.
+ */
 function expiryWeekday(asset: MarketAsset): number {
+  if (asset.symbol === 'NIFTY') return 2; // Tuesday
+  if (asset.symbol === 'SENSEX') return 4; // Thursday (BSE)
   return asset.assetClass === 'india_equity' ? 4 /* Thu */ : 5 /* Fri */;
 }
 
-/** ISO (yyyy-mm-dd) for the next `count` weekly expiries on the asset's weekday. */
+/** Whether this instrument trades only monthly expiries (e.g. BANKNIFTY post-2024). */
+function isMonthlyOnly(asset: MarketAsset): boolean {
+  return asset.symbol === 'BANKNIFTY';
+}
+
+/** Last occurrence of `weekday` in the month of `d`. */
+function lastWeekdayOfMonth(year: number, month: number, weekday: number): Date {
+  const d = new Date(year, month + 1, 0); // last day of month
+  while (d.getDay() !== weekday) d.setDate(d.getDate() - 1);
+  return d;
+}
+
+/** ISO (yyyy-mm-dd) for the next `count` expiries — weekly, or monthly for BANKNIFTY. */
 export function upcomingExpiries(asset: MarketAsset, count = 6): string[] {
-  const weekday = expiryWeekday(asset);
   const out: string[] = [];
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  // advance to the next occurrence of `weekday` (today counts if it matches).
-  let delta = (weekday - d.getDay() + 7) % 7;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (isMonthlyOnly(asset)) {
+    // Monthly: last Tuesday of each upcoming month.
+    let y = today.getFullYear();
+    let m = today.getMonth();
+    for (let i = 0; out.length < count && i < count + 2; i++) {
+      const exp = lastWeekdayOfMonth(y, m, 2 /* Tuesday */);
+      if (exp >= today) out.push(exp.toISOString().slice(0, 10));
+      m += 1;
+      if (m > 11) {
+        m = 0;
+        y += 1;
+      }
+    }
+    return out;
+  }
+
+  const weekday = expiryWeekday(asset);
+  const d = new Date(today);
+  const delta = (weekday - d.getDay() + 7) % 7;
   d.setDate(d.getDate() + delta);
   for (let i = 0; i < count; i++) {
     out.push(d.toISOString().slice(0, 10));

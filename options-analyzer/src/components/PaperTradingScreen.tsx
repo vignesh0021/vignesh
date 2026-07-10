@@ -56,6 +56,8 @@ export function PaperTradingScreen() {
   const [fyersAtm, setFyersAtm] = useState(0);
   const [fyersExpiries, setFyersExpiries] = useState<FyersExpiry[]>([]);
   const [chainErr, setChainErr] = useState<string | null>(null);
+  const [chainState, setChainState] = useState<'idle' | 'live' | 'error'>('idle');
+  const [chainAt, setChainAt] = useState<number | null>(null);
   const expiriesRef = useRef<FyersExpiry[]>([]);
 
   const fyersConnected = !!(fyers.appId && fyers.accessToken);
@@ -72,6 +74,7 @@ export function PaperTradingScreen() {
     setFyersExpiries([]);
     setFyersRows(null);
     setChainErr(null);
+    setChainState('idle');
   }, [asset.symbol]);
 
   // Seed the walk around the last known spot and capture the day's reference.
@@ -124,8 +127,13 @@ export function PaperTradingScreen() {
         setFyersRows(mapped.rows);
         setFyersAtm(mapped.atm);
         setChainErr(null);
+        setChainState('live');
+        setChainAt(Date.now());
       } catch (e) {
-        if (!cancelled) setChainErr((e as Error).message);
+        if (!cancelled) {
+          setChainErr((e as Error).message);
+          setChainState('error');
+        }
       }
     };
 
@@ -223,7 +231,22 @@ export function PaperTradingScreen() {
           </TouchableOpacity>
         ))}
       </ScrollView>
-      {useFyers && chainErr ? <Text style={styles.chainErr}>Fyers chain: {chainErr} · showing last data</Text> : null}
+      {/* Fyers chain diagnostics */}
+      {fyersConnected && !useFyers ? (
+        <Text style={styles.chainHint}>
+          Live Fyers chain is available for NIFTY · BANKNIFTY · SENSEX. {asset.symbol} shows a simulated chain.
+        </Text>
+      ) : useFyers && chainState === 'error' ? (
+        <Text style={styles.chainErr}>
+          ⚠ Fyers: {chainErr}. Ensure your Fyers app has the “Quotes & Market data” permission enabled.
+        </Text>
+      ) : useFyers && realChain ? (
+        <Text style={styles.chainLive}>
+          ● Fyers LIVE · {fyersRows!.length} strikes{chainAt ? ` · ${new Date(chainAt).toLocaleTimeString()}` : ''}
+        </Text>
+      ) : useFyers ? (
+        <Text style={styles.chainHint}>Connecting to Fyers option chain…</Text>
+      ) : null}
 
       {/* Sub tabs */}
       <View style={styles.subTabs}>
@@ -333,7 +356,9 @@ const styles = StyleSheet.create({
   expChipOn: { backgroundColor: theme.colors.primaryDim, borderColor: theme.colors.primary },
   expTxt: { color: theme.colors.textDim, fontSize: 12, fontWeight: '600' },
   expTxtOn: { color: theme.colors.text },
-  chainErr: { color: theme.colors.loss, fontSize: 11, paddingHorizontal: 14, paddingTop: 4 },
+  chainErr: { color: theme.colors.loss, fontSize: 11, paddingHorizontal: 14, paddingTop: 4, lineHeight: 15 },
+  chainHint: { color: theme.colors.textDim, fontSize: 11, paddingHorizontal: 14, paddingTop: 4, lineHeight: 15 },
+  chainLive: { color: theme.colors.profit, fontSize: 11, fontWeight: '700', paddingHorizontal: 14, paddingTop: 4 },
   subTabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: theme.colors.border, marginTop: 8 },
   subTab: { flex: 1, alignItems: 'center', paddingVertical: 10 },
   subTabTxt: { color: theme.colors.textDim, fontSize: 13, fontWeight: '600' },
