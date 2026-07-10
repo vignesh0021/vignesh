@@ -11,6 +11,7 @@ from PIL import Image
 
 import llm_providers
 import vector_parser
+import standards
 from spec_schema import BuildingSpec, SELVA_EXAMPLE
 
 MAX_W = 1600
@@ -91,6 +92,7 @@ def analyze(data: bytes, filename: str) -> dict:
         except Exception as e:                  # noqa: BLE001
             spec, vnotes = None, [f"vector parse error: {e}"]
         if spec and len(spec.floors) >= 1:
+            standards.apply_to_spec(spec)      # Tamil Nadu height defaults
             return {"spec": spec, "source": "vector", "provider": "vector-parser",
                     "note": "Read exactly from the CAD PDF's text layer (no AI): "
                             + "; ".join(vnotes[:1])
@@ -108,6 +110,7 @@ def analyze(data: bytes, filename: str) -> dict:
         spec = BuildingSpec(**_extract_json(raw))
         if not spec.floors:
             raise ValueError("model returned zero floors")
+        standards.apply_to_spec(spec)          # Tamil Nadu height defaults
         return {"spec": spec, "source": "llm", "provider": prov["provider"],
                 "note": f"Extracted by {prov['provider']}."}
     except Exception as e:                      # noqa: BLE001 - report, don't crash

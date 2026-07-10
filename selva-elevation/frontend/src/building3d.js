@@ -90,8 +90,16 @@ export function buildBuilding(THREE, spec, theme) {
     }
   };
 
-  // stack floor heights
-  let base = 0;
+  // plinth: the building sits on a raised base (Tamil Nadu ~2 ft)
+  const plinth = spec.plinth || 0;
+  if (plinth > 0) {
+    const gf = spec.floors[0];
+    box(gf.fw + 1.2, plinth, gf.fd + 1.2, M.slab,
+        wx(gf.fx + gf.fw / 2), plinth / 2, wz(gf.fy + gf.fd / 2), false);
+  }
+
+  // stack floor heights (starting on top of the plinth)
+  let base = plinth;
   for (const f of spec.floors) { f.y0 = base; base += f.height; }
 
   for (const f of spec.floors) {

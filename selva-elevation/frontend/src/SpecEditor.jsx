@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { TN_STANDARD, parseFeet, formatFeet, savePrefs } from "./standards.js";
 
 // Hoisted so it isn't recreated each render (which would remount inputs and drop focus).
 function Num({ label, value, onChange, step = "0.5" }) {
@@ -14,6 +15,24 @@ function Num({ label, value, onChange, step = "0.5" }) {
   );
 }
 
+// Accepts feet-inch text (10'6") or decimal; shows the parsed value as a hint.
+function FeetField({ label, value, onChange }) {
+  const [txt, setTxt] = useState(formatFeet(value));
+  useEffect(() => setTxt(formatFeet(value)), [value]);
+  return (
+    <label className="flex flex-col gap-0.5">
+      <span className="text-[11px] text-slate-500">{label}</span>
+      <input
+        value={txt}
+        onChange={(e) => setTxt(e.target.value)}
+        onBlur={() => { const f = parseFeet(txt); if (f !== "") onChange(f); }}
+        placeholder={"10'-6\""}
+        className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-amber-500 outline-none"
+      />
+    </label>
+  );
+}
+
 // The Verify & Edit gate. Extraction only produces a DRAFT; the model renders
 // strictly from what the user approves here. This is what makes the output exact.
 export default function SpecEditor({ spec, onApply, busy }) {
@@ -21,11 +40,44 @@ export default function SpecEditor({ spec, onApply, busy }) {
   const [json, setJson] = useState("");
   const [jsonErr, setJsonErr] = useState(null);
   const [showJson, setShowJson] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [std, setStd] = useState(() => ({ ...TN_STANDARD }));
 
   useEffect(() => {
     setDraft(spec);
     setJson(JSON.stringify(spec, null, 2));
+    setStd((s) => ({
+      ...s,
+      floor_height: spec.floor_height ?? s.floor_height,
+      plinth: spec.plinth ?? s.plinth,
+      parapet: spec.parapet ?? s.parapet,
+      lintel: spec.lintel ?? s.lintel,
+    }));
   }, [spec]);
+
+  const setStdK = (k, v) => setStd((s) => ({ ...s, [k]: v }));
+
+  const applyStandard = () => {
+    const d = {
+      ...draft,
+      floor_height: std.floor_height, plinth: std.plinth,
+      parapet: std.parapet, lintel: std.lintel, standard: std.id,
+      floors: (draft.floors || []).map((f, i) => ({
+        ...f,
+        height: i === 0 ? std.stilt_height : std.floor_height,
+        openings: (f.openings || []).map((o) => ({
+          ...o,
+          sill: o.kind === "window" ? std.window_sill
+            : o.kind === "ventilator" ? std.vent_sill
+            : o.kind === "door" ? 0 : o.sill,
+        })),
+      })),
+    };
+    setDraft(d);
+    onApply(d);
+  };
+
+  const saveDefault = () => { savePrefs(std); setSaved(true); setTimeout(() => setSaved(false), 2000); };
 
   const n = (v) => (v === "" || v === null ? "" : Number(v));
   const setTop = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
@@ -60,9 +112,36 @@ export default function SpecEditor({ spec, onApply, busy }) {
         <Num label="Parapet (ft)" value={n(draft.parapet)} onChange={(v) => setTop("parapet", v)} />
       </div>
 
+      {/* Tamil Nadu height standard */}
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-emerald-800">🏗️ Height standard — {std.name}</p>
+          <span className="text-[10px] text-emerald-700">editable · feet-inch ok (10'-6")</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          <FeetField label="Floor-to-floor" value={std.floor_height} onChange={(v) => setStdK("floor_height", v)} />
+          <FeetField label="Ground / stilt" value={std.stilt_height} onChange={(v) => setStdK("stilt_height", v)} />
+          <FeetField label="Plinth" value={std.plinth} onChange={(v) => setStdK("plinth", v)} />
+          <FeetField label="Parapet" value={std.parapet} onChange={(v) => setStdK("parapet", v)} />
+          <FeetField label="Lintel (door/window head)" value={std.lintel} onChange={(v) => setStdK("lintel", v)} />
+          <FeetField label="Window sill" value={std.window_sill} onChange={(v) => setStdK("window_sill", v)} />
+        </div>
+        <p className="text-[10px] text-emerald-700">{std.note}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={applyStandard} disabled={busy}
+            className="rounded-lg bg-emerald-600 text-white px-3 py-1.5 text-xs font-semibold hover:bg-emerald-500 disabled:opacity-60">
+            Apply to all floors &amp; re-render
+          </button>
+          <button onClick={saveDefault}
+            className="rounded-lg border border-emerald-300 text-emerald-800 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100">
+            {saved ? "✓ Saved as your default" : "Save as my default"}
+          </button>
+        </div>
+      </div>
+
       {/* per-floor */}
       <div className="space-y-2">
-        <p className="text-xs font-semibold text-slate-600">Floors — footprint &amp; height</p>
+        <p className="text-xs font-semibold text-slate-600">Floors — footprint &amp; height (per-floor overrides)</p>
         {(draft.floors || []).map((f, i) => (
           <div key={i} className="rounded-lg border border-slate-200 p-2.5">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">

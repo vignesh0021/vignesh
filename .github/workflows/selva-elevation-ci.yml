@@ -55,7 +55,15 @@ jobs:
           import vector_parser
           s, notes = vector_parser.parse(b"not a pdf")
           assert s is None and notes
-          print("backend OK — 6 views, spec, prompts, edit-gate, vector-parser")
+          # Tamil Nadu height standard applied by default + custom standard via /api/views
+          std = c.get("/api/standards").json()
+          assert std["default"] == "tn" and any(x["id"] == "tn" for x in std["standards"])
+          assert ex["spec"]["plinth"] == 2.0 and ex["spec"]["lintel"] == 7.0
+          cust = {"floor_height": 11, "stilt_height": 9, "plinth": 1.5, "parapet": 4,
+                  "lintel": 7, "window_sill": 3, "vent_sill": 6, "door_height": 7}
+          w = c.post("/api/views", json={"spec": ex["spec"], "apply_standard": cust}).json()
+          assert [f["height"] for f in w["spec"]["floors"]][0] == 9 and w["spec"]["plinth"] == 1.5
+          print("backend OK — views, edit-gate, vector-parser, TN standards")
           PY
 
   frontend:

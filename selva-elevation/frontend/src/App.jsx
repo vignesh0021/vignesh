@@ -2,6 +2,23 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import Building3D from "./Building3D.jsx";
 import SpecEditor from "./SpecEditor.jsx";
 import { THEMES, themeById } from "./themes.js";
+import { loadPrefs } from "./standards.js";
+
+// If the user saved a height standard, apply it to a freshly loaded plan.
+async function applyPrefsIfAny(data) {
+  const prefs = loadPrefs();
+  if (!prefs || !data?.spec) return data;
+  try {
+    const r = await fetch("/api/views", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ spec: data.spec, apply_standard: prefs }),
+    });
+    const d = await r.json();
+    if (r.ok) return { ...data, spec: d.spec, views: d.views,
+      note: (data.note || "") + " · your saved height standard applied" };
+  } catch {}
+  return data;
+}
 
 const VIEWS = [
   { key: "edit", label: "✎ Verify & Edit", hint: "Review & correct every number — the model is built only from these" },
@@ -119,7 +136,7 @@ export default function App() {
     setBusy(true); setError(null);
     try {
       const r = await fetch("/api/example");
-      setResult(await r.json());
+      setResult(await applyPrefsIfAny(await r.json()));
       setActive("model3d");
     } catch (e) { setError(String(e)); }
     setBusy(false);
@@ -133,7 +150,7 @@ export default function App() {
       fd.append("file", file);
       const r = await fetch("/api/analyze", { method: "POST", body: fd });
       if (!r.ok) throw new Error(`server ${r.status}`);
-      setResult(await r.json());
+      setResult(await applyPrefsIfAny(await r.json()));
       setActive("model3d");
     } catch (e) { setError(String(e)); }
     setBusy(false);

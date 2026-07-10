@@ -161,6 +161,9 @@ selva-elevation/
       setbacks read from a CAD PDF's text layer with no AI (`source: vector`)
 - [x] **Verify & Edit gate** — review/correct every number + set real storey heights
       before rendering, so output is exact regardless of how the draft was extracted
+- [x] **Tamil Nadu height standards** — TNCDBR-based defaults (floor-to-floor, plinth,
+      parapet, lintel, sill), editable in feet-inch, savable as your firm's default;
+      building sits on a real plinth in every view
 - [x] Generate line views: front · rear · left · right · top
 - [x] Shaded colour elevation
 - [x] **Parametric 3D elevation** (Three.js) built from the spec — real-time, orbitable,
@@ -174,6 +177,24 @@ selva-elevation/
       optional GPU profile that bundles local SD + ControlNet for exact-match photoreal
 - [ ] Dimension lines & auto scale bar
 - [ ] Multi-sheet upload (one file per floor) merged into one spec
+
+### Tamil Nadu height standards (editable, savable)
+Floor plans carry no vertical dimensions, so heights follow a **Tamil Nadu standard**
+(TNCDBR + common practice), applied by default and fully editable:
+
+| Item | Default | Notes |
+|------|---------|-------|
+| Floor-to-floor | 10′-0″ | clear height ≥ 2.75 m (9′) per TNCDBR |
+| Ground / stilt | 10′-0″ | set 9′ for a low stilt (preset `tn_stilt9`) |
+| Plinth | 2′-0″ | finished floor above ground |
+| Parapet | 3′-6″ | terrace wall (code min 1 m) |
+| Lintel (door/window head) | 7′-0″ | window head aligns here |
+| Window sill | 3′-0″ | 4′ window → 3′ + 7′ head |
+
+In **Verify & Edit** you can change any of these (feet-inch input like `10'-6"` works),
+**Apply to all floors**, and **Save as my default** — your firm's standard is stored in the
+browser and auto-applied to every new plan you open. `GET /api/standards` lists the presets;
+`POST /api/views` accepts an `apply_standard` object.
 
 ### 3D themes
 The 3D tab renders the building from the spec and lets you switch **material themes**
