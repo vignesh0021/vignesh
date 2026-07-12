@@ -229,12 +229,14 @@ image provider (`IMAGE_PROVIDER` in `.env`). Options, free-first:
 
 For a render that **exactly matches the plan**, use `local_sd`: the app sends the
 generated front line-art as the ControlNet image at weight 1.0, so the AI can only
-repaint *within* your geometry. Example `.env`:
+repaint *within* your geometry. **Full step-by-step (GPU PC):**
+[`docs/local-sd-controlnet-setup.md`](docs/local-sd-controlnet-setup.md). Example `.env`:
 ```
 IMAGE_PROVIDER=local_sd
 SD_WEBUI_URL=http://localhost:7860
 SD_CONTROL_MODULE=canny
 SD_CONTROL_MODEL=control_v11p_sd15_canny
+SD_MODEL=realisticVisionV60B1_v51VAE.safetensors   # optional: pin the checkpoint
 ```
 
 ---

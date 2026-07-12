@@ -57,9 +57,15 @@ def _local_sd(prompts, control_png_b64, w, h):
         "prompt": prompts["positive"],
         "negative_prompt": prompts["negative"],
         "steps": int(os.getenv("SD_STEPS", "28")),
-        "cfg_scale": 6.5, "width": w, "height": h,
+        "cfg_scale": float(os.getenv("SD_CFG", "6.5")), "width": w, "height": h,
         "sampler_name": os.getenv("SD_SAMPLER", "DPM++ 2M Karras"),
     }
+    # optionally pin the checkpoint so results are reproducible regardless of the
+    # model currently selected in the WebUI
+    model_ckpt = os.getenv("SD_MODEL")
+    if model_ckpt:
+        payload["override_settings"] = {"sd_model_checkpoint": model_ckpt}
+        payload["override_settings_restore_afterwards"] = True
     if control_png_b64:
         module = os.getenv("SD_CONTROL_MODULE", "canny")
         model = os.getenv("SD_CONTROL_MODEL", "control_v11p_sd15_canny")
