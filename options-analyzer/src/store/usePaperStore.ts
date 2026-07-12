@@ -57,6 +57,10 @@ export interface PaperPosition extends Contract {
   ltp: number;
   /** Timestamp of the last real (broker) LTP applied — while fresh, the BS tape won't overwrite it. */
   ltpLiveAt?: number;
+  /** Stop-loss on the option premium. Long: triggers at ltp ≤ sl. Short: ltp ≥ sl. */
+  sl?: number;
+  /** Profit target on the option premium. Long: ltp ≥ target. Short: ltp ≤ target. */
+  target?: number;
   openedAt: number;
 }
 
@@ -72,6 +76,8 @@ export interface PaperTrade {
   price: number;
   kind: 'ENTRY' | 'EXIT';
   realized?: number;
+  /** Why the exit happened when it wasn't manual: 'SL' | 'TARGET' | 'MIS'. */
+  tag?: string;
   at: number;
 }
 
@@ -172,6 +178,8 @@ interface PaperState {
   cancelOrder: (id: string) => void;
   squareOff: (positionId: string) => void;
   squareOffAll: () => void;
+  /** Attach/clear a stop-loss and target (on the option premium) for a position. */
+  setSlTarget: (positionId: string, sl?: number, target?: number) => void;
   /** Reprice positions and try to fill pending limit orders from a fresh spot. */
   onSpot: (spot: number) => void;
   /** Apply real broker LTPs (keyed by option symbol) to positions + pending limit orders. */
@@ -189,8 +197,9 @@ export const usePaperStore = create<PaperState>()(
         product: ProductType;
         lots: number;
         price: number;
+        tag?: string;
       }) {
-        const { contract, action, product, lots, price } = o;
+        const { contract, action, product, lots, price, tag } = o;
         const state = get();
         const positions = [...state.positions];
         const trades = [...state.trades];
@@ -216,6 +225,7 @@ export const usePaperStore = create<PaperState>()(
             price,
             kind: 'EXIT',
             realized,
+            tag,
             at: Date.now(),
           });
           remaining -= closeLots;
@@ -269,6 +279,40 @@ export const usePaperStore = create<PaperState>()(
         set({ positions, trades, realizedPnl: state.realizedPnl + realizedDelta });
       }
 
+      /**
+       * Scan positions after every price update and execute protective exits:
+       * stop-loss / target on the option premium, and the MIS intraday
+       * auto-square-off window (≈15:20 IST) that real brokers enforce.
+       */
+      function checkTriggers() {
+        const now = new Date();
+        const istMin = (now.getUTCHours() * 60 + now.getUTCMinutes() + 330) % 1440;
+        const istDay = new Date(now.getTime() + 330 * 60000).getUTCDay();
+        const misWindow = istDay >= 1 && istDay <= 5 && istMin >= 15 * 60 + 20 && istMin <= 15 * 60 + 45;
+
+        for (const p of [...get().positions]) {
+          let tag: string | null = null;
+          if (misWindow && p.product === 'MIS') tag = 'MIS';
+          else if (p.action === 'BUY') {
+            if (p.sl != null && p.ltp <= p.sl) tag = 'SL';
+            else if (p.target != null && p.ltp >= p.target) tag = 'TARGET';
+          } else {
+            if (p.sl != null && p.ltp >= p.sl) tag = 'SL';
+            else if (p.target != null && p.ltp <= p.target) tag = 'TARGET';
+          }
+          if (tag) {
+            applyFill({
+              contract: p,
+              action: p.action === 'BUY' ? 'SELL' : 'BUY',
+              product: p.product,
+              lots: p.lots,
+              price: p.ltp,
+              tag,
+            });
+          }
+        }
+      }
+
       return {
         enabled: true,
         startingFunds: DEFAULT_FUNDS,
@@ -289,6 +333,31 @@ export const usePaperStore = create<PaperState>()(
             (req.action === 'BUY' && req.limitPrice != null && ltp <= req.limitPrice) ||
             (req.action === 'SELL' && req.limitPrice != null && ltp >= req.limitPrice);
           const fillPrice = req.orderType === 'MARKET' ? ltp : req.limitPrice ?? ltp;
+
+          // Margin check — reject like a real broker when funds don't cover the
+          // opening lots. Lots that close an opposite position need no margin.
+          const st = get();
+          const opposite = st.positions.find(
+            (p) => p.key === req.key && p.product === req.product && p.action !== req.action,
+          );
+          const openingLots = Math.max(0, req.lots - (opposite?.lots ?? 0));
+          if (openingLots > 0) {
+            const needed =
+              req.action === 'BUY'
+                ? fillPrice * openingLots * req.lotSize
+                : req.strike * openingLots * req.lotSize * SHORT_MARGIN_RATE;
+            const { available } = summarize(st);
+            if (needed > available) {
+              const reason = `Insufficient funds — needs ~${Math.ceil(needed).toLocaleString('en-IN')} margin, available ${Math.floor(Math.max(available, 0)).toLocaleString('en-IN')}`;
+              set((s) => ({
+                orders: [
+                  { ...req, id: genId('ord'), status: 'REJECTED' as const, reason, placedAt: Date.now(), updatedAt: Date.now() },
+                  ...s.orders,
+                ],
+              }));
+              return { ok: false, reason };
+            }
+          }
 
           const base: PaperOrder = {
             ...req,
@@ -368,7 +437,10 @@ export const usePaperStore = create<PaperState>()(
           if (s.positions.length > 0) set({ positions: s.positions.map(reprice) });
 
           // 2. Fill any pending limit orders that have become marketable.
-          if (!hasPending) return;
+          if (!hasPending) {
+            checkTriggers();
+            return;
+          }
           const filledAt: Record<string, number> = {};
           for (const o of get().orders) {
             if (o.status !== 'PENDING' || o.limitPrice == null) continue;
@@ -391,6 +463,7 @@ export const usePaperStore = create<PaperState>()(
               positions: st.positions.map(reprice),
             }));
           }
+          checkTriggers();
         },
 
         applyLtps: (ltps) => {
@@ -410,7 +483,10 @@ export const usePaperStore = create<PaperState>()(
           if (posChanged) set({ positions });
 
           // Fill pending limit orders that the real LTP now satisfies.
-          if (!s.orders.some((o) => o.status === 'PENDING')) return;
+          if (!s.orders.some((o) => o.status === 'PENDING')) {
+            checkTriggers();
+            return;
+          }
           const filledAt: Record<string, number> = {};
           for (const o of get().orders) {
             if (o.status !== 'PENDING' || o.limitPrice == null) continue;
@@ -432,7 +508,13 @@ export const usePaperStore = create<PaperState>()(
               ),
             }));
           }
+          checkTriggers();
         },
+
+        setSlTarget: (positionId, sl, target) =>
+          set((s) => ({
+            positions: s.positions.map((p) => (p.id === positionId ? { ...p, sl, target } : p)),
+          })),
 
         resetPaper: () => set({ positions: [], orders: [], trades: [], realizedPnl: 0 }),
       };

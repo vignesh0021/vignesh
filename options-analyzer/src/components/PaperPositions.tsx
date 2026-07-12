@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { Dimensions, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { theme } from '../theme';
 import { fmtNum, todayIso } from '../utils/format';
@@ -106,9 +106,27 @@ function PositionCard({
   currency: string;
   onSquareOff: () => void;
 }) {
+  const setSlTarget = usePaperStore((s) => s.setSlTarget);
+  const [editing, setEditing] = useState(false);
+  const [slDraft, setSlDraft] = useState('');
+  const [tgtDraft, setTgtDraft] = useState('');
+
   const pnl = positionPnl(pos);
   const isBuy = pos.action === 'BUY';
   const color = isBuy ? theme.colors.buy : theme.colors.sell;
+
+  const openEditor = () => {
+    setSlDraft(pos.sl != null ? String(pos.sl) : '');
+    setTgtDraft(pos.target != null ? String(pos.target) : '');
+    setEditing(true);
+  };
+  const save = () => {
+    const sl = Number(slDraft);
+    const tgt = Number(tgtDraft);
+    setSlTarget(pos.id, sl > 0 ? sl : undefined, tgt > 0 ? tgt : undefined);
+    setEditing(false);
+  };
+
   return (
     <View style={styles.card}>
       <View style={styles.cardHead}>
@@ -129,9 +147,45 @@ function PositionCard({
         <Metric label="LTP" value={fmtNum(pos.ltp, 2)} center />
         <Metric label={pos.product} value={currency} right dim />
       </View>
-      <TouchableOpacity style={styles.sqBtn} onPress={onSquareOff}>
-        <Text style={styles.sqTxt}>Square off</Text>
-      </TouchableOpacity>
+
+      {editing ? (
+        <View style={styles.slRow}>
+          <TextInput
+            style={styles.slInput}
+            value={slDraft}
+            onChangeText={setSlDraft}
+            keyboardType="decimal-pad"
+            placeholder="SL price"
+            placeholderTextColor={theme.colors.textFaint}
+          />
+          <TextInput
+            style={styles.slInput}
+            value={tgtDraft}
+            onChangeText={setTgtDraft}
+            keyboardType="decimal-pad"
+            placeholder="Target price"
+            placeholderTextColor={theme.colors.textFaint}
+          />
+          <TouchableOpacity style={styles.slSave} onPress={save}>
+            <Text style={styles.slSaveTxt}>Set</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      <View style={styles.btmRow}>
+        <TouchableOpacity style={styles.sqBtn} onPress={onSquareOff}>
+          <Text style={styles.sqTxt}>Square off</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.sqBtn} onPress={editing ? () => setEditing(false) : openEditor}>
+          <Text style={styles.sqTxt}>
+            {editing
+              ? 'Cancel'
+              : pos.sl != null || pos.target != null
+                ? `SL ${pos.sl != null ? fmtNum(pos.sl, 1) : '—'} · T ${pos.target != null ? fmtNum(pos.target, 1) : '—'}`
+                : '+ SL / Target'}
+          </Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -161,6 +215,7 @@ export function PaperOrders() {
             <Text style={styles.tradeSym} numberOfLines={1}>
               {t.action} {t.lots}×{fmtNum(t.lotSize, t.lotSize % 1 === 0 ? 0 : 2)} {t.symbol}
             </Text>
+            {t.tag ? <Text style={styles.tradeTag}>{t.tag}</Text> : null}
             <Text style={styles.tradePrice}>@{fmtNum(t.price, 2)}</Text>
             {t.realized != null ? (
               <Text style={[styles.tradePnl, { color: t.realized >= 0 ? theme.colors.profit : theme.colors.loss }]}>
@@ -251,8 +306,13 @@ const styles = StyleSheet.create({
   metrics: { flexDirection: 'row', marginTop: 12 },
   mLabel: { color: theme.colors.textDim, fontSize: 10, marginBottom: 3 },
   mVal: { color: theme.colors.text, fontSize: 13, fontWeight: '600' },
-  sqBtn: { marginTop: 12, alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, backgroundColor: theme.colors.surfaceAlt, borderWidth: 1, borderColor: theme.colors.border },
+  btmRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  sqBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, backgroundColor: theme.colors.surfaceAlt, borderWidth: 1, borderColor: theme.colors.border },
   sqTxt: { color: theme.colors.text, fontSize: 12, fontWeight: '700' },
+  slRow: { flexDirection: 'row', gap: 8, marginTop: 12, alignItems: 'center' },
+  slInput: { flex: 1, backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, color: theme.colors.text, fontSize: 13 },
+  slSave: { backgroundColor: theme.colors.primary, borderRadius: 8, paddingHorizontal: 16, paddingVertical: 9 },
+  slSaveTxt: { color: '#0B0E11', fontSize: 13, fontWeight: '800' },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, paddingHorizontal: 4 },
   totalLabel: { color: theme.colors.textDim, fontSize: 13, fontWeight: '600' },
   totalVal: { fontSize: 16, fontWeight: '800' },
@@ -270,4 +330,5 @@ const styles = StyleSheet.create({
   tradePrice: { color: theme.colors.textDim, fontSize: 12 },
   tradePnl: { fontSize: 12, fontWeight: '700', minWidth: 48, textAlign: 'right' },
   tradeKind: { color: theme.colors.textFaint, fontSize: 10, fontWeight: '700', minWidth: 48, textAlign: 'right' },
+  tradeTag: { color: theme.colors.primary, fontSize: 9, fontWeight: '800', backgroundColor: theme.colors.primaryDim + '55', paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, overflow: 'hidden' },
 });

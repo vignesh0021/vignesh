@@ -20,10 +20,11 @@ import {
 } from '../store/usePaperStore';
 import { OptionChain } from './OptionChain';
 import { OrderTicket } from './OrderTicket';
+import { PaperJournal } from './PaperJournal';
 import { PaperOrders, PaperPositions } from './PaperPositions';
 import { PaperStrategyDeploy } from './PaperStrategyDeploy';
 
-type SubTab = 'CHAIN' | 'STRATEGY' | 'POSITIONS' | 'ORDERS';
+type SubTab = 'CHAIN' | 'STRATEGY' | 'POSITIONS' | 'ORDERS' | 'JOURNAL';
 
 /**
  * Paper Trading — a live option chain (Market-Pulse style) wired to a virtual
@@ -318,21 +319,25 @@ export function PaperTradingScreen() {
       ) : null}
 
       {/* Sub tabs */}
-      <View style={styles.subTabs}>
-        {(['CHAIN', 'STRATEGY', 'POSITIONS', 'ORDERS'] as SubTab[]).map((t) => (
-          <TouchableOpacity key={t} style={styles.subTab} onPress={() => setSubTab(t)}>
-            <Text style={[styles.subTabTxt, subTab === t && styles.subTabTxtOn]}>
-              {t === 'CHAIN'
-                ? 'Chain'
-                : t === 'STRATEGY'
-                  ? 'Strategy'
-                  : t === 'POSITIONS'
-                    ? `Positions${positions.length ? ` (${positions.length})` : ''}`
-                    : 'Orders'}
-            </Text>
-            {subTab === t ? <View style={styles.subUnderline} /> : null}
-          </TouchableOpacity>
-        ))}
+      <View style={styles.subTabsWrap}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.subTabs}>
+          {(['CHAIN', 'STRATEGY', 'POSITIONS', 'ORDERS', 'JOURNAL'] as SubTab[]).map((t) => (
+            <TouchableOpacity key={t} style={styles.subTab} onPress={() => setSubTab(t)}>
+              <Text style={[styles.subTabTxt, subTab === t && styles.subTabTxtOn]}>
+                {t === 'CHAIN'
+                  ? 'Chain'
+                  : t === 'STRATEGY'
+                    ? 'Strategy'
+                    : t === 'POSITIONS'
+                      ? `Positions${positions.length ? ` (${positions.length})` : ''}`
+                      : t === 'ORDERS'
+                        ? 'Orders'
+                        : 'Journal'}
+              </Text>
+              {subTab === t ? <View style={styles.subUnderline} /> : null}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       </View>
 
       {subTab === 'CHAIN' ? (
@@ -350,6 +355,8 @@ export function PaperTradingScreen() {
         />
       ) : subTab === 'STRATEGY' ? (
         <PaperStrategyDeploy live={realChain} onDeploy={deployStrategy} />
+      ) : subTab === 'JOURNAL' ? (
+        <PaperJournal currency={currency} />
       ) : subTab === 'POSITIONS' ? (
         <PaperPositions currency={currency} spot={spot} rate={rate} />
       ) : (
@@ -437,8 +444,9 @@ const styles = StyleSheet.create({
   chainErr: { color: theme.colors.loss, fontSize: 11, paddingHorizontal: 14, paddingTop: 4, lineHeight: 15 },
   chainHint: { color: theme.colors.textDim, fontSize: 11, paddingHorizontal: 14, paddingTop: 4, lineHeight: 15 },
   chainLive: { color: theme.colors.profit, fontSize: 11, fontWeight: '700', paddingHorizontal: 14, paddingTop: 4 },
-  subTabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: theme.colors.border, marginTop: 8 },
-  subTab: { flex: 1, alignItems: 'center', paddingVertical: 10 },
+  subTabsWrap: { borderBottomWidth: 1, borderBottomColor: theme.colors.border, marginTop: 8 },
+  subTabs: { paddingHorizontal: 4 },
+  subTab: { alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14 },
   subTabTxt: { color: theme.colors.textDim, fontSize: 13, fontWeight: '600' },
   subTabTxtOn: { color: theme.colors.text },
   subUnderline: { height: 2, backgroundColor: theme.colors.primary, width: '60%', marginTop: 8, borderRadius: 2 },
