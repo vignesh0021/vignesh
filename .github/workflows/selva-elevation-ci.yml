@@ -44,7 +44,34 @@ jobs:
           # render endpoint builds prompts even when no image provider is configured
           r = c.post("/api/render3d", json={"spec": ex["spec"], "theme_id": "mono"})
           assert "positive" in r.json()["prompts"]
-          print("backend OK — 6 views, spec, prompts")
+          # Verify & Edit gate: an edited spec re-generates views; bad spec is rejected
+          spec = ex["spec"]; spec["floors"][0]["height"] = 14
+          v = c.post("/api/views", json={"spec": spec})
+          assert v.status_code == 200 and v.json()["spec"]["floors"][0]["height"] == 14
+          assert need <= set(v.json()["views"])
+          bad = c.post("/api/views", json={"spec": {"floors": "nope"}})
+          assert bad.status_code == 400
+          # vector parser: non-vector input degrades gracefully (no crash, no false spec)
+          import vector_parser
+          s, notes = vector_parser.parse(b"not a pdf")
+          assert s is None and notes
+          # Tamil Nadu height standard applied by default + custom standard via /api/views
+          std = c.get("/api/standards").json()
+          assert std["default"] == "tn" and any(x["id"] == "tn" for x in std["standards"])
+          assert ex["spec"]["plinth"] == 2.0 and ex["spec"]["lintel"] == 7.0
+          cust = {"floor_height": 11, "stilt_height": 9, "plinth": 1.5, "parapet": 4,
+                  "lintel": 7, "window_sill": 3, "vent_sill": 6, "door_height": 7}
+          w = c.post("/api/views", json={"spec": ex["spec"], "apply_standard": cust}).json()
+          assert [f["height"] for f in w["spec"]["floors"]][0] == 9 and w["spec"]["plinth"] == 1.5
+          # parser places only exterior openings (no internal doors) on valid walls
+          import spec_schema
+          demo = spec_schema.SELVA_EXAMPLE
+          for op in [o for fl in demo.floors for o in fl.openings]:
+              assert op.wall in {"front", "rear", "left", "right"}
+          # sunshade + wall thickness defaults; dimension chain + scale bar in the line view
+          assert ex["spec"]["sunshade"] is True and ex["spec"]["wall_thickness"] == 0.75
+          assert "SCALE" in ex["views"]["front"] and "plinth" in ex["views"]["front"]
+          print("backend OK — views, edit-gate, vector-parser, TN standards, sunshade+dims")
           PY
 
   frontend:

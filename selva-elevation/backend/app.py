@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 import llm_providers
 import image_providers
+import standards
 from spec_schema import SELVA_EXAMPLE, BuildingSpec
 from view_generator import generate_all
 from render_prompt import build_prompts
@@ -36,6 +37,31 @@ def _payload(result: dict) -> dict:
 def health():
     return {"ok": True, "llm": llm_providers.available(),
             "image": image_providers.status()}
+
+
+class SpecReq(BaseModel):
+    spec: dict
+    apply_standard: dict | None = None   # optional height standard to apply first
+
+
+@app.post("/api/views")
+def views(req: SpecReq):
+    """Re-generate all line views from an edited spec (the Verify & Edit gate).
+    Validates the spec via pydantic, so a bad edit returns a clear error and the
+    model is only ever built from numbers the user has approved. If apply_standard
+    is given (the user's saved height preferences), it is applied first."""
+    try:
+        spec = BuildingSpec(**req.spec)
+    except Exception as e:                      # noqa: BLE001
+        return JSONResponse(status_code=400, content={"error": f"invalid spec: {e}"})
+    if not spec.floors:
+        return JSONResponse(status_code=400, content={"error": "spec has no floors"})
+    if req.apply_standard:
+        try:
+            standards.apply_to_spec(spec, req.apply_standard)
+        except Exception as e:                  # noqa: BLE001
+            return JSONResponse(status_code=400, content={"error": f"bad standard: {e}"})
+    return {"spec": spec.model_dump(), "views": generate_all(spec)}
 
 
 class RenderReq(BaseModel):
@@ -72,10 +98,21 @@ def render3d(req: RenderReq):
             "error": f"{type(e).__name__}: {e}", "prompts": prompts, "status": st})
 
 
+@app.get("/api/standards")
+def get_standards():
+    """Available height standards (Tamil Nadu presets). The client can also keep a
+    saved custom standard and send it with /api/views."""
+    return {"standards": list(standards.STANDARDS.values()),
+            "default": standards.DEFAULT_STANDARD}
+
+
 @app.get("/api/example")
 def example():
-    return _payload({"spec": SELVA_EXAMPLE, "source": "example",
-                     "provider": None, "note": "Built-in SELVA G+2 sample."})
+    spec = SELVA_EXAMPLE.model_copy(deep=True)
+    standards.apply_to_spec(spec)
+    return _payload({"spec": spec, "source": "example",
+                     "provider": None,
+                     "note": "Built-in SELVA G+2 sample (Tamil Nadu height standard)."})
 
 
 @app.post("/api/analyze")

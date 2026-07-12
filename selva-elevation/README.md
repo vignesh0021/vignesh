@@ -5,9 +5,37 @@ clean **line diagrams for all views** — *front, rear, left side, right side, t
 plus a **shaded colour elevation**. Built as the foundation for a future
 **ultra-realistic 3D elevation** step.
 
-The core design principle: **the LLM only extracts numbers, a deterministic renderer
-draws the geometry.** That keeps every view *100% faithful to the plan* — no pixel
-hallucination, no dimensional drift.
+The core design principle: **the geometry is only ever drawn from a structured spec,
+never from pixels.** For CAD PDFs the spec's dimensions come from the drawing's own
+text layer (no AI at all); for other files a vision LLM produces a *draft*. Either way
+you confirm it in the Verify & Edit gate before anything renders — so the output stays
+*100% faithful to the plan*, no hallucination, no dimensional drift.
+
+### Extraction order (most exact first)
+1. **Deterministic vector parser** — for CAD-exported PDFs, reads exact plot/building
+   dimensions, floor areas and setbacks straight from the embedded text (`source: vector`,
+   **no AI**). Footprint depths are derived from the exact areas (captures upper-floor
+   step-backs). Exterior openings (windows, ventilators, main door) are placed from their
+   **real coordinates** on the sheet — internal doors are omitted since they don't appear on
+   an elevation. Wall side and upper-floor width-setback are best-effort — confirmed in the gate.
+2. **Vision LLM** — for photos/scans with no text layer, a free model produces a draft
+   (`source: llm`).
+3. **Built-in example** — when neither applies (`source: fallback`).
+
+### How the output stays 100% exact (no AI hallucination)
+The renderer never invents anything — it draws *only* what's in the spec. The one place
+error could enter is reading the plan into the spec, so that step is never trusted blindly:
+
+1. **Extraction = draft only.** Whatever reads the plan (a vision LLM, or the built-in
+   example) is treated as a *draft* and clearly flagged `source: llm / fallback`.
+2. **Verify & Edit gate.** You review and correct **every number** — footprints, window
+   positions, and the storey **heights** (a floor plan has no vertical dimensions, so
+   heights are yours to set) — in the editor. Nothing is rendered from unreviewed AI output.
+3. **Approve → render.** Only the values you approve go to the deterministic renderer via
+   `POST /api/views` (server-validated). The result is flagged `source: edited` — exact,
+   with no AI involved at render time.
+
+So the AI is optional and assistive; **your approval is the source of truth.**
 
 ```
  plan (pdf/jpg/png)
@@ -103,7 +131,8 @@ ollama pull llama3.2-vision      # or llava / qwen2.5-vl / minicpm-v
 |--------|-------|---------|
 | `GET`  | `/api/health`  | status + which LLM provider is active |
 | `GET`  | `/api/example` | built-in SELVA spec + all views |
-| `POST` | `/api/analyze` | multipart `file=` → `{spec, views, source}` |
+| `POST` | `/api/analyze` | multipart `file=` → `{spec, views, source}` (a **draft**) |
+| `POST` | `/api/views`   | `{spec}` (edited/approved) → validated `{spec, views}` |
 
 `views` is a map of `{front, rear, left, right, top, elevation}` → SVG strings.
 
@@ -130,6 +159,17 @@ selva-elevation/
 
 - [x] Upload PDF/JPG/PNG, per-floor or full sheet
 - [x] Extract structured building spec via free vision LLM (+ deterministic fallback)
+- [x] **Deterministic vector-PDF parser** — exact plot/building dims, floor areas and
+      setbacks read from a CAD PDF's text layer with no AI (`source: vector`)
+- [x] **Verify & Edit gate** — review/correct every number + set real storey heights
+      before rendering, so output is exact regardless of how the draft was extracted
+- [x] **Tamil Nadu height standards** — TNCDBR-based defaults (floor-to-floor, plinth,
+      parapet, lintel, sill), editable in feet-inch, savable as your firm's default;
+      building sits on a real plinth in every view
+- [x] **Real opening positions + sunshades + dimensioned drawings** — exterior openings
+      placed from their true CAD coordinates; sunshades/chajjas over windows & doors (2D
+      and 3D); line elevations carry a dimension chain, overall width and a scale bar;
+      9″ wall thickness parameter
 - [x] Generate line views: front · rear · left · right · top
 - [x] Shaded colour elevation
 - [x] **Parametric 3D elevation** (Three.js) built from the spec — real-time, orbitable,
@@ -143,6 +183,24 @@ selva-elevation/
       optional GPU profile that bundles local SD + ControlNet for exact-match photoreal
 - [ ] Dimension lines & auto scale bar
 - [ ] Multi-sheet upload (one file per floor) merged into one spec
+
+### Tamil Nadu height standards (editable, savable)
+Floor plans carry no vertical dimensions, so heights follow a **Tamil Nadu standard**
+(TNCDBR + common practice), applied by default and fully editable:
+
+| Item | Default | Notes |
+|------|---------|-------|
+| Floor-to-floor | 10′-0″ | clear height ≥ 2.75 m (9′) per TNCDBR |
+| Ground / stilt | 10′-0″ | set 9′ for a low stilt (preset `tn_stilt9`) |
+| Plinth | 2′-0″ | finished floor above ground |
+| Parapet | 3′-6″ | terrace wall (code min 1 m) |
+| Lintel (door/window head) | 7′-0″ | window head aligns here |
+| Window sill | 3′-0″ | 4′ window → 3′ + 7′ head |
+
+In **Verify & Edit** you can change any of these (feet-inch input like `10'-6"` works),
+**Apply to all floors**, and **Save as my default** — your firm's standard is stored in the
+browser and auto-applied to every new plan you open. `GET /api/standards` lists the presets;
+`POST /api/views` accepts an `apply_standard` object.
 
 ### 3D themes
 The 3D tab renders the building from the spec and lets you switch **material themes**
