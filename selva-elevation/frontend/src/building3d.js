@@ -15,16 +15,22 @@ export function buildBuilding(THREE, spec, theme) {
 
   const mat = (color, opts = {}) =>
     new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.02, ...opts });
+  // reflective glass (standard + env reflections) — robust on every GPU
+  const glassMat = (color, opacity = 0.55) =>
+    new THREE.MeshStandardMaterial({
+      color, roughness: 0.08, metalness: 0.1, transparent: true, opacity,
+      envMapIntensity: 1.8,
+    });
   const M = {
-    plaster: mat(theme.plaster, { roughness: 0.9 }),
-    accent: mat(theme.accent, { roughness: 0.8 }),
-    wood: mat(theme.wood, { roughness: 0.6 }),
-    slab: mat(theme.slab, { roughness: 0.9 }),
+    plaster: mat(theme.plaster, { roughness: 0.92, envMapIntensity: 0.7 }),
+    accent: mat(theme.accent, { roughness: 0.8, envMapIntensity: 0.7 }),
+    wood: mat(theme.wood, { roughness: 0.5, envMapIntensity: 0.8 }),
+    slab: mat(theme.slab, { roughness: 0.9, envMapIntensity: 0.6 }),
     trim: mat(theme.trim, { roughness: 0.85 }),
-    rail: mat(theme.rail, { roughness: 0.4, metalness: 0.6 }),
-    frame: mat("#2a2c30", { roughness: 0.5, metalness: 0.3 }),
-    glass: mat(theme.glass, { roughness: 0.1, metalness: 0.1, transparent: true, opacity: 0.55 }),
-    railGlass: mat(theme.railGlass, { roughness: 0.1, transparent: true, opacity: 0.4 }),
+    rail: mat(theme.rail, { roughness: 0.3, metalness: 0.85, envMapIntensity: 1.2 }),
+    frame: mat("#26282c", { roughness: 0.4, metalness: 0.6, envMapIntensity: 1.0 }),
+    glass: glassMat(theme.glass, 0.5),
+    railGlass: glassMat(theme.railGlass, 0.35),
     void: mat("#3a352f", { roughness: 1 }),
   };
 
