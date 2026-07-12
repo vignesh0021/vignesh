@@ -119,12 +119,24 @@ def parse(data: bytes) -> tuple[Optional[BuildingSpec], list[str]]:
             content_by_floor[idx].append(w)
 
     floors = []
-    prev_depth = plot_d - 3
+    ground_depth = None
+    ground_area = None
     for i, (name, ty) in enumerate(titles):
         area = area_for(ty)
-        # EXACT-derived footprint depth from the area (captures upper-floor setbacks)
-        depth = round(min(area / build_w, plot_d), 1) if area else prev_depth
-        prev_depth = depth
+        # Footprint: ground / large floors are full width. A much-smaller upper floor
+        # is modelled as a SET-BACK narrower block (reduced width, offset to one side)
+        # rather than full width — area alone can't separate width from depth, so this
+        # is the better default for a stepped building. Confirmed in Verify & Edit.
+        if i == 0 or not ground_area or not area or area >= 0.72 * ground_area:
+            fw = build_w
+            fd = round(min(area / build_w, plot_d), 1) if area else (ground_depth or plot_d - 3)
+            fx = 0.0
+        else:
+            fd = ground_depth or round(plot_d - 3, 1)
+            fw = round(min(build_w, area / fd), 1)
+            fx = round(max(0.0, build_w - fw), 1)      # step back to one side
+        if i == 0:
+            ground_depth, ground_area = fd, area
 
         ext = ext_by_floor[i]
         anchors = content_by_floor[i] or ext
@@ -135,7 +147,6 @@ def parse(data: bytes) -> tuple[Optional[BuildingSpec], list[str]]:
         if xs and ys:
             X0, X1, Y0, Y1 = min(xs), max(xs), min(ys), max(ys)
             spanX, spanY = max(X1 - X0, 1), max(Y1 - Y0, 1)
-            # front = the depth-end (nx) where the main door sits (fallback: nx≈0)
             md = [w for w in ext if w[4].strip() == "MD"]
             front_at_low = True
             if md:
@@ -150,22 +161,20 @@ def parse(data: bytes) -> tuple[Optional[BuildingSpec], list[str]]:
                 e = min(edges, key=edges.get)
                 if e in ("L", "R"):             # depth-running -> side wall
                     wall = "left" if e == "L" else "right"
-                    pos = nx * depth
+                    pos, lo, hi = nx * fd, 0, fd - ww
                 else:                            # width-running -> front/rear
                     is_front = (e == "A") == front_at_low
                     wall = "front" if is_front else "rear"
-                    pos = ny * build_w
-                span = build_w if wall in ("front", "rear") else depth
-                pos = round(max(0, min(pos - ww / 2, span - ww)), 1)
+                    pos, lo, hi = fx + ny * fw, fx, fx + fw - ww     # within this floor's band
+                pos = round(max(lo, min(pos - ww / 2, hi)), 1)
                 opens.append(Opening(tag=tag, kind=kind, wall=wall, pos=pos,
                                      width=ww, height=hh, sill=sill))
 
         floors.append(Floor(name=name, level=i, area_sqft=area,
-                            fx=0, fy=0, fw=build_w, fd=depth, height=10,
-                            openings=opens))
-        notes.append(f"{name}: area={area} sqft, footprint {build_w}×{depth} ft, "
-                     f"{len(opens)} exterior openings [{_count_tags(opens)}] "
-                     f"placed by real position")
+                            fx=fx, fy=0, fw=fw, fd=fd, height=10, openings=opens))
+        notes.append(f"{name}: area={area} sqft, footprint {fw}×{fd} ft"
+                     + (f" set back +{fx} ft" if fx else "")
+                     + f", {len(opens)} exterior openings [{_count_tags(opens)}]")
 
     if not floors:
         return None, notes + ["no floor regions resolved"]
@@ -173,8 +182,9 @@ def parse(data: bytes) -> tuple[Optional[BuildingSpec], list[str]]:
     spec = BuildingSpec(project="Vector-parsed plan", plot_width=plot_w, plot_depth=plot_d,
                         floor_height=10, parapet=3, floors=floors)
     notes.append("NOTE: dimensions & areas are exact from the CAD text; exterior openings "
-                 "are placed from their real coordinates (wall side best-effort). Upper-floor "
-                 "setback is modelled as reduced depth (full width) — set fw/fx in Verify & Edit.")
+                 "are placed from their real coordinates (wall side best-effort). A much-smaller "
+                 "upper floor is shown as a set-back block — fine-tune its width/offset (fw/fx) "
+                 "and window walls in Verify & Edit.")
     return spec, notes
 
 
