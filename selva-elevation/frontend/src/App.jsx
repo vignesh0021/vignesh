@@ -122,6 +122,7 @@ export default function App() {
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || `server ${r.status}`);
       setRender({ busy: false, img: `data:image/png;base64,${data.image_b64}`,
+        controlnet: !!data.controlnet_used, provider: data.provider,
         note: `${data.provider}${data.controlnet_used ? " · ControlNet" : ""} — ${data.note}`, err: null });
     } catch (e) {
       setRender({ busy: false, img: null, note: null, err: String(e.message || e) });
@@ -349,11 +350,19 @@ export default function App() {
                         </button>
                       </div>
                       <p className="text-xs text-slate-500 mt-1">
-                        Uses the current theme + the front line-art as a ControlNet constraint
-                        (when your provider supports it) so the render stays true to the plan.
                         Provider: <b>{health?.image?.provider || "…"}</b>
-                        {health?.image?.controlnet ? " · ControlNet ✓" : ""}
+                        {health?.image?.controlnet
+                          ? " · ControlNet ✓ — locked to your plan"
+                          : " · prompt-only — will NOT match your plan geometry"}
                       </p>
+                      {health?.image && !health.image.controlnet && (
+                        <div className="mt-2 text-xs rounded-lg bg-amber-100 border border-amber-300 text-amber-900 p-2.5">
+                          ⚠ <b>This provider ({health.image.provider}) makes a <u>generic</u> AI image, not your plan.</b>
+                          For a photoreal render that matches your design, either export
+                          <b> ⬇ Download 3D (.glb)</b> → Blender/Lumion/D5, or set
+                          <code className="bg-amber-200 px-1 rounded">IMAGE_PROVIDER=local_sd</code> (Stable Diffusion + ControlNet).
+                        </div>
+                      )}
                       {render.busy && (
                         <div className="mt-3 h-52 grid place-items-center rounded-lg bg-slate-200 animate-pulse text-xs text-slate-500">
                           generating photoreal image…
@@ -364,7 +373,15 @@ export default function App() {
                       )}
                       {render.img && (
                         <div className="mt-3 space-y-1.5">
-                          <img src={render.img} alt="photoreal render" className="w-full rounded-lg border border-slate-200" />
+                          {!render.controlnet && (
+                            <div className="text-xs rounded-lg bg-red-50 border border-red-300 text-red-800 p-2.5 font-semibold">
+                              ⚠ Generic AI image — this is <u>NOT</u> your plan. {render.provider} ignores the
+                              geometry. Use the <b>.glb → Blender/Lumion</b> route or <code>local_sd</code> (ControlNet)
+                              for an accurate render.
+                            </div>
+                          )}
+                          <img src={render.img} alt="photoreal render"
+                            className={`w-full rounded-lg border ${render.controlnet ? "border-slate-200" : "border-red-300"}`} />
                           <div className="flex items-center justify-between">
                             <span className="text-[11px] text-slate-500">{render.note}</span>
                             <a href={render.img} download={`${spec.project}-${themeId}-photoreal.png`}
