@@ -68,6 +68,8 @@ class BuildingSpec(BaseModel):
     parapet: float = 3.5
     plinth: float = 2.0          # finished floor level above ground (Tamil Nadu ~2')
     lintel: float = 7.0          # door/window head level
+    wall_thickness: float = 0.75  # 9" external wall
+    sunshade: bool = True        # chajja over exterior windows/doors (common in TN)
     standard: str = "tn"         # id of the applied height standard
     floors: List[Floor] = Field(default_factory=list)
 

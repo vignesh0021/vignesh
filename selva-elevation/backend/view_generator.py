@@ -67,6 +67,38 @@ def _title(svg: SVG, W, H, title, sub):
         svg.text(W / 2, H - 2, sub, 13, LABEL)
 
 
+def _feet_label(v):
+    ft = int(v); inch = round((v - ft) * 12)
+    return f"{ft}'" if not inch else f"{ft}'-{inch}\""
+
+
+def _dim_v(svg: SVG, x, levels, labels):
+    """Vertical dimension chain. levels: y positions top->bottom; labels between them."""
+    svg.line(x, levels[0], x, levels[-1], INK, 1.1)
+    for ly in levels:
+        svg.line(x - 6, ly, x + 6, ly, INK, 1.1)
+    for i, lab in enumerate(labels):
+        my = (levels[i] + levels[i + 1]) / 2
+        svg.text(x + 10, my + 4, lab, 12, LABEL, "start")
+
+
+def _dim_h(svg: SVG, y, x0, x1, label):
+    svg.line(x0, y, x1, y, INK, 1.1)
+    for lx in (x0, x1):
+        svg.line(lx, y - 6, lx, y + 6, INK, 1.1)
+    svg.text((x0 + x1) / 2, y - 6, label, 12, LABEL)
+
+
+def _scale_bar(svg: SVG, x, y, scale, feet=10):
+    seg = 5
+    svg.text(x, y - 8, "SCALE", 10, LABEL, "start")
+    for i in range(feet // seg):
+        x0 = x + i * seg * scale
+        svg.rect(x0, y, seg * scale, 7, INK if i % 2 == 0 else "#fff", INK, 1)
+    svg.text(x, y + 20, "0", 10, LABEL, "middle")
+    svg.text(x + feet * scale, y + 20, f"{feet} ft", 10, LABEL, "middle")
+
+
 # =========================================================================
 #  ORTHOGRAPHIC LINE VIEWS
 # =========================================================================
@@ -79,7 +111,7 @@ def front_or_rear(spec: BuildingSpec, rear=False) -> str:
     scale = 22
     tw = spec.total_width
     th = _stack_heights(spec)
-    W, H, pad, tit = _canvas(tw, th, scale)
+    W, H, pad, tit = _canvas(tw, th, scale, pad=150)
     svg = SVG(W, H)
     ground_y = H - pad - tit
     xl = pad
@@ -152,6 +184,24 @@ def front_or_rear(spec: BuildingSpec, rear=False) -> str:
     for i in range(0, int((W - 2 * pad + 60) // 20)):
         gx = xl - 30 + i * 20
         svg.line(gx, ground_y + 12, gx + 12, ground_y, INK, 1.0)
+
+    # --- dimensions & scale bar ---
+    # right-side vertical height chain: ground -> plinth -> each floor -> parapet
+    dx = xl + tw * scale + 40
+    levels = [ground_y]
+    labels = []
+    yy = ground_y
+    if plinth_px > 0:
+        yy -= plinth_px; levels.append(yy); labels.append(f"plinth {_feet_label(spec.plinth)}")
+    for f in spec.floors:
+        yy -= f.height * scale; levels.append(yy); labels.append(_feet_label(f.height))
+    yy -= spec.parapet * scale; levels.append(yy); labels.append(f"par {_feet_label(spec.parapet)}")
+    _dim_v(svg, dx, levels, labels)
+    # bottom overall width
+    _dim_h(svg, ground_y + 40, xl, xl + tw * scale, f"{_feet_label(tw)}  ({tw:g} ft)")
+    # scale bar
+    _scale_bar(svg, xl, ground_y + 62, scale, feet=10)
+
     name = "REAR ELEVATION" if rear else "FRONT ELEVATION"
     _title(svg, W, H, name, f'{spec.project} · width {tw:g} ft · scale ~1:{int(12/ (scale/22)) or 12}')
     return svg.done()
@@ -335,6 +385,12 @@ def elevation(spec: BuildingSpec) -> str:
                 svg.rect(ox-wpx/2, oy, wpx, hpx, "url(#tk)" if op.tag=="MD" and f.level==0 else "url(#gl)", INK, 2)
             else:
                 gwin(ox-wpx/2, oy, wpx, hpx)
+            # sunshade / chajja over the head (Tamil Nadu standard)
+            if getattr(spec, "sunshade", False) and op.kind != "ventilator":
+                proj, sh = 0.7*scale, 0.35*scale
+                svg.rect(ox-wpx/2-proj, oy-sh, wpx+2*proj, sh, "#e6e1d6", INK, 1.6)
+                svg.raw(f'<rect x="{ox-wpx/2-proj:.1f}" y="{oy:.1f}" width="{wpx+2*proj:.1f}" '
+                        f'height="6" fill="#000" opacity="0.12"/>')
         # balconies
         for b in f.balconies:
             if b.wall != "front":

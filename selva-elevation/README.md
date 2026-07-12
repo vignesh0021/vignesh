@@ -166,6 +166,10 @@ selva-elevation/
 - [x] **Tamil Nadu height standards** — TNCDBR-based defaults (floor-to-floor, plinth,
       parapet, lintel, sill), editable in feet-inch, savable as your firm's default;
       building sits on a real plinth in every view
+- [x] **Real opening positions + sunshades + dimensioned drawings** — exterior openings
+      placed from their true CAD coordinates; sunshades/chajjas over windows & doors (2D
+      and 3D); line elevations carry a dimension chain, overall width and a scale bar;
+      9″ wall thickness parameter
 - [x] Generate line views: front · rear · left · right · top
 - [x] Shaded colour elevation
 - [x] **Parametric 3D elevation** (Three.js) built from the spec — real-time, orbitable,

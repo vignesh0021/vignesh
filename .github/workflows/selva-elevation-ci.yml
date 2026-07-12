@@ -68,7 +68,10 @@ jobs:
           demo = spec_schema.SELVA_EXAMPLE
           for op in [o for fl in demo.floors for o in fl.openings]:
               assert op.wall in {"front", "rear", "left", "right"}
-          print("backend OK — views, edit-gate, vector-parser, TN standards")
+          # sunshade + wall thickness defaults; dimension chain + scale bar in the line view
+          assert ex["spec"]["sunshade"] is True and ex["spec"]["wall_thickness"] == 0.75
+          assert "SCALE" in ex["views"]["front"] and "plinth" in ex["views"]["front"]
+          print("backend OK — views, edit-gate, vector-parser, TN standards, sunshade+dims")
           PY
 
   frontend:

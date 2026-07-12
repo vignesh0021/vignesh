@@ -5,10 +5,9 @@
 //   y : height (up)
 //   z : depth, FRONT at +td/2, REAR at -td/2 -> worldZ(depth) = td/2 - depth
 
-const T = 0.55; // wall thickness (ft)
-
 export function buildBuilding(THREE, spec, theme) {
   const g = new THREE.Group();
+  const T = spec.wall_thickness || 0.6; // wall thickness (ft)
   const tw = Math.max(...spec.floors.map((f) => f.fx + f.fw));
   const td = Math.max(...spec.floors.map((f) => f.fy + f.fd));
   const wx = (v) => v - tw / 2;
@@ -54,10 +53,13 @@ export function buildBuilding(THREE, spec, theme) {
     return segs.filter(([x0, x1]) => x1 - x0 > 0.2);
   };
 
-  // window/door as recessed frame + pane on a wall face
+  // window/door as recessed frame + pane on a wall face (+ optional sunshade/chajja)
+  const sunshade = spec.sunshade !== false;
   const opening = (op, floor, front) => {
     const w = op.width, h = op.height;
     const cy = floor.y0 + op.sill + h / 2;
+    const headY = floor.y0 + op.sill + h;      // lintel level
+    const proj = 1.4, thick = 0.3;              // chajja projection & slab thickness
     if (op.wall === "front" || op.wall === "rear") {
       const cxx = wx(op.pos + w / 2);
       const zface = op.wall === "front" ? wz(0) : wz(td);
@@ -65,12 +67,20 @@ export function buildBuilding(THREE, spec, theme) {
       box(w + 0.4, h + 0.4, 0.2, M.frame, cxx, cy, zface + (op.wall === "front" ? 0.02 : -0.02));
       box(w, h, 0.1, op.kind === "door" && op.tag === "MD" ? M.wood : M.glass,
           cxx, cy, zface + zoff * 0.4);
+      if (sunshade && op.kind !== "ventilator") {
+        const dir = op.wall === "front" ? 1 : -1;
+        box(w + 1.2, thick, proj, M.slab, cxx, headY + thick / 2, zface + dir * proj / 2);
+      }
     } else {
       const czz = wz(op.pos + w / 2);
       const xface = op.wall === "left" ? wx(floor.fx) : wx(floor.fx + floor.fw);
       const xoff = op.wall === "left" ? 0.02 : -0.02;
       box(0.2, h + 0.4, w + 0.4, M.frame, xface + xoff, cy, czz);
       box(0.1, h, w, M.glass, xface + (op.wall === "left" ? 0.05 : -0.05), cy, czz);
+      if (sunshade && op.kind !== "ventilator") {
+        const dir = op.wall === "left" ? -1 : 1;
+        box(proj, thick, w + 1.2, M.slab, xface + dir * proj / 2, headY + thick / 2, czz);
+      }
     }
   };
 

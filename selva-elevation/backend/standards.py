@@ -37,6 +37,7 @@ def apply_to_spec(spec, std: dict | None = None):
     spec.parapet = std["parapet"]
     spec.plinth = std.get("plinth", 2.0)
     spec.lintel = std.get("lintel", 7.0)
+    spec.wall_thickness = std.get("wall_thickness", 0.75)
     spec.floor_height = std["floor_height"]
     for f in spec.floors:
         # ground / any storey with open parking uses the stilt height
