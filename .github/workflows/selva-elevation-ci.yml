@@ -63,6 +63,11 @@ jobs:
                   "lintel": 7, "window_sill": 3, "vent_sill": 6, "door_height": 7}
           w = c.post("/api/views", json={"spec": ex["spec"], "apply_standard": cust}).json()
           assert [f["height"] for f in w["spec"]["floors"]][0] == 9 and w["spec"]["plinth"] == 1.5
+          # parser places only exterior openings (no internal doors) on valid walls
+          import spec_schema
+          demo = spec_schema.SELVA_EXAMPLE
+          for op in [o for fl in demo.floors for o in fl.openings]:
+              assert op.wall in {"front", "rear", "left", "right"}
           print("backend OK — views, edit-gate, vector-parser, TN standards")
           PY
 

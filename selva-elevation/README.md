@@ -14,8 +14,10 @@ you confirm it in the Verify & Edit gate before anything renders — so the outp
 ### Extraction order (most exact first)
 1. **Deterministic vector parser** — for CAD-exported PDFs, reads exact plot/building
    dimensions, floor areas and setbacks straight from the embedded text (`source: vector`,
-   **no AI**). Footprint depths are derived from the exact areas, which captures upper-floor
-   step-backs.
+   **no AI**). Footprint depths are derived from the exact areas (captures upper-floor
+   step-backs). Exterior openings (windows, ventilators, main door) are placed from their
+   **real coordinates** on the sheet — internal doors are omitted since they don't appear on
+   an elevation. Wall side and upper-floor width-setback are best-effort — confirmed in the gate.
 2. **Vision LLM** — for photos/scans with no text layer, a free model produces a draft
    (`source: llm`).
 3. **Built-in example** — when neither applies (`source: fallback`).

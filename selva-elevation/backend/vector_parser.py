@@ -97,52 +97,84 @@ def parse(data: bytes) -> tuple[Optional[BuildingSpec], list[str]]:
     def nearest_title_idx(y):
         return min(range(n_floors), key=lambda i: abs(y - titles[i][1]))
 
-    # group opening tags by nearest title (best-effort; positions confirmed in Verify gate)
-    tags_by_floor: dict[int, list] = {i: [] for i in range(n_floors)}
+    # only EXTERIOR openings appear on an elevation (internal doors D/D2 don't)
+    EXTERIOR = {"W2", "W3", "V", "MD"}
+
+    def cxy(w):
+        return (w[0] + w[2]) / 2, (w[1] + w[3]) / 2
+
+    # group tokens by nearest title
+    ext_by_floor: dict[int, list] = {i: [] for i in range(n_floors)}
+    content_by_floor: dict[int, list] = {i: [] for i in range(n_floors)}
     for w in words:
-        yc = (w[1] + w[3]) / 2
-        if yc >= TITLE_BLOCK_Y or not TAG_RE.match(w[4].strip()):
+        _, yc = cxy(w)
+        if yc >= TITLE_BLOCK_Y:
             continue
-        tags_by_floor[nearest_title_idx(yc)].append(w)
+        idx = nearest_title_idx(yc)
+        tok = w[4].strip()
+        if TAG_RE.match(tok) and tok in EXTERIOR:
+            ext_by_floor[idx].append(w)
+        # plan-content anchors for the bounding box: exterior tags + room labels (alpha)
+        if (TAG_RE.match(tok) and tok in EXTERIOR) or (tok.isalpha() and len(tok) >= 3):
+            content_by_floor[idx].append(w)
 
     floors = []
     prev_depth = plot_d - 3
     for i, (name, ty) in enumerate(titles):
         area = area_for(ty)
-        # EXACT-derived footprint depth from the area (captures upper-floor setbacks):
-        # depth ≈ area / building_width, clamped to the plot.
+        # EXACT-derived footprint depth from the area (captures upper-floor setbacks)
         depth = round(min(area / build_w, plot_d), 1) if area else prev_depth
         prev_depth = depth
 
-        # openings — nearest-title grouping; positions spread evenly per wall as a
-        # starting point (the plan's exact tag coords vary; the user verifies).
+        ext = ext_by_floor[i]
+        anchors = content_by_floor[i] or ext
+        # plan bounding box in mediabox space (mediabox Y ≈ width, X ≈ depth)
+        xs = [c for w in anchors for c in (w[0], w[2])]
+        ys = [c for w in anchors for c in (w[1], w[3])]
         opens = []
-        per_wall: dict[str, int] = {}
-        band = tags_by_floor[i]
-        # rough wall split: alternate by reading order so each wall gets a few
-        for j, w in enumerate(sorted(band, key=lambda z: (z[1], z[0]))):
-            tag = w[4].strip()
-            kind, ww, hh, sill = JOINERY[tag]
-            wall = ("front", "rear", "left", "right")[j % 4] if kind != "door" else "front"
-            k = per_wall.get(wall, 0); per_wall[wall] = k + 1
-            span = build_w if wall in ("front", "rear") else depth
-            pos = round(min(2 + k * 6, max(0, span - ww)), 1)
-            opens.append(Opening(tag=tag, kind=kind, wall=wall, pos=pos,
-                                 width=ww, height=hh, sill=sill))
+        if xs and ys:
+            X0, X1, Y0, Y1 = min(xs), max(xs), min(ys), max(ys)
+            spanX, spanY = max(X1 - X0, 1), max(Y1 - Y0, 1)
+            # front = the depth-end (nx) where the main door sits (fallback: nx≈0)
+            md = [w for w in ext if w[4].strip() == "MD"]
+            front_at_low = True
+            if md:
+                mx, _ = cxy(md[0]); front_at_low = (mx - X0) / spanX < 0.5
+            for w in sorted(ext, key=lambda z: (z[1], z[0])):
+                tag = w[4].strip()
+                kind, ww, hh, sill = JOINERY[tag]
+                cx, cy = cxy(w)
+                nx = (cx - X0) / spanX          # 0..1 along depth
+                ny = (cy - Y0) / spanY          # 0..1 along width
+                edges = {"L": ny, "R": 1 - ny, "A": nx, "B": 1 - nx}
+                e = min(edges, key=edges.get)
+                if e in ("L", "R"):             # depth-running -> side wall
+                    wall = "left" if e == "L" else "right"
+                    pos = nx * depth
+                else:                            # width-running -> front/rear
+                    is_front = (e == "A") == front_at_low
+                    wall = "front" if is_front else "rear"
+                    pos = ny * build_w
+                span = build_w if wall in ("front", "rear") else depth
+                pos = round(max(0, min(pos - ww / 2, span - ww)), 1)
+                opens.append(Opening(tag=tag, kind=kind, wall=wall, pos=pos,
+                                     width=ww, height=hh, sill=sill))
 
         floors.append(Floor(name=name, level=i, area_sqft=area,
                             fx=0, fy=0, fw=build_w, fd=depth, height=10,
                             openings=opens))
-        notes.append(f"{name}: area={area} sqft, footprint {build_w}×{depth} ft "
-                     f"(depth from area), {len(opens)} openings [{_count_tags(opens)}]")
+        notes.append(f"{name}: area={area} sqft, footprint {build_w}×{depth} ft, "
+                     f"{len(opens)} exterior openings [{_count_tags(opens)}] "
+                     f"placed by real position")
 
     if not floors:
         return None, notes + ["no floor regions resolved"]
 
     spec = BuildingSpec(project="Vector-parsed plan", plot_width=plot_w, plot_depth=plot_d,
                         floor_height=10, parapet=3, floors=floors)
-    notes.append("NOTE: dimensions/areas/opening tags are exact from the CAD text; "
-                 "floor setbacks & exact window placement are best-effort — confirm in Verify & Edit.")
+    notes.append("NOTE: dimensions & areas are exact from the CAD text; exterior openings "
+                 "are placed from their real coordinates (wall side best-effort). Upper-floor "
+                 "setback is modelled as reduced depth (full width) — set fw/fx in Verify & Edit.")
     return spec, notes
 
 
