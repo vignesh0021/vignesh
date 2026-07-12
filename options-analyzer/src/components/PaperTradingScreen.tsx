@@ -23,8 +23,9 @@ import { OrderTicket } from './OrderTicket';
 import { PaperJournal } from './PaperJournal';
 import { PaperOrders, PaperPositions } from './PaperPositions';
 import { PaperStrategyDeploy } from './PaperStrategyDeploy';
+import { PriceChart } from './PriceChart';
 
-type SubTab = 'CHAIN' | 'STRATEGY' | 'POSITIONS' | 'ORDERS' | 'JOURNAL';
+type SubTab = 'CHAIN' | 'CHART' | 'STRATEGY' | 'POSITIONS' | 'ORDERS' | 'JOURNAL';
 
 /**
  * Paper Trading — a live option chain (Market-Pulse style) wired to a virtual
@@ -321,18 +322,20 @@ export function PaperTradingScreen() {
       {/* Sub tabs */}
       <View style={styles.subTabsWrap}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.subTabs}>
-          {(['CHAIN', 'STRATEGY', 'POSITIONS', 'ORDERS', 'JOURNAL'] as SubTab[]).map((t) => (
+          {(['CHAIN', 'CHART', 'STRATEGY', 'POSITIONS', 'ORDERS', 'JOURNAL'] as SubTab[]).map((t) => (
             <TouchableOpacity key={t} style={styles.subTab} onPress={() => setSubTab(t)}>
               <Text style={[styles.subTabTxt, subTab === t && styles.subTabTxtOn]}>
                 {t === 'CHAIN'
                   ? 'Chain'
-                  : t === 'STRATEGY'
-                    ? 'Strategy'
-                    : t === 'POSITIONS'
-                      ? `Positions${positions.length ? ` (${positions.length})` : ''}`
-                      : t === 'ORDERS'
-                        ? 'Orders'
-                        : 'Journal'}
+                  : t === 'CHART'
+                    ? '📈 Chart'
+                    : t === 'STRATEGY'
+                      ? 'Strategy'
+                      : t === 'POSITIONS'
+                        ? `Positions${positions.length ? ` (${positions.length})` : ''}`
+                        : t === 'ORDERS'
+                          ? 'Orders'
+                          : 'Journal'}
               </Text>
               {subTab === t ? <View style={styles.subUnderline} /> : null}
             </TouchableOpacity>
@@ -353,6 +356,8 @@ export function PaperTradingScreen() {
           externalAtm={realChain ? fyersAtm : undefined}
           onSelect={onSelect}
         />
+      ) : subTab === 'CHART' ? (
+        <PriceChart />
       ) : subTab === 'STRATEGY' ? (
         <PaperStrategyDeploy live={realChain} onDeploy={deployStrategy} />
       ) : subTab === 'JOURNAL' ? (

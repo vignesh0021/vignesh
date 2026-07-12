@@ -189,6 +189,55 @@ export async function getOptionChain(
   return { underlyingLtp, underlyingPrevClose, expiries, rows };
 }
 
+export interface FyersCandle {
+  t: number; // epoch seconds
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+/**
+ * Historical OHLCV candles from Fyers API v3 (`/data/history`).
+ * `resolution`: '1' | '5' | '15' | '60' | 'D' etc.
+ * Docs: https://myapi.fyers.in/docsv3#tag/Data-Api/History
+ */
+export async function getHistory(
+  appId: string,
+  accessToken: string,
+  symbol: string,
+  resolution: string,
+  fromIso: string,
+  toIso: string,
+): Promise<FyersCandle[]> {
+  const q = new URLSearchParams({
+    symbol,
+    resolution,
+    date_format: '1',
+    range_from: fromIso,
+    range_to: toIso,
+    cont_flag: '1',
+  });
+  const json = await req(`${DATA}/data/history?${q.toString()}`, {
+    headers: authHeader(appId, accessToken),
+  });
+  if (json?.s !== 'ok' && json?.code !== 200) {
+    throw new Error(json?.message || 'Fyers history failed');
+  }
+  const rows: any[] = Array.isArray(json?.candles) ? json.candles : [];
+  return rows
+    .map((r) => ({
+      t: Number(r?.[0]),
+      o: Number(r?.[1]),
+      h: Number(r?.[2]),
+      l: Number(r?.[3]),
+      c: Number(r?.[4]),
+      v: Number(r?.[5]) || 0,
+    }))
+    .filter((c) => c.t > 0 && c.c > 0);
+}
+
 /** Optional: live quotes for a set of Fyers symbols (e.g. "NSE:SBIN-EQ"). */
 export async function getQuotes(
   appId: string,
