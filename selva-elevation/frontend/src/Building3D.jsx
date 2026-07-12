@@ -2,7 +2,21 @@ import React, { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { buildBuilding, buildCompound } from "./building3d.js";
+
+// clean vertical gradient sky (reliable on every GPU)
+function gradientSky(THREE, top, bottom) {
+  const c = document.createElement("canvas");
+  c.width = 4; c.height = 256;
+  const g = c.getContext("2d");
+  const grd = g.createLinearGradient(0, 0, 0, 256);
+  grd.addColorStop(0, top); grd.addColorStop(1, bottom);
+  g.fillStyle = grd; g.fillRect(0, 0, 4, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
 
 // Real-time 3D elevation viewer. Rebuilds geometry when spec/theme change.
 export default function Building3D({ spec, theme, projectName = "building" }) {
@@ -42,24 +56,36 @@ export default function Building3D({ spec, theme, projectName = "building" }) {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.05;
+    renderer.toneMappingExposure = 1.0;
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(38, w / h, 0.5, 2000);
+    const camera = new THREE.PerspectiveCamera(38, w / h, 0.5, 4000);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.maxPolarAngle = Math.PI / 2.03;
 
+    // image-based lighting -> soft realistic shading + reflections on glass/metal
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+    // gradient sky background
+    const sunPos = new THREE.Vector3();
+    const elevation = 34, azimuth = -42;         // warm mid-morning sun
+    sunPos.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - elevation),
+                                  THREE.MathUtils.degToRad(azimuth));
+
     // lighting
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x556070, 0.9);
+    const hemi = new THREE.HemisphereLight(0xdfeaff, 0x6b6250, 0.7);
     scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff4e0, 2.1);
-    sun.position.set(-40, 70, 60);
+    const sun = new THREE.DirectionalLight(0xfff2df, 2.4);
+    sun.position.copy(sunPos).multiplyScalar(120);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    Object.assign(sun.shadow.camera, { left: -90, right: 90, top: 90, bottom: -90, near: 1, far: 400 });
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 0.03;
+    Object.assign(sun.shadow.camera, { left: -90, right: 90, top: 110, bottom: -60, near: 1, far: 500 });
     scene.add(sun);
 
     const buildingGroup = new THREE.Group();
@@ -98,17 +124,27 @@ export default function Building3D({ spec, theme, projectName = "building" }) {
 
     while (buildingGroup.children.length) buildingGroup.remove(buildingGroup.children[0]);
 
-    // sky + ground
-    scene.background = new THREE.Color(theme.sky);
+    // gradient sky background (tinted from the theme)
+    scene.background = gradientSky(THREE, "#5b9bd5", "#dfeefb");
+
+    // ground
     if (!api.current.ground) {
       const ground = new THREE.Mesh(
-        new THREE.CircleGeometry(400, 48),
-        new THREE.MeshStandardMaterial({ color: theme.ground, roughness: 1 })
+        new THREE.CircleGeometry(600, 64),
+        new THREE.MeshStandardMaterial({ color: theme.ground, roughness: 0.95 })
       );
       ground.rotation.x = -Math.PI / 2;
+      ground.position.y = -0.02;
       ground.receiveShadow = true;
       scene.add(ground);
       api.current.ground = ground;
+      // paved forecourt in front of the building
+      const pave = new THREE.Mesh(
+        new THREE.PlaneGeometry(120, 40),
+        new THREE.MeshStandardMaterial({ color: "#c9c4bc", roughness: 0.8 })
+      );
+      pave.rotation.x = -Math.PI / 2; pave.position.set(0, 0, 40); pave.receiveShadow = true;
+      scene.add(pave);
       // a few trees
       for (let i = 0; i < 10; i++) {
         const ang = (i / 10) * Math.PI * 2;

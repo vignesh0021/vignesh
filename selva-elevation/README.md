@@ -214,7 +214,7 @@ by appending to the `THEMES` array.
 Click **“Download 3D (.glb)”** on the 3D tab. The exported model is the exact geometry
 (no drift). Open it in **Blender / Lumion / Twinmotion / D5 Render**, drop an HDRI, and
 render photoreal stills or a walkaround. Because the mesh is already correct, you only
-tune materials and lighting.
+tune materials and lighting. **Step-by-step:** [`docs/photoreal-render-guide.md`](docs/photoreal-render-guide.md).
 
 **Route B — one-click AI render (in-app).**
 Click **“Generate photoreal”**. The backend builds a plan-specific prompt and calls an
