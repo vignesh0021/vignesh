@@ -59,18 +59,33 @@ def _ollama(image_b64, prompt):
 
 def _gemini(image_b64, prompt):
     key = os.environ["GEMINI_API_KEY"]
-    model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{model}:generateContent?key={key}")
-    r = requests.post(url, timeout=TIMEOUT, json={
+    # Try the configured model, then robust fallbacks. Newer keys get 404 on some
+    # pinned models and 429 when a model's free quota is spent, so we roll over.
+    candidates = [os.getenv("GEMINI_MODEL", "gemini-flash-latest"),
+                  "gemini-flash-latest", "gemini-2.0-flash", "gemini-flash-lite-latest"]
+    body = {
         "contents": [{"parts": [
             {"text": prompt},
             {"inline_data": {"mime_type": "image/png", "data": image_b64}},
         ]}],
         "generationConfig": {"temperature": 0.1},
-    })
-    r.raise_for_status()
-    return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    }
+    seen, last = set(), None
+    for model in candidates:
+        if not model or model in seen:
+            continue
+        seen.add(model)
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{model}:generateContent?key={key}")
+        r = requests.post(url, timeout=TIMEOUT, json=body)
+        if r.status_code == 200:
+            return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        last = r
+        if r.status_code not in (404, 429):    # a real error, not model/quota — stop
+            break
+    if last is not None:
+        last.raise_for_status()
+    raise RuntimeError("no Gemini model available")
 
 
 def _groq(image_b64, prompt):

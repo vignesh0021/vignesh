@@ -60,8 +60,14 @@ Extract the building as structured data so a renderer can draw accurate elevatio
 Rules:
 - Read every floor's built-up area and footprint. Note where upper floors STEP BACK
   (smaller footprint) or project (balconies).
+- Read the BUILDING width from the outer dimension chain EXACTLY. If the plot is 40'
+  with 3'+35'+2' setbacks, the building width fw is 35 (not 40). Upper floors that step
+  back have a SMALLER fw and an fx offset — set both from the plan.
 - Use the joinery/legend table for exact window/door sizes (e.g. W3=4'x4', W2=3'x4').
 - Identify the FRONT of the building (the entrance / main gate / road side).
+- ONLY include EXTERIOR openings that appear on an elevation: windows (W2, W3, ...),
+  ventilators (V) and the main entrance door (MD). Do NOT include internal doors
+  (D, D2) — they are inside the house and never show on an elevation.
 - Do not invent floors or windows that are not on the plan.
 
 {SCHEMA_HINT}"""
