@@ -11,6 +11,7 @@ from PIL import Image
 
 import llm_providers
 import vector_parser
+import detector_provider
 import standards
 from spec_schema import BuildingSpec, SELVA_EXAMPLE
 
@@ -103,6 +104,15 @@ def analyze(data: bytes, filename: str) -> dict:
                     "note": "Read exactly from the CAD PDF's text layer (no AI): "
                             + "; ".join(vnotes[:1])
                             + ". Confirm window positions & heights in Verify & Edit."}
+
+    # 2. image-detector service (Mask R-CNN etc.) for raster plans, if configured
+    if detector_provider.available()["configured"]:
+        dspec = detector_provider.detect(data, filename)
+        if dspec and dspec.floors:
+            return {"spec": dspec, "source": "detector",
+                    "provider": detector_provider.available()["provider"],
+                    "note": "Walls/openings found by the detector model. Set the real "
+                            "dimensions & heights in Verify & Edit."}
 
     prov = llm_providers.available()
     if prov["provider"] == "none" or not prov["configured"]:
