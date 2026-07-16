@@ -71,7 +71,13 @@ jobs:
           # sunshade + wall thickness defaults; dimension chain + scale bar in the line view
           assert ex["spec"]["sunshade"] is True and ex["spec"]["wall_thickness"] == 0.75
           assert "SCALE" in ex["views"]["front"] and "plinth" in ex["views"]["front"]
-          print("backend OK — views, edit-gate, vector-parser, TN standards, sunshade+dims")
+          # detector socket: unconfigured is graceful; converter maps detections -> spec
+          import detector_provider as dp
+          assert dp.available()["configured"] is False and dp.detect(b"x", "a.png") is None
+          s = dp._to_spec(dp._normalize({"scale_ft_per_px": 0.03,
+              "walls": [[0, 0, 1000, 700]], "windows": [[10, 5, 60, 50]], "doors": []}))
+          assert s and s.floors[0].openings and s.floors[0].openings[0].kind == "window"
+          print("backend OK — views, edit-gate, vector-parser, TN standards, sunshade+dims, detector")
           PY
 
   frontend:

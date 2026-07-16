@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 import llm_providers
 import image_providers
+import detector_provider
 import standards
 from spec_schema import SELVA_EXAMPLE, BuildingSpec
 from view_generator import generate_all
@@ -36,7 +37,8 @@ def _payload(result: dict) -> dict:
 @app.get("/api/health")
 def health():
     return {"ok": True, "llm": llm_providers.available(),
-            "image": image_providers.status()}
+            "image": image_providers.status(),
+            "detector": detector_provider.available()}
 
 
 class SpecReq(BaseModel):

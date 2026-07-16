@@ -18,9 +18,12 @@ you confirm it in the Verify & Edit gate before anything renders — so the outp
    step-backs). Exterior openings (windows, ventilators, main door) are placed from their
    **real coordinates** on the sheet — internal doors are omitted since they don't appear on
    an elevation. Wall side and upper-floor width-setback are best-effort — confirmed in the gate.
-2. **Vision LLM** — for photos/scans with no text layer, a free model produces a draft
+2. **Image detector** *(optional)* — for photos/scans, a pluggable object-detection
+   microservice (e.g. FloorPlanTo3D / Mask R-CNN) finds walls/openings (`source: detector`).
+   Setup: [`docs/detector-integration.md`](docs/detector-integration.md).
+3. **Vision LLM** — for photos/scans with no text layer, a free model produces a draft
    (`source: llm`).
-3. **Built-in example** — when neither applies (`source: fallback`).
+4. **Built-in example** — when neither applies (`source: fallback`).
 
 ### How the output stays 100% exact (no AI hallucination)
 The renderer never invents anything — it draws *only* what's in the spec. The one place
