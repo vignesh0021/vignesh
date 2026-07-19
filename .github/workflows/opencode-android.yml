@@ -91,7 +91,12 @@ jobs:
   release:
     name: Signed release (AAB + APK)
     needs: build-and-test
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    # Runs on manual dispatch, on main, and on the mobile feature branch so the
+    # signed release (AAB + APK) pipeline is exercised end-to-end in CI.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/claude/android-opencode-mirror-bs4zxz'
     runs-on: ubuntu-latest
     env:
       VERSION_NAME: "1.0.${{ github.run_number }}"
