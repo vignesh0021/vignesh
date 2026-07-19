@@ -24,6 +24,7 @@ import { PaperJournal } from './PaperJournal';
 import { PaperOrders, PaperPositions } from './PaperPositions';
 import { PaperStrategyDeploy } from './PaperStrategyDeploy';
 import { PriceChart } from './PriceChart';
+import { StrategyDeploySheet, type ResolvedLeg } from './StrategyDeploySheet';
 
 type SubTab = 'CHAIN' | 'CHART' | 'STRATEGY' | 'POSITIONS' | 'ORDERS' | 'JOURNAL';
 
@@ -195,11 +196,10 @@ export function PaperTradingScreen() {
     });
   };
 
-  // Deploy a whole strategy as paper orders at the live strikes/prices.
-  const deployStrategy = (strategy: Strategy, baseLots: number) => {
+  // Strategy deploy: resolve live strikes/prices → preview sheet → confirm.
+  const resolveLegs = (strategy: Strategy): (ResolvedLeg & { key: string })[] => {
     const atm = atmStrikeFor(spot, step);
-    const place = usePaperStore.getState().placeOrder;
-    for (const leg of strategy.legs) {
+    return strategy.legs.map((leg) => {
       const strike = Math.max(atm + leg.stepOffset * step, step);
       // Calendar legs use a later expiry; everything else uses the selected one.
       let legExpiry = expiryIso;
@@ -210,26 +210,52 @@ export function PaperTradingScreen() {
       // Prefer the live chain quote (real LTP + Fyers symbol) for the near expiry.
       const row = legExpiry === expiryIso && realChain ? fyersRows!.find((r) => r.strike === strike) : undefined;
       const q = row ? (leg.type === 'CALL' ? row.call : row.put) : undefined;
-      const ltp = q?.ltp ?? priceContract(spot, strike, leg.type, legExpiry, defaultIv, rate);
+      return {
+        action: leg.action,
+        optType: leg.type,
+        ratio: leg.ratio,
+        strike,
+        expiryIso: legExpiry,
+        ltp: q?.ltp ?? priceContract(spot, strike, leg.type, legExpiry, defaultIv, rate),
+        symbol: q?.symbol ?? displayOptionSymbol(asset.symbol, legExpiry, strike, leg.type),
+        key: q?.key ?? optionKey(asset.symbol, legExpiry, strike, leg.type),
+      };
+    });
+  };
+
+  const [deployReq, setDeployReq] = useState<{
+    name: string;
+    legs: (ResolvedLeg & { key: string })[];
+    lots: number;
+  } | null>(null);
+
+  const requestDeploy = (strategy: Strategy, baseLots: number) =>
+    setDeployReq({ name: strategy.name, legs: resolveLegs(strategy), lots: baseLots });
+
+  const confirmDeploy = (lots: number, lotSize: number) => {
+    if (!deployReq) return;
+    const place = usePaperStore.getState().placeOrder;
+    for (const leg of deployReq.legs) {
       place(
         {
-          key: q?.key ?? optionKey(asset.symbol, legExpiry, strike, leg.type),
-          symbol: q?.symbol ?? displayOptionSymbol(asset.symbol, legExpiry, strike, leg.type),
+          key: leg.key,
+          symbol: leg.symbol,
           underlying: asset.symbol,
-          strike,
-          optType: leg.type,
-          expiryIso: legExpiry,
-          lotSize: asset.lotSize,
+          strike: leg.strike,
+          optType: leg.optType,
+          expiryIso: leg.expiryIso,
+          lotSize,
           iv: defaultIv,
           rate,
           action: leg.action,
           orderType: 'MARKET',
           product: 'NRML',
-          lots: leg.ratio * baseLots,
+          lots: leg.ratio * lots,
         },
-        ltp,
+        leg.ltp,
       );
     }
+    setDeployReq(null);
     setSubTab('POSITIONS');
   };
 
@@ -359,7 +385,7 @@ export function PaperTradingScreen() {
       ) : subTab === 'CHART' ? (
         <PriceChart />
       ) : subTab === 'STRATEGY' ? (
-        <PaperStrategyDeploy live={realChain} onDeploy={deployStrategy} />
+        <PaperStrategyDeploy live={realChain} onDeploy={requestDeploy} />
       ) : subTab === 'JOURNAL' ? (
         <PaperJournal currency={currency} />
       ) : subTab === 'POSITIONS' ? (
@@ -409,6 +435,17 @@ export function PaperTradingScreen() {
         spot={spot}
         currency={currency}
         onClose={() => setTicket(null)}
+      />
+      <StrategyDeploySheet
+        visible={!!deployReq}
+        name={deployReq?.name ?? ''}
+        legs={deployReq?.legs ?? []}
+        initialLots={deployReq?.lots ?? 1}
+        defaultLotSize={asset.lotSize}
+        currency={currency}
+        live={realChain}
+        onConfirm={confirmDeploy}
+        onClose={() => setDeployReq(null)}
       />
     </View>
   );

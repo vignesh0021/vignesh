@@ -61,6 +61,12 @@ export interface PaperPosition extends Contract {
   sl?: number;
   /** Profit target on the option premium. Long: ltp ≥ target. Short: ltp ≤ target. */
   target?: number;
+  /**
+   * Trailing stop distance in premium points. Every tick the SL ratchets to
+   * stay `trailSl` behind the best price seen (up for longs, down for shorts)
+   * and never loosens; the regular SL trigger then fires it.
+   */
+  trailSl?: number;
   openedAt: number;
 }
 
@@ -176,10 +182,11 @@ interface PaperState {
   /** Place an order at the given current option LTP (for market / marketable). */
   placeOrder: (req: OrderRequest, ltp: number) => { ok: boolean; reason?: string };
   cancelOrder: (id: string) => void;
-  squareOff: (positionId: string) => void;
+  /** Square off a position at LTP — the whole position, or `lots` of it (partial booking). */
+  squareOff: (positionId: string, lots?: number) => void;
   squareOffAll: () => void;
-  /** Attach/clear a stop-loss and target (on the option premium) for a position. */
-  setSlTarget: (positionId: string, sl?: number, target?: number) => void;
+  /** Attach/clear stop-loss, target and trailing-stop distance for a position. */
+  setSlTarget: (positionId: string, sl?: number, target?: number, trailSl?: number) => void;
   /** Reprice positions and try to fill pending limit orders from a fresh spot. */
   onSpot: (spot: number) => void;
   /** Apply real broker LTPs (keyed by option symbol) to positions + pending limit orders. */
@@ -290,6 +297,28 @@ export const usePaperStore = create<PaperState>()(
         const istDay = new Date(now.getTime() + 330 * 60000).getUTCDay();
         const misWindow = istDay >= 1 && istDay <= 5 && istMin >= 15 * 60 + 20 && istMin <= 15 * 60 + 45;
 
+        // Ratchet trailing stops toward the current price — never loosen.
+        const pre = get().positions;
+        let trailed = false;
+        const ratcheted = pre.map((p) => {
+          if (!(p.trailSl != null && p.trailSl > 0)) return p;
+          if (p.action === 'BUY') {
+            const cand = p.ltp - p.trailSl;
+            if (cand > 0 && (p.sl == null || cand > p.sl)) {
+              trailed = true;
+              return { ...p, sl: cand };
+            }
+          } else {
+            const cand = p.ltp + p.trailSl;
+            if (p.sl == null || cand < p.sl) {
+              trailed = true;
+              return { ...p, sl: cand };
+            }
+          }
+          return p;
+        });
+        if (trailed) set({ positions: ratcheted });
+
         for (const p of [...get().positions]) {
           let tag: string | null = null;
           if (misWindow && p.product === 'MIS') tag = 'MIS';
@@ -396,14 +425,15 @@ export const usePaperStore = create<PaperState>()(
             ),
           })),
 
-        squareOff: (positionId) => {
+        squareOff: (positionId, lots) => {
           const pos = get().positions.find((p) => p.id === positionId);
           if (!pos) return;
+          const qty = Math.min(Math.max(Math.floor(lots ?? pos.lots), 1), pos.lots);
           applyFill({
             contract: pos,
             action: pos.action === 'BUY' ? 'SELL' : 'BUY',
             product: pos.product,
-            lots: pos.lots,
+            lots: qty,
             price: pos.ltp,
           });
         },
@@ -511,9 +541,9 @@ export const usePaperStore = create<PaperState>()(
           checkTriggers();
         },
 
-        setSlTarget: (positionId, sl, target) =>
+        setSlTarget: (positionId, sl, target, trailSl) =>
           set((s) => ({
-            positions: s.positions.map((p) => (p.id === positionId ? { ...p, sl, target } : p)),
+            positions: s.positions.map((p) => (p.id === positionId ? { ...p, sl, target, trailSl } : p)),
           })),
 
         resetPaper: () => set({ positions: [], orders: [], trades: [], realizedPnl: 0 }),

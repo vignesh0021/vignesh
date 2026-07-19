@@ -2,16 +2,18 @@
   "expo": {
     "name": "TradeLikeHunter",
     "slug": "tradelikehunter",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "scheme": "tradelikehunter",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0B0E11",
     "icon": "./assets/icon.png",
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "android": {
       "package": "com.tradelikehunter.app",
-      "versionCode": 3,
+      "versionCode": 4,
       "backgroundColor": "#0B0E11",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

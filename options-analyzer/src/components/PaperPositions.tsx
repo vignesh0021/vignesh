@@ -16,7 +16,6 @@ import { PayoffChart } from './PayoffChart';
 /** Live paper positions with mark-to-market P&L and one-tap square-off. */
 export function PaperPositions({ currency, spot, rate }: { currency: string; spot: number; rate: number }) {
   const positions = usePaperStore((s) => s.positions);
-  const squareOff = usePaperStore((s) => s.squareOff);
   const squareOffAll = usePaperStore((s) => s.squareOffAll);
 
   if (positions.length === 0) {
@@ -40,7 +39,7 @@ export function PaperPositions({ currency, spot, rate }: { currency: string; spo
         </TouchableOpacity>
       </View>
       {positions.map((p) => (
-        <PositionCard key={p.id} pos={p} currency={currency} onSquareOff={() => squareOff(p.id)} />
+        <PositionCard key={p.id} pos={p} currency={currency} />
       ))}
       <View style={styles.totalRow}>
         <Text style={styles.totalLabel}>Open MTM</Text>
@@ -97,35 +96,81 @@ function LivePayoff({
   );
 }
 
-function PositionCard({
-  pos,
-  currency,
-  onSquareOff,
-}: {
-  pos: PaperPosition;
-  currency: string;
-  onSquareOff: () => void;
-}) {
+function PositionCard({ pos, currency }: { pos: PaperPosition; currency: string }) {
   const setSlTarget = usePaperStore((s) => s.setSlTarget);
-  const [editing, setEditing] = useState(false);
+  const squareOff = usePaperStore((s) => s.squareOff);
+  const placeOrder = usePaperStore((s) => s.placeOrder);
+
+  const [panel, setPanel] = useState<'none' | 'exit' | 'sl'>('none');
   const [slDraft, setSlDraft] = useState('');
   const [tgtDraft, setTgtDraft] = useState('');
+  const [trailDraft, setTrailDraft] = useState('');
+  const [exitLots, setExitLots] = useState(1);
+  const [exitLimit, setExitLimit] = useState('');
+  const [flash, setFlash] = useState<string | null>(null);
 
   const pnl = positionPnl(pos);
   const isBuy = pos.action === 'BUY';
   const color = isBuy ? theme.colors.buy : theme.colors.sell;
 
-  const openEditor = () => {
-    setSlDraft(pos.sl != null ? String(pos.sl) : '');
-    setTgtDraft(pos.target != null ? String(pos.target) : '');
-    setEditing(true);
+  const openSl = () => {
+    setSlDraft(pos.sl != null ? fmtNum(pos.sl, 2).replace(/,/g, '') : '');
+    setTgtDraft(pos.target != null ? fmtNum(pos.target, 2).replace(/,/g, '') : '');
+    setTrailDraft(pos.trailSl != null ? String(pos.trailSl) : '');
+    setPanel('sl');
   };
-  const save = () => {
+  const saveSl = () => {
     const sl = Number(slDraft);
     const tgt = Number(tgtDraft);
-    setSlTarget(pos.id, sl > 0 ? sl : undefined, tgt > 0 ? tgt : undefined);
-    setEditing(false);
+    const trail = Number(trailDraft);
+    setSlTarget(pos.id, sl > 0 ? sl : undefined, tgt > 0 ? tgt : undefined, trail > 0 ? trail : undefined);
+    setPanel('none');
   };
+  const openExit = () => {
+    setExitLots(pos.lots);
+    setExitLimit('');
+    setFlash(null);
+    setPanel('exit');
+  };
+  const doExit = () => {
+    const limit = Number(exitLimit);
+    if (exitLimit.trim() && limit > 0) {
+      // Exit at a limit price: rests as an opposite-side LIMIT order.
+      const res = placeOrder(
+        {
+          key: pos.key,
+          symbol: pos.symbol,
+          underlying: pos.underlying,
+          strike: pos.strike,
+          optType: pos.optType,
+          expiryIso: pos.expiryIso,
+          lotSize: pos.lotSize,
+          iv: pos.iv,
+          rate: pos.rate,
+          action: isBuy ? 'SELL' : 'BUY',
+          orderType: 'LIMIT',
+          product: pos.product,
+          lots: exitLots,
+          limitPrice: limit,
+        },
+        pos.ltp,
+      );
+      if (!res.ok) {
+        setFlash(res.reason ?? 'Order rejected');
+        return;
+      }
+    } else {
+      squareOff(pos.id, exitLots);
+    }
+    setPanel('none');
+  };
+
+  const slBadge =
+    pos.trailSl != null
+      ? `TSL ${fmtNum(pos.trailSl, 1)}${pos.sl != null ? ` @${fmtNum(pos.sl, 1)}` : ''}`
+      : pos.sl != null || pos.target != null
+        ? `SL ${pos.sl != null ? fmtNum(pos.sl, 1) : '—'} · T ${pos.target != null ? fmtNum(pos.target, 1) : '—'}`
+        : '+ SL / Target';
 
   return (
     <View style={styles.card}>
@@ -148,42 +193,49 @@ function PositionCard({
         <Metric label={pos.product} value={currency} right dim />
       </View>
 
-      {editing ? (
+      {panel === 'sl' ? (
+        <>
+          <View style={styles.slRow}>
+            <TextInput style={styles.slInput} value={slDraft} onChangeText={setSlDraft} keyboardType="decimal-pad" placeholder="SL price" placeholderTextColor={theme.colors.textFaint} />
+            <TextInput style={styles.slInput} value={tgtDraft} onChangeText={setTgtDraft} keyboardType="decimal-pad" placeholder="Target price" placeholderTextColor={theme.colors.textFaint} />
+          </View>
+          <View style={styles.slRow}>
+            <TextInput style={styles.slInput} value={trailDraft} onChangeText={setTrailDraft} keyboardType="decimal-pad" placeholder="Trail SL (points behind price)" placeholderTextColor={theme.colors.textFaint} />
+            <TouchableOpacity style={styles.slSave} onPress={saveSl}>
+              <Text style={styles.slSaveTxt}>Set</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      ) : null}
+
+      {panel === 'exit' ? (
         <View style={styles.slRow}>
-          <TextInput
-            style={styles.slInput}
-            value={slDraft}
-            onChangeText={setSlDraft}
-            keyboardType="decimal-pad"
-            placeholder="SL price"
-            placeholderTextColor={theme.colors.textFaint}
-          />
-          <TextInput
-            style={styles.slInput}
-            value={tgtDraft}
-            onChangeText={setTgtDraft}
-            keyboardType="decimal-pad"
-            placeholder="Target price"
-            placeholderTextColor={theme.colors.textFaint}
-          />
-          <TouchableOpacity style={styles.slSave} onPress={save}>
-            <Text style={styles.slSaveTxt}>Set</Text>
+          <View style={styles.exitStepper}>
+            <TouchableOpacity style={styles.exitStepBtn} onPress={() => setExitLots((n) => Math.max(1, n - 1))}>
+              <Text style={styles.exitStepTxt}>–</Text>
+            </TouchableOpacity>
+            <Text style={styles.exitLots}>
+              {exitLots}/{pos.lots}
+            </Text>
+            <TouchableOpacity style={styles.exitStepBtn} onPress={() => setExitLots((n) => Math.min(pos.lots, n + 1))}>
+              <Text style={styles.exitStepTxt}>+</Text>
+            </TouchableOpacity>
+          </View>
+          <TextInput style={styles.slInput} value={exitLimit} onChangeText={setExitLimit} keyboardType="decimal-pad" placeholder={`Limit (blank = mkt @${fmtNum(pos.ltp, 2)})`} placeholderTextColor={theme.colors.textFaint} />
+          <TouchableOpacity style={[styles.slSave, { backgroundColor: theme.colors.sell }]} onPress={doExit}>
+            <Text style={styles.slSaveTxt}>Exit</Text>
           </TouchableOpacity>
         </View>
       ) : null}
 
+      {flash ? <Text style={styles.flash}>{flash}</Text> : null}
+
       <View style={styles.btmRow}>
-        <TouchableOpacity style={styles.sqBtn} onPress={onSquareOff}>
-          <Text style={styles.sqTxt}>Square off</Text>
+        <TouchableOpacity style={styles.sqBtn} onPress={panel === 'exit' ? () => setPanel('none') : openExit}>
+          <Text style={styles.sqTxt}>{panel === 'exit' ? 'Cancel' : 'Exit ▾'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.sqBtn} onPress={editing ? () => setEditing(false) : openEditor}>
-          <Text style={styles.sqTxt}>
-            {editing
-              ? 'Cancel'
-              : pos.sl != null || pos.target != null
-                ? `SL ${pos.sl != null ? fmtNum(pos.sl, 1) : '—'} · T ${pos.target != null ? fmtNum(pos.target, 1) : '—'}`
-                : '+ SL / Target'}
-          </Text>
+        <TouchableOpacity style={styles.sqBtn} onPress={panel === 'sl' ? () => setPanel('none') : openSl}>
+          <Text style={styles.sqTxt}>{panel === 'sl' ? 'Cancel' : slBadge}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -313,6 +365,11 @@ const styles = StyleSheet.create({
   slInput: { flex: 1, backgroundColor: theme.colors.surfaceAlt, borderColor: theme.colors.border, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, color: theme.colors.text, fontSize: 13 },
   slSave: { backgroundColor: theme.colors.primary, borderRadius: 8, paddingHorizontal: 16, paddingVertical: 9 },
   slSaveTxt: { color: '#0B0E11', fontSize: 13, fontWeight: '800' },
+  exitStepper: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.surfaceAlt, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border },
+  exitStepBtn: { paddingHorizontal: 10, paddingVertical: 7 },
+  exitStepTxt: { color: theme.colors.text, fontSize: 16, fontWeight: '700' },
+  exitLots: { color: theme.colors.text, fontSize: 13, fontWeight: '700', minWidth: 38, textAlign: 'center' },
+  flash: { color: theme.colors.loss, fontSize: 11, marginTop: 8 },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, paddingHorizontal: 4 },
   totalLabel: { color: theme.colors.textDim, fontSize: 13, fontWeight: '600' },
   totalVal: { fontSize: 16, fontWeight: '800' },
