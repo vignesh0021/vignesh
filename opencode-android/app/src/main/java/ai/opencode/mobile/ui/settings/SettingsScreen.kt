@@ -55,6 +55,7 @@ fun SettingsScreen(
     var apiKeyInput by remember { mutableStateOf("") }
     var baseUrlInput by remember(settings.baseUrl) { mutableStateOf(settings.baseUrl) }
     var promptInput by remember(settings.systemPrompt) { mutableStateOf(settings.systemPrompt) }
+    var customModelInput by remember(settings.modelId) { mutableStateOf(settings.modelId) }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -99,6 +100,30 @@ fun SettingsScreen(
                         )
                     }
                 }
+                Text(
+                    "Or enter any model id supported by the provider:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = customModelInput,
+                    onValueChange = { customModelInput = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Custom model id") },
+                    placeholder = { Text("e.g. mistralai/mistral-7b-instruct:free") },
+                )
+                OutlinedButton(onClick = {
+                    if (customModelInput.isNotBlank()) {
+                        viewModel.setModel(customModelInput.trim())
+                        scope.launch { snackbar.showSnackbar("Model set to ${customModelInput.trim()}") }
+                    }
+                }) { Text("Use this model") }
+                Text(
+                    "Active model: ${settings.modelId}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
 
             SectionCard(title = "API key · ${settings.provider.displayName}") {

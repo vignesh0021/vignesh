@@ -156,7 +156,16 @@ built in:
 Free models still require a **free API key** from the provider (paste it once in Settings). No
 key is ever baked into the app or the build. Anthropic and OpenAI remain available for users
 who prefer them. Because these providers are OpenAI-compatible, adding another is a one-line
-catalog entry.
+catalog entry. This is the same free-model pool opencode.ai users tap into (OpenRouter's
+`:free` models).
+
+**Any model / any gateway.** Settings has a **custom model id** field and a **base URL** field,
+so you can point OmniCode at any OpenAI-compatible endpoint and run any model the provider
+exposes — not just the ones in the catalog.
+
+> Robustness: the OpenAI-compatible client reads the stream by hand and falls back to parsing
+> a plain-JSON body, so free gateways that answer HTTP 200 with a non-SSE body (or an inline
+> `{"error":…}`) surface their real message instead of a confusing "Request failed (HTTP 200)".
 
 > On-device / "our own" model: bundling a local LLM (e.g. a small Gemma via MediaPipe LLM
 > Inference or llama.cpp) is possible but ships tens/hundreds of MB of weights and native

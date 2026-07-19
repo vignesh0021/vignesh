@@ -2,26 +2,37 @@ package ai.opencode.mobile.data.remote
 
 import ai.opencode.mobile.domain.model.Role
 import ai.opencode.mobile.util.Logger
-import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
-import okhttp3.sse.EventSource
-import okhttp3.sse.EventSourceListener
-import okhttp3.sse.EventSources
 
-/** Streams from any OpenAI-compatible `/v1/chat/completions` SSE endpoint. */
+/**
+ * Streams from any OpenAI-compatible `/v1/chat/completions` endpoint (OpenAI, OpenRouter,
+ * Groq, custom gateways).
+ *
+ * We deliberately read the response by hand rather than via okhttp-sse: free gateways such
+ * as OpenRouter frequently return an HTTP 200 whose body is a plain-JSON completion or an
+ * inline `{"error":...}` object instead of a `text/event-stream`. A strict SSE reader
+ * reports those as "Request failed (HTTP 200)"; here we detect the content type and fall
+ * back to parsing the whole JSON body, surfacing the provider's real error message.
+ */
 class OpenAiChatClient(
     private val client: OkHttpClient,
     private val json: Json,
 ) : ChatClient {
 
-    override fun streamChat(request: ChatRequest): Flow<ChatStreamEvent> = callbackFlow {
+    override fun streamChat(request: ChatRequest): Flow<ChatStreamEvent> = flow {
         val wireMessages = buildList {
             if (request.systemPrompt.isNotBlank()) {
                 add(WireChatMessageDto("system", request.systemPrompt))
@@ -40,42 +51,90 @@ class OpenAiChatClient(
             .url(request.baseUrl.trimEnd('/') + "/v1/chat/completions")
             .addHeader("Authorization", "Bearer ${request.apiKey}")
             .addHeader("content-type", "application/json")
+            .addHeader("Accept", "text/event-stream")
             // OpenRouter attribution headers; ignored by other OpenAI-compatible providers.
             .addHeader("HTTP-Referer", "https://github.com/vignesh0021/vignesh")
             .addHeader("X-Title", "OmniCode")
             .post(json.encodeToString(OpenAiRequestDto.serializer(), body).toRequestBody(JSON_MEDIA))
             .build()
 
-        val listener = object : EventSourceListener() {
-            override fun onEvent(source: EventSource, id: String?, type: String?, data: String) {
-                if (data.isBlank()) return
-                if (data.trim() == "[DONE]") {
-                    trySend(ChatStreamEvent.Done)
-                    close()
-                    return
-                }
-                runCatching {
-                    val chunk = json.decodeFromString(OpenAiStreamChunk.serializer(), data)
-                    chunk.choices.firstOrNull()?.delta?.content?.let { text ->
-                        if (text.isNotEmpty()) trySend(ChatStreamEvent.Delta(text))
+        val response = client.newCall(httpRequest).execute()
+        response.use {
+            if (!response.isSuccessful) {
+                emit(ChatStreamEvent.Error(parseError(response, null, json)))
+                return@use
+            }
+            val responseBody = response.body ?: run {
+                emit(ChatStreamEvent.Error("Empty response from provider."))
+                return@use
+            }
+            val subtype = responseBody.contentType()?.subtype
+            val source = responseBody.source()
+
+            if (subtype == "event-stream") {
+                var emittedAny = false
+                while (true) {
+                    val line = source.readUtf8Line() ?: break
+                    if (!line.startsWith("data:")) continue
+                    val data = line.substringAfter("data:").trim()
+                    if (data.isEmpty()) continue
+                    if (data == "[DONE]") break
+                    val delta = parseDelta(data)
+                    if (!delta.isNullOrEmpty()) {
+                        emittedAny = true
+                        emit(ChatStreamEvent.Delta(delta))
+                    } else {
+                        // An error object can arrive mid-stream at HTTP 200.
+                        errorMessageIn(data)?.let {
+                            emit(ChatStreamEvent.Error(it))
+                            return@use
+                        }
                     }
-                }.onFailure { Logger.w("OpenAI delta parse failed", it) }
-            }
-
-            override fun onClosed(source: EventSource) {
-                trySend(ChatStreamEvent.Done)
-                close()
-            }
-
-            override fun onFailure(source: EventSource, t: Throwable?, response: Response?) {
-                trySend(ChatStreamEvent.Error(parseError(response, t, json)))
-                close()
+                }
+                if (!emittedAny) {
+                    emit(ChatStreamEvent.Error("The model returned an empty response. Try another model."))
+                } else {
+                    emit(ChatStreamEvent.Done)
+                }
+            } else {
+                // Non-streaming JSON body (a full completion, or a 200 error envelope).
+                val text = source.readUtf8()
+                val content = completionContentIn(text)
+                val error = errorMessageIn(text)
+                when {
+                    !content.isNullOrEmpty() -> {
+                        emit(ChatStreamEvent.Delta(content))
+                        emit(ChatStreamEvent.Done)
+                    }
+                    !error.isNullOrBlank() -> emit(ChatStreamEvent.Error(error))
+                    else -> emit(ChatStreamEvent.Error("Unexpected response from provider."))
+                }
             }
         }
+    }.catch { t ->
+        Logger.w("OpenAI stream failed", t)
+        emit(ChatStreamEvent.Error(t.message ?: "Network error — check your connection."))
+    }.flowOn(Dispatchers.IO)
 
-        val eventSource = EventSources.createFactory(client).newEventSource(httpRequest, listener)
-        awaitClose { eventSource.cancel() }
-    }
+    /** Extracts the incremental token from a streaming `data:` chunk. */
+    private fun parseDelta(data: String): String? = runCatching {
+        json.decodeFromString(OpenAiStreamChunk.serializer(), data)
+            .choices.firstOrNull()?.delta?.content
+    }.getOrNull()
+
+    /** Extracts assistant content from a full (non-streamed) completion JSON body. */
+    private fun completionContentIn(text: String): String? = runCatching {
+        json.parseToJsonElement(text).jsonObject["choices"]
+            ?.jsonArray?.firstOrNull()?.jsonObject
+            ?.get("message")?.jsonObject
+            ?.get("content")?.jsonPrimitive?.contentOrNull
+    }.getOrNull()
+
+    /** Extracts a provider error message from any JSON body that contains `error.message`. */
+    private fun errorMessageIn(text: String): String? = runCatching {
+        json.parseToJsonElement(text).jsonObject["error"]
+            ?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull
+    }.getOrNull()
 
     companion object {
         private val JSON_MEDIA = "application/json".toMediaType()

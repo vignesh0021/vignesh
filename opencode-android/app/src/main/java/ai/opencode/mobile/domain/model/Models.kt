@@ -72,6 +72,8 @@ object ModelCatalog {
         AiModel("meta-llama/llama-3.3-70b-instruct:free", "Llama 3.3 70B · free", ProviderType.OPENROUTER, free = true),
         AiModel("google/gemini-2.0-flash-exp:free", "Gemini 2.0 Flash · free", ProviderType.OPENROUTER, free = true),
         AiModel("mistralai/mistral-small-3.1-24b-instruct:free", "Mistral Small 3.1 · free", ProviderType.OPENROUTER, free = true),
+        AiModel("mistralai/mistral-7b-instruct:free", "Mistral 7B · free", ProviderType.OPENROUTER, free = true),
+        AiModel("google/gemma-2-9b-it:free", "Gemma 2 9B · free", ProviderType.OPENROUTER, free = true),
 
         // --- Groq: free tier (require a free Groq key) ---
         AiModel("llama-3.3-70b-versatile", "Llama 3.3 70B · free", ProviderType.GROQ, free = true),

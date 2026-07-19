@@ -16,8 +16,9 @@ class ChatClientFactory {
 
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        // Long read timeout: streaming responses can be idle between tokens.
-        .readTimeout(0, TimeUnit.SECONDS)
+        // Generous read timeout: reasoning models can be slow before the first token,
+        // but a finite value prevents a hung stream from blocking the UI forever.
+        .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
