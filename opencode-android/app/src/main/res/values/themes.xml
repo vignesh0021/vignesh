@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.OpenCodeMobile" parent="android:Theme.Material.NoActionBar" />
+</resources>
