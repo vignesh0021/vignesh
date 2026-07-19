@@ -21,8 +21,11 @@ val keystoreProperties = Properties().apply {
     }
 }
 
+// Resolve a secret from the environment first, then keystore.properties. Blank values
+// (e.g. an unset CI secret that still exports an empty env var) are treated as absent so
+// the release build cleanly falls back to debug signing instead of calling file("").
 fun secret(envName: String, propName: String): String? =
-    System.getenv(envName) ?: keystoreProperties.getProperty(propName)
+    (System.getenv(envName) ?: keystoreProperties.getProperty(propName))?.takeIf { it.isNotBlank() }
 
 android {
     namespace = "ai.opencode.mobile"
