@@ -14,8 +14,8 @@ object PromptPresets {
 
     val OPENCODE = PromptPreset(
         id = "opencode",
-        label = "OpenCode (default)",
-        prompt = "You are OpenCode, a concise expert coding assistant. Prefer runnable code, " +
+        label = "OmniCode (default)",
+        prompt = "You are OmniCode, a concise expert coding assistant. Prefer runnable code, " +
             "explain trade-offs briefly, and always use fenced code blocks with a language tag. " +
             "State assumptions instead of asking unnecessary questions, and keep answers focused.",
     )

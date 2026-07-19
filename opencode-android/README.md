@@ -1,4 +1,7 @@
-# OpenCode Mobile
+# OmniCode
+
+> One app, every AI coding model. (Internal package/module names retain the original
+> `opencode` identifiers; only the user-facing brand is **OmniCode**.)
 
 An Android application that mirrors the core workflow of [opencode.ai](https://opencode.ai) —
 the open-source, provider-agnostic AI coding agent — reimagined for a phone. It is built

@@ -76,7 +76,7 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("OpenCode", fontWeight = FontWeight.Bold)
+                        Text("OmniCode", fontWeight = FontWeight.Bold)
                         Text(
                             header.modelId,
                             style = MaterialTheme.typography.labelSmall,
@@ -183,7 +183,7 @@ private fun Composer(
                 value = value,
                 onValueChange = onValueChange,
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Message OpenCode…") },
+                placeholder = { Text("Message OmniCode…") },
                 maxLines = 6,
                 shape = RoundedCornerShape(20.dp),
             )

@@ -190,7 +190,7 @@ fun SettingsScreen(
             }
 
             Text(
-                "OpenCode Mobile mirrors opencode.ai's pluggable-provider workflow. Keys are " +
+                "OmniCode mirrors opencode.ai's pluggable-provider workflow. Keys are " +
                     "stored with AES-256 via the Android Keystore and never leave your device " +
                     "except in requests to the provider you choose.",
                 style = MaterialTheme.typography.bodySmall,

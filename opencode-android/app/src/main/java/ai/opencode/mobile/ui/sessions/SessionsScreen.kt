@@ -53,7 +53,7 @@ fun SessionsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("OpenCode", fontWeight = FontWeight.Bold) },
+                title = { Text("OmniCode", fontWeight = FontWeight.Bold) },
                 actions = {
                     IconButton(onClick = onOpenFiles) {
                         Icon(Icons.Filled.Folder, contentDescription = "Files")
@@ -142,7 +142,7 @@ private fun EmptyState(modifier: Modifier = Modifier) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("No sessions yet", style = MaterialTheme.typography.titleLarge)
             Text(
-                "Tap “New chat” to start pairing with OpenCode.",
+                "Tap “New chat” to start pairing with OmniCode.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
