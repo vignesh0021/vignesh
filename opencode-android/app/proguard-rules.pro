@@ -16,3 +16,10 @@
 
 # Keep Compose runtime metadata that R8 sometimes over-strips
 -keepclassmembers class androidx.compose.** { *; }
+
+# androidx.security-crypto pulls in Google Tink, which references errorprone /
+# javax annotations that are compile-only and absent at runtime. Without these,
+# R8 fails the release build on "Missing class" errors.
+-dontwarn com.google.errorprone.annotations.**
+-dontwarn javax.annotation.**
+-dontwarn com.google.crypto.tink.**
