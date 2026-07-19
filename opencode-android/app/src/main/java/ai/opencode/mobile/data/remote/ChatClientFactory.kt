@@ -21,8 +21,11 @@ class ChatClientFactory {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    fun create(provider: ProviderType): ChatClient = when (provider) {
-        ProviderType.ANTHROPIC -> AnthropicChatClient(http, json)
-        ProviderType.OPENAI, ProviderType.OPENAI_COMPATIBLE -> OpenAiChatClient(http, json)
-    }
+    fun create(provider: ProviderType): ChatClient =
+        if (provider == ProviderType.ANTHROPIC) {
+            AnthropicChatClient(http, json)
+        } else {
+            // OpenRouter, Groq, OpenAI and any OpenAI-compatible endpoint share one client.
+            OpenAiChatClient(http, json)
+        }
 }

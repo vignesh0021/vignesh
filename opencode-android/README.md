@@ -15,8 +15,10 @@ release artifacts with no manual steps.
 | opencode.ai capability | OpenCode Mobile implementation |
 | --- | --- |
 | AI coding chat with streaming responses | Real-time token streaming over SSE (`ChatScreen`) |
-| Pluggable model providers | Anthropic + any OpenAI-compatible endpoint, switchable at runtime |
-| Model selection | In-app model picker seeded from a catalog (`Settings`) |
+| **Free models out of the box** | Defaults to **OpenRouter** free models; **Groq** free tier also built in |
+| Pluggable model providers | OpenRouter, Groq, Anthropic, OpenAI + any OpenAI-compatible endpoint, switchable at runtime |
+| Model selection | In-app model picker seeded from a catalog (free models flagged) |
+| System-prompt presets | Selectable presets adapted from open-source coding-agent prompts |
 | Multiple sessions / history | Persistent sessions & message history via Room (`SessionsScreen`) |
 | Project / workspace files | Sandboxed on-device workspace with a file browser (`FilesScreen`) |
 | Code viewing & editing | Syntax-highlighted viewer + in-place editor (`CodeViewerScreen`) |
@@ -136,6 +138,36 @@ instead create a git-ignored `keystore.properties` with `storeFile/storePassword
 - **Internal distribution:** grab the `opencode-debug-apk` artifact from any CI run.
 
 ---
+
+## Free models
+
+The app defaults to a **free** provider/model so it works at no cost. Two free backends are
+built in:
+
+- **OpenRouter** (`https://openrouter.ai/api`) — many genuinely free models (DeepSeek R1/V3,
+  Qwen2.5 Coder, Llama 3.3, Gemini 2.0 Flash, Mistral Small). Get a free key at
+  <https://openrouter.ai/keys>.
+- **Groq** (`https://api.groq.com/openai`) — fast free tier (Llama 3.3 70B, Llama 3.1 8B,
+  DeepSeek R1 Distill). Get a free key at <https://console.groq.com/keys>.
+
+Free models still require a **free API key** from the provider (paste it once in Settings). No
+key is ever baked into the app or the build. Anthropic and OpenAI remain available for users
+who prefer them. Because these providers are OpenAI-compatible, adding another is a one-line
+catalog entry.
+
+> On-device / "our own" model: bundling a local LLM (e.g. a small Gemma via MediaPipe LLM
+> Inference or llama.cpp) is possible but ships tens/hundreds of MB of weights and native
+> libraries; the free hosted models above deliver the zero-cost experience without that
+> footprint. Open an issue if you want the on-device path wired in.
+
+## System-prompt presets
+
+Settings offers selectable prompt presets — **OpenCode (default)**, **Codex-style agent**,
+**Conventions-first**, **Plan then code**, and **Code reviewer** — plus a free-text editor for
+the active prompt. The presets are adapted and condensed for a mobile chat client from the
+publicly collected open-source agent prompts in
+[x1xhlol/system-prompts-and-models-of-ai-tools](https://github.com/x1xhlol/system-prompts-and-models-of-ai-tools)
+(the open-source CLI agents: Codex CLI, Gemini CLI, Cline).
 
 ## Runtime configuration
 

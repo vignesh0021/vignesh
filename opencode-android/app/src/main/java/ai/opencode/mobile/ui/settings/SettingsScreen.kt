@@ -37,6 +37,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import ai.opencode.mobile.domain.model.PromptPresets
 import ai.opencode.mobile.domain.model.ProviderType
 import kotlinx.coroutines.launch
 
@@ -107,6 +108,13 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                settings.provider.keyUrl?.let { url ->
+                    Text(
+                        text = "Get a free key: $url",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 OutlinedTextField(
                     value = apiKeyInput,
                     onValueChange = { apiKeyInput = it },
@@ -148,6 +156,23 @@ fun SettingsScreen(
                     viewModel.setBaseUrl(baseUrlInput)
                     scope.launch { snackbar.showSnackbar("Base URL updated") }
                 }) { Text("Save URL") }
+            }
+
+            SectionCard(title = "Prompt presets") {
+                Text(
+                    "Adapted from open-source coding-agent prompts.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PromptPresets.all.forEach { preset ->
+                        FilterChip(
+                            selected = settings.systemPrompt == preset.prompt,
+                            onClick = { viewModel.setSystemPrompt(preset.prompt) },
+                            label = { Text(preset.label) },
+                        )
+                    }
+                }
             }
 
             SectionCard(title = "System prompt") {

@@ -40,6 +40,9 @@ class OpenAiChatClient(
             .url(request.baseUrl.trimEnd('/') + "/v1/chat/completions")
             .addHeader("Authorization", "Bearer ${request.apiKey}")
             .addHeader("content-type", "application/json")
+            // OpenRouter attribution headers; ignored by other OpenAI-compatible providers.
+            .addHeader("HTTP-Referer", "https://github.com/vignesh0021/vignesh")
+            .addHeader("X-Title", "OpenCode Mobile")
             .post(json.encodeToString(OpenAiRequestDto.serializer(), body).toRequestBody(JSON_MEDIA))
             .build()
 

@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import ai.opencode.mobile.domain.model.ModelCatalog
+import ai.opencode.mobile.domain.model.PromptPresets
 import ai.opencode.mobile.domain.model.ProviderType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -15,17 +16,12 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 /** Non-secret user preferences. API keys live in [ApiKeyStore], not here. */
 data class AppSettings(
-    val provider: ProviderType = ProviderType.ANTHROPIC,
-    val modelId: String = ModelCatalog.defaultModel(ProviderType.ANTHROPIC),
-    val baseUrl: String = ProviderType.ANTHROPIC.defaultBaseUrl,
-    val systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
-) {
-    companion object {
-        const val DEFAULT_SYSTEM_PROMPT =
-            "You are OpenCode, a concise expert coding assistant. Prefer runnable code, " +
-                "explain trade-offs briefly, and use fenced code blocks with a language tag."
-    }
-}
+    // Default to a free provider/model so the app is usable at no cost out of the box.
+    val provider: ProviderType = ProviderType.OPENROUTER,
+    val modelId: String = ModelCatalog.defaultModel(ProviderType.OPENROUTER),
+    val baseUrl: String = ProviderType.OPENROUTER.defaultBaseUrl,
+    val systemPrompt: String = PromptPresets.DEFAULT.prompt,
+)
 
 class SettingsRepository(private val context: Context) {
 
@@ -42,7 +38,7 @@ class SettingsRepository(private val context: Context) {
             provider = provider,
             modelId = prefs[Keys.MODEL] ?: ModelCatalog.defaultModel(provider),
             baseUrl = prefs[Keys.BASE_URL] ?: provider.defaultBaseUrl,
-            systemPrompt = prefs[Keys.SYSTEM_PROMPT] ?: AppSettings.DEFAULT_SYSTEM_PROMPT,
+            systemPrompt = prefs[Keys.SYSTEM_PROMPT] ?: PromptPresets.DEFAULT.prompt,
         )
     }
 

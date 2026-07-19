@@ -27,4 +27,20 @@ class ModelCatalogTest {
             assertTrue(default.isNotBlank())
         }
     }
+
+    @Test
+    fun `free providers expose free models`() {
+        listOf(ProviderType.OPENROUTER, ProviderType.GROQ).forEach { provider ->
+            val models = ModelCatalog.forProvider(provider)
+            assertTrue("$provider should have models", models.isNotEmpty())
+            assertTrue("$provider should have a free model", models.any { it.free })
+        }
+    }
+
+    @Test
+    fun `default provider default model is free`() {
+        val id = ModelCatalog.defaultModel(ProviderType.OPENROUTER)
+        val model = ModelCatalog.models.first { it.id == id }
+        assertTrue(model.free)
+    }
 }

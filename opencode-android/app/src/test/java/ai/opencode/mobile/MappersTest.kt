@@ -45,7 +45,7 @@ class MappersTest {
     }
 
     @Test
-    fun `unknown provider name falls back to anthropic`() {
-        assertEquals(ProviderType.ANTHROPIC, ProviderType.fromName("does-not-exist"))
+    fun `unknown provider name falls back to the default free provider`() {
+        assertEquals(ProviderType.OPENROUTER, ProviderType.fromName("does-not-exist"))
     }
 }
