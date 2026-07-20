@@ -13,7 +13,7 @@ import { PositionList } from '../components/PositionList';
 import { PositionSheet } from '../components/PositionSheet';
 import { RiskMatrix } from '../components/RiskMatrix';
 import { SimulationPanel } from '../components/SimulationPanel';
-import { SectionNav } from '../components/SectionNav';
+import { BottomTabBar } from '../components/BottomTabBar';
 import { StrategyLibrary } from '../components/StrategyLibrary';
 import { TestingEngine } from '../components/TestingEngine';
 import { theme } from '../theme';
@@ -32,14 +32,17 @@ const logo = require('../../assets/icon.png');
 
 type Tab = 'PAPER' | 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'STRATEGY' | 'BACKTEST' | 'BROKERS';
 
-const TAB_ITEMS: { key: Tab; label: string; icon: string }[] = [
+// Kite/Dhan-style bottom nav: 4 primary slots + a "More" sheet for the rest.
+const PRIMARY_TABS: { key: Tab; label: string; icon: string }[] = [
   { key: 'PAPER', label: 'Paper', icon: '📝' },
   { key: 'PAYOFF', label: 'Payoff', icon: '📉' },
-  { key: 'PNL', label: 'PNL', icon: '🧮' },
-  { key: 'GREEKS', label: 'Greeks', icon: 'Δ' },
   { key: 'POSITIONS', label: 'Positions', icon: '📂' },
-  { key: 'STRATEGY', label: 'Strategies', icon: '🎯' },
+  { key: 'STRATEGY', label: 'Strategy', icon: '🎯' },
+];
+const MORE_TABS: { key: Tab; label: string; icon: string }[] = [
   { key: 'BROKERS', label: 'Brokers', icon: '🔗' },
+  { key: 'GREEKS', label: 'Greeks', icon: 'Δ' },
+  { key: 'PNL', label: 'PNL Table', icon: '🧮' },
   { key: 'BACKTEST', label: 'Backtest', icon: '⏮️' },
 ];
 
@@ -126,9 +129,6 @@ export function AnalyzerScreen() {
         </View>
       ) : null}
 
-      {/* Collapsible section nav — content runs full-screen below */}
-      <SectionNav columns={4} active={tab} onSelect={(k) => setTab(k as Tab)} items={TAB_ITEMS} />
-
       {tab === 'PAPER' ? (
         <PaperTradingScreen />
       ) : tab === 'BACKTEST' ? (
@@ -174,10 +174,12 @@ export function AnalyzerScreen() {
       )}
 
       {tab !== 'PAPER' && tab !== 'BACKTEST' && tab !== 'STRATEGY' && tab !== 'BROKERS' ? (
-        <TouchableOpacity style={[styles.fab, { bottom: insets.bottom + 16 }]} onPress={openAdd} activeOpacity={0.85}>
+        <TouchableOpacity style={[styles.fab, { bottom: insets.bottom + 74 }]} onPress={openAdd} activeOpacity={0.85}>
           <Text style={styles.fabTxt}>＋ Add Contract</Text>
         </TouchableOpacity>
       ) : null}
+
+      <BottomTabBar primary={PRIMARY_TABS} more={MORE_TABS} active={tab} onSelect={(k) => setTab(k as Tab)} />
 
       <PositionSheet visible={sheetOpen} editing={editing} onClose={() => setSheetOpen(false)} />
       <InstrumentPicker visible={pickerOpen} onClose={() => setPickerOpen(false)} />
