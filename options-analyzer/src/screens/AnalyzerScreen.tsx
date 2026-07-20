@@ -14,6 +14,7 @@ import { PositionSheet } from '../components/PositionSheet';
 import { RiskMatrix } from '../components/RiskMatrix';
 import { SimulationPanel } from '../components/SimulationPanel';
 import { StrategyLibrary } from '../components/StrategyLibrary';
+import { TabGrid } from '../components/TabGrid';
 import { TestingEngine } from '../components/TestingEngine';
 import { theme } from '../theme';
 import type { OptionPosition } from '../types';
@@ -31,15 +32,15 @@ const logo = require('../../assets/icon.png');
 
 type Tab = 'PAPER' | 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'STRATEGY' | 'BACKTEST' | 'BROKERS';
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'PAPER', label: '📝 Paper Trade' },
-  { key: 'PAYOFF', label: 'PNL Chart' },
-  { key: 'PNL', label: 'PNL Table' },
-  { key: 'GREEKS', label: 'Greeks' },
-  { key: 'POSITIONS', label: 'Positions' },
-  { key: 'STRATEGY', label: 'Strategies' },
-  { key: 'BROKERS', label: 'Brokers' },
-  { key: 'BACKTEST', label: 'Backtest' },
+const TAB_ITEMS: { key: Tab; label: string; icon: string }[] = [
+  { key: 'PAPER', label: 'Paper', icon: '📝' },
+  { key: 'PAYOFF', label: 'Payoff', icon: '📉' },
+  { key: 'PNL', label: 'PNL', icon: '🧮' },
+  { key: 'GREEKS', label: 'Greeks', icon: 'Δ' },
+  { key: 'POSITIONS', label: 'Positions', icon: '📂' },
+  { key: 'STRATEGY', label: 'Strategies', icon: '🎯' },
+  { key: 'BROKERS', label: 'Brokers', icon: '🔗' },
+  { key: 'BACKTEST', label: 'Backtest', icon: '⏮️' },
 ];
 
 export function AnalyzerScreen() {
@@ -125,16 +126,9 @@ export function AnalyzerScreen() {
         </View>
       ) : null}
 
-      {/* Tabs (scrollable) */}
+      {/* Tabs — tap-to-open grid */}
       <View style={styles.tabBarWrap}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabBar}>
-          {TABS.map((t) => (
-            <TouchableOpacity key={t.key} style={styles.tab} onPress={() => setTab(t.key)}>
-              <Text style={[styles.tabTxt, tab === t.key && styles.tabTxtActive]}>{t.label}</Text>
-              {tab === t.key ? <View style={styles.tabUnderline} /> : null}
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        <TabGrid columns={4} active={tab} onSelect={(k) => setTab(k as Tab)} items={TAB_ITEMS} />
       </View>
 
       {tab === 'PAPER' ? (

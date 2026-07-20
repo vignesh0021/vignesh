@@ -26,6 +26,7 @@ import { OptionScanner } from './OptionScanner';
 import { PaperStrategyDeploy } from './PaperStrategyDeploy';
 import { PriceChart } from './PriceChart';
 import { StrategyDeploySheet, type ResolvedLeg } from './StrategyDeploySheet';
+import { TabGrid } from './TabGrid';
 
 type SubTab = 'CHAIN' | 'CHART' | 'SCANNER' | 'STRATEGY' | 'POSITIONS' | 'ORDERS' | 'JOURNAL';
 
@@ -346,30 +347,22 @@ export function PaperTradingScreen() {
         <Text style={styles.chainHint}>Connecting to Fyers option chain…</Text>
       ) : null}
 
-      {/* Sub tabs */}
+      {/* Sub tabs — tap-to-open grid */}
       <View style={styles.subTabsWrap}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.subTabs}>
-          {(['CHAIN', 'CHART', 'SCANNER', 'STRATEGY', 'POSITIONS', 'ORDERS', 'JOURNAL'] as SubTab[]).map((t) => (
-            <TouchableOpacity key={t} style={styles.subTab} onPress={() => setSubTab(t)}>
-              <Text style={[styles.subTabTxt, subTab === t && styles.subTabTxtOn]}>
-                {t === 'CHAIN'
-                  ? 'Chain'
-                  : t === 'CHART'
-                    ? '📈 Chart'
-                    : t === 'SCANNER'
-                      ? '🔍 Scanner'
-                      : t === 'STRATEGY'
-                        ? 'Strategy'
-                        : t === 'POSITIONS'
-                          ? `Positions${positions.length ? ` (${positions.length})` : ''}`
-                          : t === 'ORDERS'
-                            ? 'Orders'
-                            : 'Journal'}
-              </Text>
-              {subTab === t ? <View style={styles.subUnderline} /> : null}
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        <TabGrid
+          columns={4}
+          active={subTab}
+          onSelect={(k) => setSubTab(k as SubTab)}
+          items={[
+            { key: 'CHAIN', label: 'Chain', icon: '⛓️' },
+            { key: 'CHART', label: 'Chart', icon: '📈' },
+            { key: 'SCANNER', label: 'Scanner', icon: '🔍' },
+            { key: 'STRATEGY', label: 'Strategy', icon: '🎯' },
+            { key: 'POSITIONS', label: positions.length ? `Positions ${positions.length}` : 'Positions', icon: '📂' },
+            { key: 'ORDERS', label: 'Orders', icon: '🧾' },
+            { key: 'JOURNAL', label: 'Journal', icon: '📊' },
+          ]}
+        />
       </View>
 
       {subTab === 'CHAIN' ? (
