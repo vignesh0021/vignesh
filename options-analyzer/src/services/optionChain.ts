@@ -26,6 +26,10 @@ export interface ChainQuote {
   oiLacs: number;
   greeks: Greeks;
   itm: boolean;
+  /** Real broker microstructure when connected (absent on the synthetic chain). */
+  bid?: number;
+  ask?: number;
+  volume?: number;
 }
 
 export interface ChainRow {
@@ -137,7 +141,11 @@ export function fyersChainToRows(
     }
   }
 
-  const toQuote = (strike: number, type: OptionType, q?: { symbol: string; ltp: number; chg: number; oi: number }): ChainQuote => {
+  const toQuote = (
+    strike: number,
+    type: OptionType,
+    q?: { symbol: string; ltp: number; chg: number; oi: number; bid?: number; ask?: number; volume?: number },
+  ): ChainQuote => {
     const itm = type === 'CALL' ? spot > strike : spot < strike;
     return {
       key: optionKey(underlying, expiryIso, strike, type),
@@ -149,6 +157,9 @@ export function fyersChainToRows(
       oiLacs: q ? q.oi / 1e5 : 0,
       greeks: bsGreeks({ spot, strike, timeYears, rate, iv, type }),
       itm,
+      bid: q?.bid,
+      ask: q?.ask,
+      volume: q?.volume,
     };
   };
 

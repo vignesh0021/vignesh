@@ -2,32 +2,24 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { getHistory, type FyersCandle } from '../services/brokers/fyers';
+import { generateBuyerSignals, type BuyerSignal } from '../services/buyerSignals';
 import { liveFeed } from '../services/liveFeed';
-import { atmStrikeFor, buildChain, type ChainQuote, type ChainRow } from '../services/optionChain';
+import { buildChain, type ChainQuote, type ChainRow } from '../services/optionChain';
 import { theme } from '../theme';
 import { fmtNum } from '../utils/format';
-import { ema, rsi as rsiCalc, vwap as vwapCalc } from '../utils/indicators';
 import { fyersUnderlyingSymbol } from '../utils/options';
 import { useBrokerStore } from '../store/useBrokerStore';
+import { usePaperStore } from '../store/usePaperStore';
 import { usePortfolioStore } from '../store/usePortfolioStore';
 import { synthCandles } from './PriceChart';
 
 /**
- * Option Buying Scanner — answers "which option should a buyer look at RIGHT
- * NOW?" from live data. Direction comes from 5-minute price action on the
- * underlying (EMA 9/21 trend, RSI 14, VWAP side, 5-bar momentum); candidates
- * are then ranked from the live chain by premium momentum on the biased side,
- * each with a one-tap BUY that opens the order ticket.
+ * 🔍 Option Buyer Scanner — the user's desktop "nifty-options-buyer" engine
+ * running on live mobile data. Three completed-bar setups (Trend Breakout CE,
+ * Breakdown PE, VWAP Reclaim/Rejection), confidence-scored with contract
+ * quality gates, stop/target/lot sizing, and a one-tap BUY into the paper
+ * order ticket.
  */
-
-type Bias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-
-interface Signal {
-  label: string;
-  value: string;
-  dir: 1 | 0 | -1; // bullish / neutral / bearish contribution
-}
-
 export function OptionScanner({
   rows,
   live,
@@ -47,14 +39,18 @@ export function OptionScanner({
 }) {
   const asset = usePortfolioStore((s) => s.asset);
   const defaultIv = usePortfolioStore((s) => s.defaultIv);
+  const vix = usePortfolioStore((s) => s.vix);
   const rate = usePortfolioStore((s) => s.rate);
   const fyers = useBrokerStore((s) => s.fyers);
+  const startingFunds = usePaperStore((s) => s.startingFunds);
+  const realizedPnl = usePaperStore((s) => s.realizedPnl);
   const fyersReady = !!(fyers.appId && fyers.accessToken) && asset.assetClass === 'india_equity';
 
   const [candles, setCandles] = useState<FyersCandle[]>([]);
   const [candleSrc, setCandleSrc] = useState<'live' | 'sim'>('sim');
+  const [expanded, setExpanded] = useState<string | null>(null);
 
-  // 5-minute candles for the direction engine (Fyers → synthetic fallback).
+  // 5-minute candles for the signal engine (Fyers → synthetic fallback).
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -70,8 +66,8 @@ export function OptionScanner({
             from.toISOString().slice(0, 10),
             to.toISOString().slice(0, 10),
           );
-          if (!cancelled && rowsH.length > 30) {
-            setCandles(rowsH.slice(-80));
+          if (!cancelled && rowsH.length > 60) {
+            setCandles(rowsH.slice(-160));
             setCandleSrc('live');
             return;
           }
@@ -80,7 +76,7 @@ export function OptionScanner({
         }
       }
       if (!cancelled) {
-        setCandles((prev) => (prev.length ? prev : synthCandles(liveFeed.getSpot() || spot || 100, 300, defaultIv)));
+        setCandles((prev) => (prev.length ? prev : synthCandles(liveFeed.getSpot() || spot || 100, 300, defaultIv, 160)));
         setCandleSrc('sim');
       }
     };
@@ -93,7 +89,7 @@ export function OptionScanner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fyersReady, fyers.appId, fyers.accessToken, asset.symbol]);
 
-  // Patch the forming candle from live ticks so signals stay current.
+  // Patch the forming candle from live ticks (the engine only uses completed bars).
   useEffect(() => {
     const unsub = liveFeed.subscribe((s) => {
       if (!(s > 0)) return;
@@ -107,43 +103,8 @@ export function OptionScanner({
     return unsub;
   }, []);
 
-  // ---- direction engine ---------------------------------------------------
-  const { bias, score, signals } = useMemo(() => {
-    const closes = candles.map((c) => c.c);
-    if (closes.length < 25) {
-      return { bias: 'NEUTRAL' as Bias, score: 0, signals: [] as Signal[] };
-    }
-    const e9 = ema(closes, 9), e21 = ema(closes, 21);
-    const r = rsiCalc(closes, 14);
-    const vw = vwapCalc(candles);
-    const i = closes.length - 1;
-    const lastE9 = e9[i] ?? 0, lastE21 = e21[i] ?? 0;
-    const lastR = r[i] ?? 50;
-    const lastVw = vw[i] ?? closes[i];
-    const roc5 = closes[i - 5] > 0 ? ((closes[i] - closes[i - 5]) / closes[i - 5]) * 100 : 0;
-
-    const sigs: Signal[] = [
-      { label: 'Trend (EMA 9/21)', value: lastE9 > lastE21 ? 'Up' : lastE9 < lastE21 ? 'Down' : 'Flat', dir: lastE9 > lastE21 ? 1 : lastE9 < lastE21 ? -1 : 0 },
-      { label: 'RSI 14', value: fmtNum(lastR, 0), dir: lastR >= 55 && lastR <= 78 ? 1 : lastR <= 45 && lastR >= 22 ? -1 : 0 },
-      { label: 'VWAP', value: closes[i] >= lastVw ? 'Above' : 'Below', dir: closes[i] >= lastVw ? 1 : -1 },
-      { label: 'Momentum (5 bars)', value: `${roc5 >= 0 ? '+' : ''}${fmtNum(roc5, 2)}%`, dir: roc5 > 0.08 ? 1 : roc5 < -0.08 ? -1 : 0 },
-    ];
-
-    let bull = 0, bear = 0;
-    // Trend carries double weight — buyers need the tide, not just ripples.
-    for (const [idx, s] of sigs.entries()) {
-      const w = idx === 0 ? 2 : 1;
-      if (s.dir === 1) bull += w;
-      else if (s.dir === -1) bear += w;
-    }
-    const b: Bias = bull - bear >= 2 ? 'BULLISH' : bear - bull >= 2 ? 'BEARISH' : 'NEUTRAL';
-    return { bias: b, score: Math.max(bull, bear), signals: sigs };
-  }, [candles]);
-
-  // ---- candidate strikes --------------------------------------------------
   const chainRows = useMemo(() => {
     if (rows && rows.length > 0) return rows;
-    // Offline: synthesize so the scanner still teaches the flow.
     return buildChain({
       underlying: asset.symbol,
       spot,
@@ -152,109 +113,197 @@ export function OptionScanner({
       rate,
       expiryIso,
       step,
-      strikesEachSide: 6,
+      strikesEachSide: 8,
     }).rows;
   }, [rows, asset.symbol, spot, refSpot, defaultIv, rate, expiryIso, step]);
 
-  const candidates = useMemo(() => {
-    const atm = atmStrikeFor(spot, step);
-    const side: 'CALL' | 'PUT' | null = bias === 'BULLISH' ? 'CALL' : bias === 'BEARISH' ? 'PUT' : null;
-    const offs = side === 'CALL' ? [-1, 0, 1, 2] : [1, 0, -1, -2]; // ITM → ATM → OTM on the biased side
-    const wanted = side ? offs.map((o) => atm + o * step) : [atm];
-    const out: { quote: ChainQuote; strike: number; chgPct: number; tag: string }[] = [];
-    for (const strike of wanted) {
-      const row = chainRows.find((r) => r.strike === strike);
-      if (!row) continue;
-      const pick = (q: ChainQuote) => {
-        const base = q.ltp - q.chg;
-        const chgPct = base > 0 ? (q.chg / base) * 100 : 0;
-        const tag = strike === atm ? 'ATM' : q.itm ? 'ITM' : 'OTM';
-        out.push({ quote: q, strike, chgPct, tag });
-      };
-      if (side === 'CALL' || side === null) pick(row.call);
-      if (side === 'PUT' || side === null) pick(row.put);
-    }
-    // Rank by premium momentum in the direction of the bias.
-    return out.sort((a, b) => b.chgPct - a.chgPct);
-  }, [chainRows, spot, step, bias]);
+  const scan = useMemo(
+    () =>
+      generateBuyerSignals({
+        candles,
+        rows: chainRows,
+        spot,
+        expiryIso,
+        ivPct: vix ?? defaultIv * 100,
+        lotSize: asset.lotSize,
+        equity: startingFunds + realizedPnl,
+        source: live && candleSrc === 'live' ? 'fyers' : 'sim',
+      }),
+    [candles, chainRows, spot, expiryIso, vix, defaultIv, asset.lotSize, startingFunds, realizedPnl, live, candleSrc],
+  );
 
-  const biasColor = bias === 'BULLISH' ? theme.colors.profit : bias === 'BEARISH' ? theme.colors.loss : theme.colors.textDim;
+  const ctx = scan.context;
 
   return (
     <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 40 }}>
-      {/* Verdict */}
-      <View style={[styles.verdict, { borderColor: biasColor }]}>
-        <Text style={[styles.verdictBias, { color: biasColor }]}>
-          {bias === 'BULLISH' ? '▲ BULLISH — look at Calls' : bias === 'BEARISH' ? '▼ BEARISH — look at Puts' : '◆ NEUTRAL — no clear edge'}
+      {/* Gate + engine status */}
+      <View style={[styles.gate, { borderColor: scan.gate.allowed ? theme.colors.profit : theme.colors.primary }]}>
+        <Text style={[styles.gatePhase, { color: scan.gate.allowed ? theme.colors.profit : theme.colors.primary }]}>
+          {scan.gate.phase}
         </Text>
-        <Text style={styles.verdictSub}>
-          {asset.symbol} {fmtNum(spot, 1)} · 5-min price action · strength {score}/5 ·{' '}
-          {candleSrc === 'live' ? 'live Fyers candles' : 'sim candles'}
+        <Text style={styles.gateReason}>
+          {scan.gate.reason} · {candleSrc === 'live' ? 'live Fyers 5-min candles' : 'sim candles'} ·{' '}
+          {ctx ? `${ctx.barsUsed} bars` : 'warming up'}
         </Text>
       </View>
+
+      {/* Market context strip */}
+      {ctx ? (
+        <View style={styles.ctxGrid}>
+          <Ctx label="EMA 9/21/50" value={`${fmtNum(ctx.ema9, 0)}/${fmtNum(ctx.ema21, 0)}/${fmtNum(ctx.ema50, 0)}`} />
+          <Ctx label="RSI" value={fmtNum(ctx.rsi, 1)} />
+          <Ctx label="ADX" value={fmtNum(ctx.adx, 1)} />
+          <Ctx label="VWAP" value={fmtNum(ctx.vwap, 0)} />
+          <Ctx label="20-bar Hi/Lo" value={`${fmtNum(ctx.recentHigh, 0)}/${fmtNum(ctx.recentLow, 0)}`} />
+          <Ctx label="RVOL" value={ctx.rvolAvailable ? fmtNum(ctx.rvol, 2) : 'n/a'} />
+        </View>
+      ) : (
+        <Text style={styles.warming}>Collecting 5-minute candles — signals need 55 completed bars…</Text>
+      )}
 
       {/* Signals */}
-      <View style={styles.sigGrid}>
-        {signals.map((s) => (
-          <View key={s.label} style={[styles.sig, { borderColor: s.dir === 1 ? theme.colors.profit : s.dir === -1 ? theme.colors.loss : theme.colors.border }]}>
-            <Text style={styles.sigLabel}>{s.label}</Text>
-            <Text style={[styles.sigVal, { color: s.dir === 1 ? theme.colors.profit : s.dir === -1 ? theme.colors.loss : theme.colors.text }]}>
-              {s.value}
-            </Text>
-          </View>
-        ))}
-      </View>
-
-      {/* Candidates */}
-      <Text style={styles.section}>
-        {bias === 'NEUTRAL' ? 'Watchlist (wait for an edge before buying)' : `Buy candidates · ${live ? 'live chain' : 'sim chain'}`}
-      </Text>
-      {candidates.map(({ quote, strike, chgPct, tag }) => (
-        <View key={quote.key} style={styles.candRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.candSym} numberOfLines={1}>
-              {fmtNum(strike, 0)} {quote.type === 'CALL' ? 'CE' : 'PE'} <Text style={styles.candTag}>{tag}</Text>
-            </Text>
-            <Text style={styles.candMeta}>
-              LTP {fmtNum(quote.ltp, 2)} · {chgPct >= 0 ? '+' : ''}
-              {fmtNum(chgPct, 1)}% · OI {fmtNum(quote.oiLacs, 1)}L
-            </Text>
-          </View>
-          <Text style={[styles.candChg, { color: chgPct >= 0 ? theme.colors.profit : theme.colors.loss }]}>
-            {chgPct >= 0 ? '▲' : '▼'}
+      {scan.signals.length === 0 && ctx ? (
+        <View style={styles.empty}>
+          <Text style={styles.emptyBig}>No qualifying setup right now</Text>
+          <Text style={styles.emptySmall}>
+            The engine waits for a completed-bar breakout, breakdown or VWAP cross with a liquid ~0.42-delta
+            contract. Patience is a position.
           </Text>
-          <TouchableOpacity
-            style={[styles.buyBtn, bias === 'NEUTRAL' && { backgroundColor: theme.colors.surfaceAlt }]}
-            onPress={() => onTrade(quote, strike)}
-          >
-            <Text style={[styles.buyTxt, bias === 'NEUTRAL' && { color: theme.colors.textDim }]}>BUY</Text>
-          </TouchableOpacity>
         </View>
+      ) : null}
+
+      {scan.signals.map((sig) => (
+        <SignalCard
+          key={sig.id}
+          sig={sig}
+          expanded={expanded === sig.id}
+          onToggle={() => setExpanded(expanded === sig.id ? null : sig.id)}
+          onBuy={() => onTrade(sig.contract.quote, sig.contract.strike)}
+        />
       ))}
 
       <Text style={styles.disclaimer}>
-        Signals are computed from live market data for paper-trading practice — not investment advice.
-        Trend (2×) + RSI + VWAP + momentum must align before the scanner calls a side.
+        Engine: Trend Breakout / Breakdown / VWAP Reclaim on completed 5-min bars, ported from your
+        nifty-options-buyer project. Signals are for paper-trading practice — not investment advice.
       </Text>
     </ScrollView>
   );
 }
 
+function SignalCard({
+  sig,
+  expanded,
+  onToggle,
+  onBuy,
+}: {
+  sig: BuyerSignal;
+  expanded: boolean;
+  onToggle: () => void;
+  onBuy: () => void;
+}) {
+  const statusColor =
+    sig.status === 'ACTIVE' ? theme.colors.profit : sig.status === 'WATCH' ? theme.colors.primary : theme.colors.textFaint;
+  const dirColor = sig.direction === 'BULLISH' ? theme.colors.profit : theme.colors.loss;
+  return (
+    <View style={[styles.card, { borderLeftColor: dirColor, borderLeftWidth: 3 }]}>
+      <TouchableOpacity onPress={onToggle} activeOpacity={0.7}>
+        <View style={styles.cardHead}>
+          <Text style={styles.cardTitle} numberOfLines={1}>
+            {sig.title}
+          </Text>
+          <View style={[styles.statusChip, { backgroundColor: statusColor + '22' }]}>
+            <Text style={[styles.statusTxt, { color: statusColor }]}>{sig.status}</Text>
+          </View>
+        </View>
+        <Text style={styles.cardSym}>
+          {fmtNum(sig.contract.strike, 0)} {sig.contract.optType} · Δ {fmtNum(Math.abs(sig.contract.delta), 2)} · conf{' '}
+          <Text style={{ color: statusColor, fontWeight: '800' }}>{sig.confidence}</Text>/96
+        </Text>
+        <View style={styles.levels}>
+          <Lv label="Entry" value={fmtNum(sig.entry, 2)} />
+          <Lv label="SL" value={fmtNum(sig.stopLoss, 2)} color={theme.colors.loss} />
+          <Lv label="Target" value={fmtNum(sig.target, 2)} color={theme.colors.profit} />
+          <Lv label="R:R" value={`1:${sig.riskReward}`} />
+          <Lv label="Lots" value={String(sig.suggestedLots)} />
+        </View>
+      </TouchableOpacity>
+
+      {expanded ? (
+        <View style={styles.detail}>
+          {sig.blockers.length > 0 ? (
+            <Text style={styles.blockers}>⛔ {sig.blockers.join(' · ')}</Text>
+          ) : null}
+          {sig.reasons.map((r, i) => (
+            <Text key={i} style={styles.reason}>
+              • {r}
+            </Text>
+          ))}
+          <Text style={styles.invalidation}>Invalidation: {sig.invalidation}</Text>
+          <Text style={styles.meta}>
+            Max risk ≈ {fmtNum(sig.maxRiskInr, 0)} · hold ≤ {sig.holdingMinutes}m · OI {fmtNum(sig.contract.oi / 1e5, 1)}L
+            · spread {fmtNum(sig.contract.spreadPct, 2)}%{sig.contract.estimated ? ' · liquidity estimated' : ''}
+          </Text>
+        </View>
+      ) : null}
+
+      <TouchableOpacity
+        style={[styles.buyBtn, sig.status !== 'ACTIVE' && { backgroundColor: theme.colors.surfaceAlt }]}
+        onPress={onBuy}
+        activeOpacity={0.85}
+      >
+        <Text style={[styles.buyTxt, sig.status !== 'ACTIVE' && { color: theme.colors.textDim }]}>
+          {sig.status === 'ACTIVE' ? `⚡ BUY ${sig.suggestedLots > 0 ? `${sig.suggestedLots} lot` : ''}` : 'Paper trade anyway'}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function Ctx({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.ctx}>
+      <Text style={styles.ctxLabel}>{label}</Text>
+      <Text style={styles.ctxVal}>{value}</Text>
+    </View>
+  );
+}
+
+function Lv({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <View style={{ flex: 1 }}>
+      <Text style={styles.lvLabel}>{label}</Text>
+      <Text style={[styles.lvVal, color ? { color } : null]}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  verdict: { backgroundColor: theme.colors.surface, borderRadius: 12, borderWidth: 1.5, padding: 14 },
-  verdictBias: { fontSize: 16, fontWeight: '800' },
-  verdictSub: { color: theme.colors.textDim, fontSize: 11, marginTop: 5 },
-  sigGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
-  sig: { flexBasis: '47%', flexGrow: 1, backgroundColor: theme.colors.surface, borderRadius: 10, borderWidth: 1, paddingVertical: 8, paddingHorizontal: 10 },
-  sigLabel: { color: theme.colors.textDim, fontSize: 10, marginBottom: 3 },
-  sigVal: { fontSize: 14, fontWeight: '800' },
-  section: { color: theme.colors.text, fontSize: 13, fontWeight: '800', marginTop: 16, marginBottom: 8 },
-  candRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.colors.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, padding: 11, marginBottom: 7 },
-  candSym: { color: theme.colors.text, fontSize: 14, fontWeight: '700' },
-  candTag: { color: theme.colors.textFaint, fontSize: 10, fontWeight: '700' },
-  candMeta: { color: theme.colors.textDim, fontSize: 11, marginTop: 3 },
-  candChg: { fontSize: 14, fontWeight: '800' },
-  buyBtn: { backgroundColor: theme.colors.buy, borderRadius: 8, paddingHorizontal: 16, paddingVertical: 9 },
+  gate: { backgroundColor: theme.colors.surface, borderRadius: 10, borderWidth: 1, padding: 10 },
+  gatePhase: { fontSize: 12, fontWeight: '800' },
+  gateReason: { color: theme.colors.textDim, fontSize: 11, marginTop: 3 },
+  ctxGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  ctx: { flexBasis: '31%', flexGrow: 1, backgroundColor: theme.colors.surface, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border, paddingVertical: 6, paddingHorizontal: 8 },
+  ctxLabel: { color: theme.colors.textFaint, fontSize: 9, marginBottom: 2 },
+  ctxVal: { color: theme.colors.text, fontSize: 12, fontWeight: '700' },
+  warming: { color: theme.colors.textDim, fontSize: 12, marginTop: 12, lineHeight: 17 },
+  empty: { backgroundColor: theme.colors.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, padding: 16, marginTop: 12, alignItems: 'center' },
+  emptyBig: { color: theme.colors.text, fontSize: 14, fontWeight: '700', marginBottom: 6 },
+  emptySmall: { color: theme.colors.textDim, fontSize: 12, textAlign: 'center', lineHeight: 17 },
+  card: { backgroundColor: theme.colors.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, padding: 12, marginTop: 10 },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  cardTitle: { color: theme.colors.text, fontSize: 14, fontWeight: '800', flex: 1 },
+  statusChip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  statusTxt: { fontSize: 10, fontWeight: '800' },
+  cardSym: { color: theme.colors.textDim, fontSize: 11, marginTop: 4 },
+  levels: { flexDirection: 'row', marginTop: 10, gap: 6 },
+  lvLabel: { color: theme.colors.textFaint, fontSize: 9, marginBottom: 2 },
+  lvVal: { color: theme.colors.text, fontSize: 13, fontWeight: '700' },
+  detail: { borderTopWidth: 1, borderTopColor: theme.colors.border, marginTop: 10, paddingTop: 8 },
+  blockers: { color: theme.colors.loss, fontSize: 11, marginBottom: 6, lineHeight: 15 },
+  reason: { color: theme.colors.textDim, fontSize: 11, lineHeight: 16, marginBottom: 3 },
+  invalidation: { color: theme.colors.primary, fontSize: 11, marginTop: 4, lineHeight: 15 },
+  meta: { color: theme.colors.textFaint, fontSize: 10, marginTop: 6 },
+  buyBtn: { backgroundColor: theme.colors.buy, borderRadius: 8, paddingVertical: 10, alignItems: 'center', marginTop: 10 },
   buyTxt: { color: '#0B0E11', fontSize: 13, fontWeight: '800' },
   disclaimer: { color: theme.colors.textFaint, fontSize: 10, lineHeight: 15, marginTop: 14 },
 });
