@@ -1,5 +1,5 @@
 import * as WebBrowser from 'expo-web-browser';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -45,6 +45,7 @@ export function BrokersScreen() {
   const fyersConnected = !!fyers.accessToken;
   const deltaConnected = !!delta.apiKey && !!delta.apiSecret;
   const [authOpen, setAuthOpen] = useState(false);
+  const handledRef = useRef(false);
   const insets = useSafeAreaInsets();
 
   // Exchange a captured auth code for a token and pull positions.
@@ -76,17 +77,26 @@ export function BrokersScreen() {
     }
     setFyersApp(appId, secret);
     setFyersRedirect(redirectUri);
+    handledRef.current = false;
     setAuthOpen(true);
   };
 
-  const onAuthNavigation = (url: string) => {
-    if (!url) return false;
-    const hitRedirect = url.startsWith(redirectUri) || /[?&](auth_code|code)=/.test(url);
-    if (!hitRedirect) return true;
+  /**
+   * Capture the auth_code from any WebView URL. Fires from onLoadStart /
+   * onNavigationStateChange / onShouldStartLoadWithRequest — whichever the
+   * platform delivers first — and is idempotent via handledRef. Returns false
+   * only when it recognises the redirect (so the dead 127.0.0.1 load is
+   * skipped); true otherwise so the real Fyers login pages keep navigating.
+   */
+  const captureFromUrl = (url: string | undefined): boolean => {
+    if (!url || handledRef.current) return true;
+    const isRedirect = url.startsWith(redirectUri) || /[?&]auth_code=/i.test(url);
+    if (!isRedirect) return true;
+    handledRef.current = true;
     const code = parseAuthCode(url);
     setAuthOpen(false);
     if (code) void finishLogin(code);
-    else setLocalErr('Login returned no auth code — check the redirect URI matches your Fyers app.');
+    else setLocalErr('Login finished but no auth_code was found in the redirect URL. Use the manual paste flow below.');
     return false;
   };
 
@@ -233,9 +243,16 @@ export function BrokersScreen() {
             <WebView
               source={{ uri: buildAuthUrl(appId, redirectUri) }}
               incognito
-              onShouldStartLoadWithRequest={(req) => onAuthNavigation(req.url)}
-              onNavigationStateChange={(nav) => {
-                onAuthNavigation(nav.url);
+              originWhitelist={['*']}
+              javaScriptEnabled
+              domStorageEnabled
+              // Capture from every callback the platform may deliver first.
+              onShouldStartLoadWithRequest={(req) => captureFromUrl(req.url)}
+              onLoadStart={(e) => captureFromUrl(e.nativeEvent.url)}
+              onNavigationStateChange={(nav) => captureFromUrl(nav.url)}
+              onError={(e) => {
+                // A failed load of the 127.0.0.1 redirect still carries the URL.
+                captureFromUrl(e.nativeEvent.url);
               }}
               startInLoadingState
               renderLoading={() => (

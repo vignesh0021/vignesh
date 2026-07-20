@@ -49,9 +49,14 @@ export function buildAuthUrl(appId: string, redirectUri: string, state = 'tlh'):
 export function parseAuthCode(input: string): string | null {
   const raw = input.trim();
   if (!raw) return null;
-  // Try to pull auth_code / code out of a URL or query string.
-  const m = raw.match(/[?&](?:auth_code|code)=([^&#\s]+)/i);
-  if (m) return decodeURIComponent(m[1]);
+  // Prefer the real auth_code — the Fyers redirect ALSO carries `code=200`
+  // (an HTTP-ish status), so a naive `code=` match would grab "200".
+  const authMatch = raw.match(/[?&]auth_code=([^&#\s]+)/i);
+  if (authMatch) return decodeURIComponent(authMatch[1]);
+  // A bare `code=` only counts when there's no auth_code and it isn't the
+  // numeric status code (guard against `code=200`).
+  const codeMatch = raw.match(/[?&]code=([^&#\s]+)/i);
+  if (codeMatch && !/^\d{1,3}$/.test(codeMatch[1])) return decodeURIComponent(codeMatch[1]);
   // Otherwise treat the whole thing as the code, unless it's clearly a URL.
   if (/^https?:\/\//i.test(raw)) return null;
   return raw;
