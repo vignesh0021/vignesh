@@ -30,6 +30,7 @@ export interface ChainQuote {
   bid?: number;
   ask?: number;
   volume?: number;
+  oiChg?: number;
 }
 
 export interface ChainRow {
@@ -144,7 +145,7 @@ export function fyersChainToRows(
   const toQuote = (
     strike: number,
     type: OptionType,
-    q?: { symbol: string; ltp: number; chg: number; oi: number; bid?: number; ask?: number; volume?: number },
+    q?: { symbol: string; ltp: number; chg: number; oi: number; bid?: number; ask?: number; volume?: number; oiChg?: number },
   ): ChainQuote => {
     const itm = type === 'CALL' ? spot > strike : spot < strike;
     return {
@@ -160,6 +161,7 @@ export function fyersChainToRows(
       bid: q?.bid,
       ask: q?.ask,
       volume: q?.volume,
+      oiChg: q?.oiChg,
     };
   };
 

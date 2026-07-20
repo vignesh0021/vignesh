@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-nati
 
 import { getHistory, type FyersCandle } from '../services/brokers/fyers';
 import { generateBuyerSignals, type BuyerSignal } from '../services/buyerSignals';
+import { generatePureSignals } from '../services/pureScanner';
 import { liveFeed } from '../services/liveFeed';
 import { buildChain, type ChainQuote, type ChainRow } from '../services/optionChain';
 import { theme } from '../theme';
@@ -49,6 +50,7 @@ export function OptionScanner({
   const [candles, setCandles] = useState<FyersCandle[]>([]);
   const [candleSrc, setCandleSrc] = useState<'live' | 'sim'>('sim');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [mode, setMode] = useState<'pure' | 'engine'>('pure');
 
   // 5-minute candles for the signal engine (Fyers → synthetic fallback).
   useEffect(() => {
@@ -117,25 +119,37 @@ export function OptionScanner({
     }).rows;
   }, [rows, asset.symbol, spot, refSpot, defaultIv, rate, expiryIso, step]);
 
-  const scan = useMemo(
-    () =>
-      generateBuyerSignals({
-        candles,
-        rows: chainRows,
-        spot,
-        expiryIso,
-        ivPct: vix ?? defaultIv * 100,
-        lotSize: asset.lotSize,
-        equity: startingFunds + realizedPnl,
-        source: live && candleSrc === 'live' ? 'fyers' : 'sim',
-      }),
-    [candles, chainRows, spot, expiryIso, vix, defaultIv, asset.lotSize, startingFunds, realizedPnl, live, candleSrc],
-  );
+  const scan = useMemo(() => {
+    const common = {
+      candles,
+      rows: chainRows,
+      spot,
+      expiryIso,
+      ivPct: vix ?? defaultIv * 100,
+      lotSize: asset.lotSize,
+      equity: startingFunds + realizedPnl,
+      source: (live && candleSrc === 'live' ? 'fyers' : 'sim') as 'fyers' | 'sim',
+    };
+    return mode === 'pure'
+      ? generatePureSignals({ ...common, step })
+      : generateBuyerSignals(common);
+  }, [mode, candles, chainRows, spot, step, expiryIso, vix, defaultIv, asset.lotSize, startingFunds, realizedPnl, live, candleSrc]);
 
-  const ctx = scan.context;
+  const ctx: any = scan.context;
 
   return (
     <ScrollView contentContainerStyle={{ padding: 12, paddingBottom: 40 }}>
+      {/* Engine mode */}
+      <View style={styles.modeRow}>
+        {(['pure', 'engine'] as const).map((m) => (
+          <TouchableOpacity key={m} style={[styles.modeChip, mode === m && styles.modeOn]} onPress={() => setMode(m)}>
+            <Text style={[styles.modeTxt, mode === m && styles.modeTxtOn]}>
+              {m === 'pure' ? '⚡ Pure Price + OI' : 'Indicator Engine'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       {/* Gate + engine status */}
       <View style={[styles.gate, { borderColor: scan.gate.allowed ? theme.colors.profit : theme.colors.primary }]}>
         <Text style={[styles.gatePhase, { color: scan.gate.allowed ? theme.colors.profit : theme.colors.primary }]}>
@@ -148,7 +162,16 @@ export function OptionScanner({
       </View>
 
       {/* Market context strip */}
-      {ctx ? (
+      {ctx && mode === 'pure' ? (
+        <View style={styles.ctxGrid}>
+          <Ctx label="VWAP" value={fmtNum(ctx.vwap, 0)} />
+          <Ctx label="Open Range H/L" value={ctx.orh != null ? `${fmtNum(ctx.orh, 0)}/${fmtNum(ctx.orl, 0)}` : '—'} />
+          <Ctx label="Prev Day H/L" value={ctx.pdh != null ? `${fmtNum(ctx.pdh, 0)}/${fmtNum(ctx.pdl, 0)}` : '—'} />
+          <Ctx label="Range vs avg" value={`${fmtNum(ctx.avgRange ? ctx.lastRange / ctx.avgRange : 0, 2)}×`} />
+          <Ctx label="Net ΔOI (ATM)" value={ctx.oiAvailable ? `${ctx.netOiBull >= 0 ? '+' : ''}${fmtNum(ctx.netOiBull / 1000, 0)}k` : 'n/a'} />
+          <Ctx label="Exp. move" value={fmtNum(ctx.expectedMove, 0)} />
+        </View>
+      ) : ctx ? (
         <View style={styles.ctxGrid}>
           <Ctx label="EMA 9/21/50" value={`${fmtNum(ctx.ema9, 0)}/${fmtNum(ctx.ema21, 0)}/${fmtNum(ctx.ema50, 0)}`} />
           <Ctx label="RSI" value={fmtNum(ctx.rsi, 1)} />
@@ -158,7 +181,9 @@ export function OptionScanner({
           <Ctx label="RVOL" value={ctx.rvolAvailable ? fmtNum(ctx.rvol, 2) : 'n/a'} />
         </View>
       ) : (
-        <Text style={styles.warming}>Collecting 5-minute candles — signals need 55 completed bars…</Text>
+        <Text style={styles.warming}>
+          Collecting 5-minute candles — {mode === 'pure' ? 'pure signals need 25' : 'engine needs 55'} completed bars…
+        </Text>
       )}
 
       {/* Signals */}
@@ -183,8 +208,10 @@ export function OptionScanner({
       ))}
 
       <Text style={styles.disclaimer}>
-        Engine: Trend Breakout / Breakdown / VWAP Reclaim on completed 5-min bars, ported from your
-        nifty-options-buyer project. Signals are for paper-trading practice — not investment advice.
+        {mode === 'pure'
+          ? 'Pure engine: opening-range / structure breaks + session VWAP + range-expansion momentum + OI-change confirmation on completed 5-min bars. No lagging indicators. ACTIVE only when all align — high bar by design.'
+          : 'Indicator engine: Trend Breakout / Breakdown / VWAP Reclaim, ported from your nifty-options-buyer project.'}
+        {'  '}For paper-trading practice — not investment advice.
       </Text>
     </ScrollView>
   );
@@ -278,6 +305,11 @@ function Lv({ label, value, color }: { label: string; value: string; color?: str
 }
 
 const styles = StyleSheet.create({
+  modeRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  modeChip: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 10, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border },
+  modeOn: { backgroundColor: theme.colors.primaryDim, borderColor: theme.colors.primary },
+  modeTxt: { color: theme.colors.textDim, fontSize: 12, fontWeight: '700' },
+  modeTxtOn: { color: theme.colors.text },
   gate: { backgroundColor: theme.colors.surface, borderRadius: 10, borderWidth: 1, padding: 10 },
   gatePhase: { fontSize: 12, fontWeight: '800' },
   gateReason: { color: theme.colors.textDim, fontSize: 11, marginTop: 3 },

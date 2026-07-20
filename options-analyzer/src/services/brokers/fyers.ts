@@ -116,6 +116,7 @@ export interface FyersChainQuote {
   bid: number;
   ask: number;
   volume: number;
+  oiChg: number; // change in open interest vs previous snapshot (contracts)
 }
 
 export interface FyersOptionChain {
@@ -185,6 +186,7 @@ export async function getOptionChain(
       bid: Number(it?.bid) || 0,
       ask: Number(it?.ask) || 0,
       volume: Number(it?.volume) || 0,
+      oiChg: Number(it?.oich) || 0,
     };
     const row = byStrike.get(strike) ?? { strike };
     if (ot === 'CE') row.call = quote;

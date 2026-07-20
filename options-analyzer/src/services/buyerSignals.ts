@@ -152,11 +152,12 @@ export interface ScannerContract {
   delta: number;
   theta: number;
   oi: number;
+  oiChg: number;
   volume: number;
   estimated: boolean; // true when bid/ask/volume were synthesised (sim mode)
 }
 
-function buildContracts(rows: ChainRow[]): ScannerContract[] {
+export function buildContracts(rows: ChainRow[]): ScannerContract[] {
   const out: ScannerContract[] = [];
   for (const row of rows) {
     for (const [q, optType] of [
@@ -180,6 +181,7 @@ function buildContracts(rows: ChainRow[]): ScannerContract[] {
         delta: q.greeks.delta,
         theta: q.greeks.theta,
         oi: q.oiLacs * 1e5,
+        oiChg: q.oiChg ?? 0,
         volume: q.volume != null && q.volume > 0 ? q.volume : estimated ? 15000 : 0,
         estimated,
       });
@@ -242,7 +244,7 @@ export function marketGate(source: 'fyers' | 'sim', expiryIso: string): MarketGa
 const MAX_RISK_PER_TRADE_PCT = 0.75;
 const MAX_PREMIUM_EXPOSURE_PCT = 12;
 
-function positionSize(equity: number, lotSize: number, ask: number, stopLoss: number) {
+export function positionSize(equity: number, lotSize: number, ask: number, stopLoss: number) {
   const perUnitRisk = Math.max(ask - stopLoss, ask * 0.18, 0.05);
   const riskBudget = (equity * MAX_RISK_PER_TRADE_PCT) / 100;
   const riskLots = Math.max(0, Math.floor(riskBudget / (perUnitRisk * lotSize)));
