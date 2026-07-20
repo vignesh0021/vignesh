@@ -4,24 +4,25 @@
  */
 export const theme = {
   colors: {
-    bg: '#0B0E11',
-    surface: '#141A20',
-    surfaceAlt: '#1B222B',
-    border: '#242D38',
-    primary: '#F7941E', // Delta orange
-    primaryDim: '#7a4c12',
-    text: '#F2F4F6',
-    textDim: '#8A94A0',
-    textFaint: '#5B6572',
-    profit: '#16C784', // green / cyan expiry-favourable
+    bg: '#0A0A0C', // near-black
+    surface: '#141416',
+    surfaceAlt: '#1C1C20',
+    border: '#2A2A30',
+    primary: '#FF3B47', // glowing red brand accent
+    primaryDim: '#2A1013', // dark red tint for active fills
+    text: '#F5F6F8',
+    textDim: '#8A8E97',
+    textFaint: '#5B5E66',
+    profit: '#16C784', // up / buy — kept distinct from the brand red
     profitLine: '#25D0A5',
-    loss: '#EA3943', // red
-    expiryLine: '#F7941E', // orange expiry curve
-    t0Line: '#25D0A5', // green/cyan T+0 curve
+    loss: '#F6465D', // down / sell (slightly brighter than brand so numbers read as loss)
+    expiryLine: '#FF3B47',
+    t0Line: '#25D0A5',
     buy: '#16C784',
-    sell: '#EA3943',
-    grid: '#20272F',
-    crosshair: '#F2F4F6',
+    sell: '#F6465D',
+    grid: '#1E1E24',
+    crosshair: '#F5F6F8',
+    glow: '#FF3B47',
   },
   spacing: (n: number) => n * 4,
   radius: { sm: 6, md: 10, lg: 16 },

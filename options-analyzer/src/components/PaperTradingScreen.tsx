@@ -25,8 +25,8 @@ import { PaperOrders, PaperPositions } from './PaperPositions';
 import { OptionScanner } from './OptionScanner';
 import { PaperStrategyDeploy } from './PaperStrategyDeploy';
 import { PriceChart } from './PriceChart';
+import { SectionNav } from './SectionNav';
 import { StrategyDeploySheet, type ResolvedLeg } from './StrategyDeploySheet';
-import { TabGrid } from './TabGrid';
 
 type SubTab = 'CHAIN' | 'CHART' | 'SCANNER' | 'STRATEGY' | 'POSITIONS' | 'ORDERS' | 'JOURNAL';
 
@@ -347,23 +347,21 @@ export function PaperTradingScreen() {
         <Text style={styles.chainHint}>Connecting to Fyers option chain…</Text>
       ) : null}
 
-      {/* Sub tabs — tap-to-open grid */}
-      <View style={styles.subTabsWrap}>
-        <TabGrid
-          columns={4}
-          active={subTab}
-          onSelect={(k) => setSubTab(k as SubTab)}
-          items={[
-            { key: 'CHAIN', label: 'Chain', icon: '⛓️' },
-            { key: 'CHART', label: 'Chart', icon: '📈' },
-            { key: 'SCANNER', label: 'Scanner', icon: '🔍' },
-            { key: 'STRATEGY', label: 'Strategy', icon: '🎯' },
-            { key: 'POSITIONS', label: positions.length ? `Positions ${positions.length}` : 'Positions', icon: '📂' },
-            { key: 'ORDERS', label: 'Orders', icon: '🧾' },
-            { key: 'JOURNAL', label: 'Journal', icon: '📊' },
-          ]}
-        />
-      </View>
+      {/* Collapsible sub-nav — the selected view runs full-screen below */}
+      <SectionNav
+        columns={4}
+        active={subTab}
+        onSelect={(k) => setSubTab(k as SubTab)}
+        items={[
+          { key: 'CHAIN', label: 'Chain', icon: '⛓️' },
+          { key: 'CHART', label: 'Chart', icon: '📈' },
+          { key: 'SCANNER', label: 'Scanner', icon: '🔍' },
+          { key: 'STRATEGY', label: 'Strategy', icon: '🎯' },
+          { key: 'POSITIONS', label: positions.length ? `Positions ${positions.length}` : 'Positions', icon: '📂' },
+          { key: 'ORDERS', label: 'Orders', icon: '🧾' },
+          { key: 'JOURNAL', label: 'Journal', icon: '📊' },
+        ]}
+      />
 
       {subTab === 'CHAIN' ? (
         <OptionChain

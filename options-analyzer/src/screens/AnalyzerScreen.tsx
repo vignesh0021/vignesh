@@ -13,8 +13,8 @@ import { PositionList } from '../components/PositionList';
 import { PositionSheet } from '../components/PositionSheet';
 import { RiskMatrix } from '../components/RiskMatrix';
 import { SimulationPanel } from '../components/SimulationPanel';
+import { SectionNav } from '../components/SectionNav';
 import { StrategyLibrary } from '../components/StrategyLibrary';
-import { TabGrid } from '../components/TabGrid';
 import { TestingEngine } from '../components/TestingEngine';
 import { theme } from '../theme';
 import type { OptionPosition } from '../types';
@@ -126,10 +126,8 @@ export function AnalyzerScreen() {
         </View>
       ) : null}
 
-      {/* Tabs — tap-to-open grid */}
-      <View style={styles.tabBarWrap}>
-        <TabGrid columns={4} active={tab} onSelect={(k) => setTab(k as Tab)} items={TAB_ITEMS} />
-      </View>
+      {/* Collapsible section nav — content runs full-screen below */}
+      <SectionNav columns={4} active={tab} onSelect={(k) => setTab(k as Tab)} items={TAB_ITEMS} />
 
       {tab === 'PAPER' ? (
         <PaperTradingScreen />
