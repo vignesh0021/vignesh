@@ -44,7 +44,7 @@ const COLOR = {
 };
 
 /** Random-walk candles ending at the current spot — offline/demo tape. */
-function synthCandles(spot: number, bucketSec: number, iv: number, n = MAX_BARS): FyersCandle[] {
+export function synthCandles(spot: number, bucketSec: number, iv: number, n = MAX_BARS): FyersCandle[] {
   const dtYears = bucketSec / (365 * 24 * 3600);
   const step = Math.max(iv, 0.05) * Math.sqrt(dtYears) * 2;
   const now = Math.floor(Date.now() / 1000);

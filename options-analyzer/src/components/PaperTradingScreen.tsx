@@ -22,11 +22,12 @@ import { OptionChain } from './OptionChain';
 import { OrderTicket } from './OrderTicket';
 import { PaperJournal } from './PaperJournal';
 import { PaperOrders, PaperPositions } from './PaperPositions';
+import { OptionScanner } from './OptionScanner';
 import { PaperStrategyDeploy } from './PaperStrategyDeploy';
 import { PriceChart } from './PriceChart';
 import { StrategyDeploySheet, type ResolvedLeg } from './StrategyDeploySheet';
 
-type SubTab = 'CHAIN' | 'CHART' | 'STRATEGY' | 'POSITIONS' | 'ORDERS' | 'JOURNAL';
+type SubTab = 'CHAIN' | 'CHART' | 'SCANNER' | 'STRATEGY' | 'POSITIONS' | 'ORDERS' | 'JOURNAL';
 
 /**
  * Paper Trading — a live option chain (Market-Pulse style) wired to a virtual
@@ -348,20 +349,22 @@ export function PaperTradingScreen() {
       {/* Sub tabs */}
       <View style={styles.subTabsWrap}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.subTabs}>
-          {(['CHAIN', 'CHART', 'STRATEGY', 'POSITIONS', 'ORDERS', 'JOURNAL'] as SubTab[]).map((t) => (
+          {(['CHAIN', 'CHART', 'SCANNER', 'STRATEGY', 'POSITIONS', 'ORDERS', 'JOURNAL'] as SubTab[]).map((t) => (
             <TouchableOpacity key={t} style={styles.subTab} onPress={() => setSubTab(t)}>
               <Text style={[styles.subTabTxt, subTab === t && styles.subTabTxtOn]}>
                 {t === 'CHAIN'
                   ? 'Chain'
                   : t === 'CHART'
                     ? '📈 Chart'
-                    : t === 'STRATEGY'
-                      ? 'Strategy'
-                      : t === 'POSITIONS'
-                        ? `Positions${positions.length ? ` (${positions.length})` : ''}`
-                        : t === 'ORDERS'
-                          ? 'Orders'
-                          : 'Journal'}
+                    : t === 'SCANNER'
+                      ? '🔍 Scanner'
+                      : t === 'STRATEGY'
+                        ? 'Strategy'
+                        : t === 'POSITIONS'
+                          ? `Positions${positions.length ? ` (${positions.length})` : ''}`
+                          : t === 'ORDERS'
+                            ? 'Orders'
+                            : 'Journal'}
               </Text>
               {subTab === t ? <View style={styles.subUnderline} /> : null}
             </TouchableOpacity>
@@ -384,6 +387,16 @@ export function PaperTradingScreen() {
         />
       ) : subTab === 'CHART' ? (
         <PriceChart />
+      ) : subTab === 'SCANNER' ? (
+        <OptionScanner
+          rows={realChain ? fyersRows : null}
+          live={realChain}
+          spot={spot}
+          refSpot={refSpot > 0 ? refSpot : spot}
+          step={step}
+          expiryIso={expiryIso}
+          onTrade={onSelect}
+        />
       ) : subTab === 'STRATEGY' ? (
         <PaperStrategyDeploy live={realChain} onDeploy={requestDeploy} />
       ) : subTab === 'JOURNAL' ? (
