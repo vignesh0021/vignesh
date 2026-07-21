@@ -55,5 +55,6 @@ class SettingsRepository @Inject constructor(
     suspend fun setWorkingHoursEnabled(enabled: Boolean) = dataStoreManager.updateWorkingHoursEnabled(enabled)
     suspend fun setWorkStartHour(hour: Int) = dataStoreManager.updateWorkStartHour(hour)
     suspend fun setWorkEndHour(hour: Int) = dataStoreManager.updateWorkEndHour(hour)
+    suspend fun setAutoAccept(enabled: Boolean) = dataStoreManager.updateAutoAccept(enabled)
     suspend fun updateLastHeartbeat() = dataStoreManager.updateLastHeartbeat()
 }

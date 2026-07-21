@@ -107,6 +107,10 @@ class HomeViewModel @Inject constructor(
         settingsRepository.setWorkEndHour(hour)
     }
 
+    fun setAutoAccept(enabled: Boolean) = viewModelScope.launch {
+        settingsRepository.setAutoAccept(enabled)
+    }
+
     fun triggerTestAlert() = viewModelScope.launch {
         val settings = settingsRepository.appSettings.first()
         alertManager.triggerTestAlert(settings)

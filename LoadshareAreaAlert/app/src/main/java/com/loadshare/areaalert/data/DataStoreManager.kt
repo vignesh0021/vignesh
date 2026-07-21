@@ -44,6 +44,10 @@ class DataStoreManager @Inject constructor(
         val WORK_START_HOUR = intPreferencesKey("work_start_hour")
         val WORK_END_HOUR = intPreferencesKey("work_end_hour")
         val LAST_SERVICE_HEARTBEAT = longPreferencesKey("last_service_heartbeat")
+        val AUTO_ACCEPT = booleanPreferencesKey("auto_accept_orders")
+        // Licensing
+        val LICENSE_KEY = stringPreferencesKey("license_key")
+        val LAST_SEEN_EPOCH_DAY = longPreferencesKey("last_seen_epoch_day")
     }
 
     val appSettings: Flow<AppSettings> = context.dataStore.data
@@ -64,7 +68,8 @@ class DataStoreManager @Inject constructor(
                 maxDistanceKm = prefs[Keys.MAX_DISTANCE] ?: 0,
                 workingHoursEnabled = prefs[Keys.WORKING_HOURS_ENABLED] ?: false,
                 workStartHour = prefs[Keys.WORK_START_HOUR] ?: 8,
-                workEndHour = prefs[Keys.WORK_END_HOUR] ?: 21
+                workEndHour = prefs[Keys.WORK_END_HOUR] ?: 21,
+                autoAcceptEnabled = prefs[Keys.AUTO_ACCEPT] ?: false
             )
         }
 
@@ -243,6 +248,31 @@ class DataStoreManager @Inject constructor(
 
     suspend fun updateLastHeartbeat() {
         context.dataStore.edit { it[Keys.LAST_SERVICE_HEARTBEAT] = System.currentTimeMillis() }
+    }
+
+    suspend fun updateAutoAccept(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.AUTO_ACCEPT] = enabled }
+    }
+
+    // ── Licensing ──────────────────────────────────────────────────────────────
+    val licenseKey: Flow<String> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { prefs -> prefs[Keys.LICENSE_KEY] ?: "" }
+
+    suspend fun updateLicenseKey(key: String) {
+        context.dataStore.edit { it[Keys.LICENSE_KEY] = key }
+    }
+
+    val lastSeenEpochDay: Flow<Long> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { prefs -> prefs[Keys.LAST_SEEN_EPOCH_DAY] ?: 0L }
+
+    // Advances the anti-rollback high-water mark; never moves it backwards.
+    suspend fun bumpLastSeenEpochDay(today: Long) {
+        context.dataStore.edit { prefs ->
+            val stored = prefs[Keys.LAST_SEEN_EPOCH_DAY] ?: 0L
+            if (today > stored) prefs[Keys.LAST_SEEN_EPOCH_DAY] = today
+        }
     }
 
     private fun parseAlertHistory(json: String): List<AlertRecord> {

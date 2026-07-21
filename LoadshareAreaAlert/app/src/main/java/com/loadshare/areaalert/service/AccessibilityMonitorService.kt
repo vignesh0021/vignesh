@@ -16,7 +16,9 @@ import androidx.core.app.NotificationCompat
 import com.loadshare.areaalert.MainActivity
 import com.loadshare.areaalert.R
 import com.loadshare.areaalert.alert.AlertManager
+import com.loadshare.areaalert.alert.OrderTextParser
 import com.loadshare.areaalert.data.SettingsRepository
+import com.loadshare.areaalert.license.LicenseManager
 import com.loadshare.areaalert.model.AppSettings
 import com.loadshare.areaalert.model.Keyword
 import dagger.hilt.android.AndroidEntryPoint
@@ -30,6 +32,7 @@ class AccessibilityMonitorService : AccessibilityService() {
 
     @Inject lateinit var alertManager: AlertManager
     @Inject lateinit var settingsRepository: SettingsRepository
+    @Inject lateinit var licenseManager: LicenseManager
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var currentSettings: AppSettings = AppSettings()
@@ -46,6 +49,9 @@ class AccessibilityMonitorService : AccessibilityService() {
         // Separate debounce for list-card filtering — one card dismissed per interval,
         // then the list re-renders and the next event triggers the next dismissal.
         private const val ORDER_LIST_FILTER_DEBOUNCE_MS = 800L
+        // Auto-accept is a one-shot action per order; a longer debounce prevents
+        // double-taps while the accept animation plays.
+        private const val AUTO_ACCEPT_DEBOUNCE_MS = 3000L
 
         // These packages must never trigger alerts — system UI and OEM launchers
         // cause feedback loops (notification shade text re-read as new order content)
@@ -109,6 +115,7 @@ class AccessibilityMonitorService : AccessibilityService() {
     private var lastAutoDismissCheck = 0L
     private var lastOrderListFilterTime = 0L
     private var lastHeartbeatWrite = 0L
+    private var lastAutoAcceptTime = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -134,6 +141,8 @@ class AccessibilityMonitorService : AccessibilityService() {
         try {
         event ?: return
         if (!currentSettings.isMonitoringActive) return
+        // License gate: no alerts, dismissal, or auto-accept without a valid subscription
+        if (!licenseManager.isCurrentlyActive()) return
         if (currentSettings.workingHoursEnabled && !isWithinWorkingHours()) return
 
         val packageName = event.packageName?.toString() ?: ""
@@ -206,6 +215,26 @@ class AccessibilityMonitorService : AccessibilityService() {
                     }
                     rootNode.recycle()
                     return
+                }
+            }
+        }
+
+        // ── Auto-accept preferred orders ─────────────────────────────────────
+        // When enabled, taps "Choose Order"/"Accept" automatically for a SINGLE-order
+        // popup that matches a preferred area and passes the amount/distance filters.
+        // Never runs on list screens (multiple cards) — we can't know which to accept.
+        // After clicking we fall through so the order is still alerted and logged.
+        if (currentSettings.autoAcceptEnabled && !processedAsListScreen && enabledKeywords.isNotEmpty()) {
+            val nowAccept = System.currentTimeMillis()
+            if (nowAccept - lastAutoAcceptTime >= AUTO_ACCEPT_DEBOUNCE_MS) {
+                val fullText = extractTextFromNode(rootNode)
+                if (!looksLikeOrderListScreen(fullText) && looksLikeOrderPopup(fullText)) {
+                    val hasInclude = enabledKeywords.any { fullText.contains(it, ignoreCase = true) }
+                    val hasExclude = excludedKeywords.any { fullText.contains(it, ignoreCase = true) }
+                    if (hasInclude && !hasExclude && passesOrderFilters(fullText)) {
+                        lastAutoAcceptTime = nowAccept
+                        clickAcceptButton(rootNode)
+                    }
                 }
             }
         }
@@ -402,6 +431,53 @@ class AccessibilityMonitorService : AccessibilityService() {
             }
         }
         return null
+    }
+
+    // Checks the amount/distance filters against a popup's text before auto-accepting.
+    private fun passesOrderFilters(text: String): Boolean {
+        val minAmt = currentSettings.minAmountRupees
+        if (minAmt > 0) {
+            val amt = OrderTextParser.parseAmountValue(OrderTextParser.extractAmount(text) ?: "")
+            if (amt in 1 until minAmt) return false
+        }
+        val maxDist = currentSettings.maxDistanceKm
+        if (maxDist > 0) {
+            val dist = OrderTextParser.parseDistanceValue(OrderTextParser.extractDistance(text) ?: "")
+            if (dist > 0 && dist > maxDist) return false
+        }
+        return true
+    }
+
+    // Finds the accept/choose button and clicks it (or its nearest clickable ancestor).
+    private fun clickAcceptButton(rootNode: AccessibilityNodeInfo): Boolean {
+        for (anchorText in CARD_ANCHOR_TEXTS) {
+            val anchors = rootNode.findAccessibilityNodeInfosByText(anchorText) ?: continue
+            for (anchor in anchors) {
+                val clicked = clickNodeOrAncestor(anchor)
+                anchor.recycle()
+                if (clicked) return true
+            }
+        }
+        return false
+    }
+
+    private fun clickNodeOrAncestor(node: AccessibilityNodeInfo): Boolean {
+        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        var parent = node.parent
+        var climbs = 0
+        while (parent != null && climbs < 4) {
+            if (parent.isClickable) {
+                val ok = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                parent.recycle()
+                return ok
+            }
+            val gp = parent.parent
+            parent.recycle()
+            parent = gp
+            climbs++
+        }
+        parent?.recycle()
+        return false
     }
 
     // Dispatches a real tap at screen coordinates — works even when the target view

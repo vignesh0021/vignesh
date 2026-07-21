@@ -34,15 +34,22 @@ object OrderTextParser {
     fun parseDistanceValue(distanceStr: String): Double =
         Regex("""(\d+\.?\d*)""").find(distanceStr)?.value?.toDoubleOrNull() ?: 0.0
 
+    // Loadshare (and many delivery apps) show TWO distances on one card: distance to
+    // pickup and distance to drop. We return the LARGEST value so the max-distance
+    // filter compares against the farthest leg of the trip, not just proximity to pickup.
     fun extractDistance(text: String): String? {
         val pattern = Regex("""(\d+\.?\d*)\s*(km|kilometer|kilometers|kms|mi|miles)""", RegexOption.IGNORE_CASE)
-        return pattern.find(text)?.value
+        val matches = pattern.findAll(text).toList()
+        if (matches.isEmpty()) return null
+        return matches.maxByOrNull { it.groupValues[1].toDoubleOrNull() ?: 0.0 }?.value
     }
 
     fun extractAmount(text: String): String? {
         val patterns = listOf(
-            // Loadshare "₹55 + ₹25" (base + incentive) — match full expression first
-            Regex("""₹\s*\d+\.?\d*\s*\+\s*₹\s*\d+\.?\d*"""),
+            // Loadshare "₹55 + ₹25" (base + incentive) — match full expression first.
+            // Separator restricted to spaces/tabs (no newlines) so it can't greedily
+            // span across an entire card and stitch two unrelated amounts together.
+            Regex("""₹\s*\d+\.?\d*[ \t]*\+[ \t]*₹\s*\d+\.?\d*"""),
             Regex("""₹\s*(\d+\.?\d*)"""),
             Regex("""Rs\.?\s*(\d+\.?\d*)""", RegexOption.IGNORE_CASE),
             Regex("""(\d+\.?\d*)\s*₹"""),

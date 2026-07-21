@@ -33,11 +33,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.loadshare.areaalert.license.LicenseStatus
 import com.loadshare.areaalert.ui.theme.AlertBorder
 import com.loadshare.areaalert.ui.theme.PrimaryGreen
 import com.loadshare.areaalert.ui.theme.SuccessGreen
 import com.loadshare.areaalert.ui.theme.WarningAmber
 import com.loadshare.areaalert.viewmodel.HomeViewModel
+import com.loadshare.areaalert.viewmodel.LicenseViewModel
+import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -121,6 +124,8 @@ fun HomeScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            SubscriptionStatusRow()
+
             MonitoringStatusCard(
                 isMonitoringActive = settings.isMonitoringActive,
                 accessibilityEnabled = accessibilityEnabled,
@@ -211,8 +216,10 @@ fun HomeScreen(
             SmartFilterCard(
                 autoDismissEnabled = settings.autoDismissNonAreaOrders,
                 matchDropOnly = settings.matchDropLocationOnly,
+                autoAcceptEnabled = settings.autoAcceptEnabled,
                 onAutoDismissToggle = { viewModel.setAutoDismiss(it) },
-                onMatchDropOnlyToggle = { viewModel.setMatchDropOnly(it) }
+                onMatchDropOnlyToggle = { viewModel.setMatchDropOnly(it) },
+                onAutoAcceptToggle = { viewModel.setAutoAccept(it) }
             )
 
             OrderFiltersCard(
@@ -236,6 +243,43 @@ fun HomeScreen(
             )
 
             Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+// Compact subscription banner: shows days remaining and warns as expiry nears.
+@Composable
+private fun SubscriptionStatusRow(licenseViewModel: LicenseViewModel = hiltViewModel()) {
+    val status by licenseViewModel.status.collectAsState()
+    val active = status as? LicenseStatus.Active ?: return
+
+    val daysLeft = (active.expiryEpochDay - LocalDate.now().toEpochDay()).coerceAtLeast(0)
+    val nearExpiry = daysLeft <= 5
+    val tint = if (nearExpiry) WarningAmber else SuccessGreen
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = tint.copy(alpha = 0.10f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    if (nearExpiry) "Subscription ending soon" else "Subscription active",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "$daysLeft day${if (daysLeft == 1L) "" else "s"} left · expires ${licenseViewModel.expiryText(active.expiryEpochDay)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
         }
     }
 }
@@ -544,8 +588,10 @@ private fun AlertSettingsCard(
 private fun SmartFilterCard(
     autoDismissEnabled: Boolean,
     matchDropOnly: Boolean,
+    autoAcceptEnabled: Boolean,
     onAutoDismissToggle: (Boolean) -> Unit,
-    onMatchDropOnlyToggle: (Boolean) -> Unit
+    onMatchDropOnlyToggle: (Boolean) -> Unit,
+    onAutoAcceptToggle: (Boolean) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -603,6 +649,43 @@ private fun SmartFilterCard(
                             text = "Example: keyword \"ECR\" will alert for orders that DELIVER to ECR, but skip orders that only PICKUP from ECR and deliver elsewhere.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            SettingsToggleRow(
+                icon = Icons.Default.FlashOn,
+                title = "Auto-Accept Orders",
+                subtitle = "Automatically tap Accept for preferred-area orders that pass your filters. Use with care.",
+                checked = autoAcceptEnabled,
+                onCheckedChange = onAutoAcceptToggle
+            )
+
+            AnimatedVisibility(visible = autoAcceptEnabled) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = WarningAmber.copy(alpha = 0.12f)
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = WarningAmber,
+                            modifier = Modifier.size(16.dp).padding(top = 2.dp)
+                        )
+                        Text(
+                            text = "The app will TAKE these orders for you automatically. It only acts on single-order popups that match your keywords and pass the amount/distance filters — never on the list screen. Keep your keywords and filters tight.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
                         )
                     }
                 }

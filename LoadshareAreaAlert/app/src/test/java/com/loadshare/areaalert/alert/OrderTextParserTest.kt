@@ -168,6 +168,19 @@ class OrderTextParserTest {
     }
 
     @Test
+    fun `distance returns the largest of multiple values`() {
+        // Loadshare card shows pickup distance and drop distance — take the farthest
+        assertEquals("4.2 km", OrderTextParser.extractDistance("2.8 km\n4.2 km"))
+        assertEquals("3.6 km", OrderTextParser.extractDistance("1.9 km ... 3.6 km"))
+    }
+
+    @Test
+    fun `compound amount does not span across newlines`() {
+        // Two unrelated amounts on separate lines must NOT be stitched into a sum
+        assertEquals("₹87", OrderTextParser.extractAmount("₹87\nsome text\n₹40"))
+    }
+
+    @Test
     fun `distance value parsed as double`() {
         assertEquals(2.3, OrderTextParser.parseDistanceValue("2.3 km"), 0.001)
         assertEquals(0.0, OrderTextParser.parseDistanceValue("N/A"), 0.001)
