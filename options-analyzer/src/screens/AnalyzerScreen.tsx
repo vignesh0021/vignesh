@@ -13,6 +13,7 @@ import { PositionList } from '../components/PositionList';
 import { PositionSheet } from '../components/PositionSheet';
 import { RiskMatrix } from '../components/RiskMatrix';
 import { SimulationPanel } from '../components/SimulationPanel';
+import { AnalyticsScreen } from '../components/AnalyticsScreen';
 import { BottomTabBar } from '../components/BottomTabBar';
 import { StrategyLibrary } from '../components/StrategyLibrary';
 import { TestingEngine } from '../components/TestingEngine';
@@ -30,7 +31,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const logo = require('../../assets/icon.png');
 
-type Tab = 'PAPER' | 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'STRATEGY' | 'BACKTEST' | 'BROKERS';
+type Tab = 'PAPER' | 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'STRATEGY' | 'BACKTEST' | 'BROKERS' | 'ANALYTICS';
 
 // Kite/Dhan-style bottom nav: 4 primary slots + a "More" sheet for the rest.
 const PRIMARY_TABS: { key: Tab; label: string; icon: string }[] = [
@@ -40,6 +41,7 @@ const PRIMARY_TABS: { key: Tab; label: string; icon: string }[] = [
   { key: 'STRATEGY', label: 'Strategy', icon: '🎯' },
 ];
 const MORE_TABS: { key: Tab; label: string; icon: string }[] = [
+  { key: 'ANALYTICS', label: 'Analytics', icon: '📊' },
   { key: 'BROKERS', label: 'Brokers', icon: '🔗' },
   { key: 'GREEKS', label: 'Greeks', icon: 'Δ' },
   { key: 'PNL', label: 'PNL Table', icon: '🧮' },
@@ -66,6 +68,10 @@ export function AnalyzerScreen() {
   const refreshMarket = usePortfolioStore((s) => s.refreshMarket);
 
   const currency = asset.currency;
+  // The classic analyzer views (payoff/pnl/greeks/positions) share the risk
+  // matrix + Add-Contract FAB; the full-screen sections (Paper, Analytics,
+  // Brokers, Strategy, Backtest) don't.
+  const analyzerTab = tab === 'PAYOFF' || tab === 'PNL' || tab === 'GREEKS' || tab === 'POSITIONS';
 
   useEffect(() => {
     refreshMarket().catch(() => {});
@@ -118,9 +124,9 @@ export function AnalyzerScreen() {
         </TouchableOpacity>
       </View>
 
-      {tab !== 'PAPER' ? <RiskMatrix risk={risk} currency={currency} /> : null}
+      {analyzerTab ? <RiskMatrix risk={risk} currency={currency} /> : null}
 
-      {tab !== 'PAPER' && mixedUnderlyings ? (
+      {analyzerTab && mixedUnderlyings ? (
         <View style={styles.warn}>
           <Text style={styles.warnTxt}>
             ⚠ Legs span multiple underlyings — the payoff plots them on one price axis, so combined
@@ -131,6 +137,8 @@ export function AnalyzerScreen() {
 
       {tab === 'PAPER' ? (
         <PaperTradingScreen />
+      ) : tab === 'ANALYTICS' ? (
+        <AnalyticsScreen />
       ) : tab === 'BACKTEST' ? (
         <TestingEngine />
       ) : tab === 'BROKERS' ? (
@@ -173,7 +181,7 @@ export function AnalyzerScreen() {
         </ScrollView>
       )}
 
-      {tab !== 'PAPER' && tab !== 'BACKTEST' && tab !== 'STRATEGY' && tab !== 'BROKERS' ? (
+      {analyzerTab ? (
         <TouchableOpacity style={[styles.fab, { bottom: insets.bottom + 74 }]} onPress={openAdd} activeOpacity={0.85}>
           <Text style={styles.fabTxt}>＋ Add Contract</Text>
         </TouchableOpacity>
