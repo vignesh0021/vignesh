@@ -1,0 +1,14 @@
+{
+  "BRICK":     { "pricePerUnit": 9.0,     "source": "Market feed 2026-07" },
+  "CEMENT":    { "pricePerUnit": 425.0,   "source": "Market feed 2026-07" },
+  "SAND":      { "pricePerUnit": 1680.0,  "source": "Market feed 2026-07" },
+  "AGGREGATE": { "pricePerUnit": 1520.0,  "source": "Market feed 2026-07" },
+  "STEEL":     { "pricePerUnit": 67.5,    "source": "Market feed 2026-07" },
+  "CONCRETE":  { "pricePerUnit": 5250.0,  "source": "Market feed 2026-07" },
+  "TILE":      { "pricePerUnit": 430.0,   "source": "Market feed 2026-07" },
+  "PAINT":     { "pricePerUnit": 365.0,   "source": "Market feed 2026-07" },
+  "TIMBER":    { "pricePerUnit": 66000.0, "source": "Market feed 2026-07" },
+  "GLASS":     { "pricePerUnit": 1375.0,  "source": "Market feed 2026-07" },
+  "GYPSUM":    { "pricePerUnit": 325.0,   "source": "Market feed 2026-07" },
+  "MARBLE":    { "pricePerUnit": 1650.0,  "source": "Market feed 2026-07" }
+}

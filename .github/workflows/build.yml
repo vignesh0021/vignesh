@@ -1,0 +1,104 @@
+name: Build FloorPlan3D APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - claude/3d-floor-plan-visualizer-za7rhw
+    paths:
+      - "FloorPlan3D/**"
+      - ".github/workflows/build.yml"
+
+concurrency:
+  group: floorplan3d-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test, build and sign
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      # Signing configuration consumed by app/build.gradle.kts.
+      RELEASE_KEYSTORE_PATH: release.keystore
+      RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD || 'ci-ephemeral-store' }}
+      RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS || 'floorplan3d' }}
+      RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD || 'ci-ephemeral-store' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Prepare release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        working-directory: FloorPlan3D
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "Using release keystore from repository secrets"
+            echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
+          else
+            echo "No RELEASE_KEYSTORE_BASE64 secret configured — generating an ephemeral CI keystore"
+            keytool -genkeypair -v \
+              -keystore release.keystore \
+              -alias "$RELEASE_KEY_ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$RELEASE_KEYSTORE_PASSWORD" \
+              -keypass "$RELEASE_KEY_PASSWORD" \
+              -dname "CN=FloorPlan3D CI, OU=CI, O=FloorPlan3D, L=NA, S=NA, C=IN"
+          fi
+
+      - name: Run unit tests
+        working-directory: FloorPlan3D
+        run: gradle testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: FloorPlan3D/app/build/reports/tests/
+          retention-days: 14
+
+      - name: Build debug APK
+        working-directory: FloorPlan3D
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Build signed release APK
+        working-directory: FloorPlan3D
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Verify release APK signature
+        working-directory: FloorPlan3D
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -f "$APK" || { echo "Release APK not found"; exit 1; }
+          BUILD_TOOLS=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" verify --print-certs "$APK"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FloorPlan3D-debug-${{ github.run_number }}
+          path: FloorPlan3D/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FloorPlan3D-release-${{ github.run_number }}
+          path: FloorPlan3D/app/build/outputs/apk/release/app-release.apk
+          retention-days: 90
