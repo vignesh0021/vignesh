@@ -14,6 +14,7 @@ import { PositionSheet } from '../components/PositionSheet';
 import { RiskMatrix } from '../components/RiskMatrix';
 import { SimulationPanel } from '../components/SimulationPanel';
 import { AnalyticsScreen } from '../components/AnalyticsScreen';
+import { VolArbScreen } from '../components/VolArbScreen';
 import { BottomTabBar } from '../components/BottomTabBar';
 import { StrategyLibrary } from '../components/StrategyLibrary';
 import { TestingEngine } from '../components/TestingEngine';
@@ -31,7 +32,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const logo = require('../../assets/icon.png');
 
-type Tab = 'PAPER' | 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'STRATEGY' | 'BACKTEST' | 'BROKERS' | 'ANALYTICS';
+type Tab = 'PAPER' | 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'STRATEGY' | 'BACKTEST' | 'BROKERS' | 'ANALYTICS' | 'VOLARB';
 
 // Kite/Dhan-style bottom nav: 4 primary slots + a "More" sheet for the rest.
 const PRIMARY_TABS: { key: Tab; label: string; icon: string }[] = [
@@ -42,6 +43,7 @@ const PRIMARY_TABS: { key: Tab; label: string; icon: string }[] = [
 ];
 const MORE_TABS: { key: Tab; label: string; icon: string }[] = [
   { key: 'ANALYTICS', label: 'Analytics', icon: '📊' },
+  { key: 'VOLARB', label: 'Vol / Arb', icon: '📐' },
   { key: 'BROKERS', label: 'Brokers', icon: '🔗' },
   { key: 'GREEKS', label: 'Greeks', icon: 'Δ' },
   { key: 'PNL', label: 'PNL Table', icon: '🧮' },
@@ -139,6 +141,8 @@ export function AnalyzerScreen() {
         <PaperTradingScreen />
       ) : tab === 'ANALYTICS' ? (
         <AnalyticsScreen />
+      ) : tab === 'VOLARB' ? (
+        <VolArbScreen />
       ) : tab === 'BACKTEST' ? (
         <TestingEngine />
       ) : tab === 'BROKERS' ? (
