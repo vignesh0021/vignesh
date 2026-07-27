@@ -4,24 +4,31 @@
  */
 export const theme = {
   colors: {
-    bg: '#0B0E11',
-    surface: '#141A20',
-    surfaceAlt: '#1B222B',
-    border: '#242D38',
-    primary: '#F7941E', // Delta orange
-    primaryDim: '#7a4c12',
-    text: '#F2F4F6',
-    textDim: '#8A94A0',
-    textFaint: '#5B6572',
-    profit: '#16C784', // green / cyan expiry-favourable
+    // Layered near-black surfaces (base → cards → sheets → inputs) per design spec.
+    bg: '#0A0A0D',
+    surface: '#131316',
+    surfaceAlt: '#1B1B1F',
+    surface3: '#232327',
+    border: '#26262B',
+    // Brand red is magenta-leaning (hue ~350°) and is the ONLY red allowed to glow.
+    primary: '#FF1F3D',
+    primaryDim: '#2A0E15', // dark brand tint for active fills
+    text: '#FFFFFF',
+    textDim: '#A0A0A8',
+    textFaint: '#5C5C64',
+    // Semantic up/down — down is deliberately a DIFFERENT (orange-leaning) red so
+    // P&L losses never read as the brand accent.
+    profit: '#22C55E',
     profitLine: '#25D0A5',
-    loss: '#EA3943', // red
-    expiryLine: '#F7941E', // orange expiry curve
-    t0Line: '#25D0A5', // green/cyan T+0 curve
-    buy: '#16C784',
-    sell: '#EA3943',
-    grid: '#20272F',
-    crosshair: '#F2F4F6',
+    loss: '#F4574C',
+    expiryLine: '#FF1F3D',
+    t0Line: '#25D0A5',
+    buy: '#22C55E',
+    sell: '#F4574C',
+    warning: '#F5A623',
+    grid: '#1E1E24',
+    crosshair: '#FFFFFF',
+    glow: '#FF3D5C',
   },
   spacing: (n: number) => n * 4,
   radius: { sm: 6, md: 10, lg: 16 },

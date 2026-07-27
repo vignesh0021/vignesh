@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BrokersScreen } from '../components/BrokersScreen';
 import { GreeksTable } from '../components/GreeksTable';
 import { InstrumentPicker } from '../components/InstrumentPicker';
+import { PaperTradingScreen } from '../components/PaperTradingScreen';
 import { PayoffChart } from '../components/PayoffChart';
 import { PnlTable } from '../components/PnlTable';
 import { PortfolioSummary } from '../components/PortfolioSummary';
@@ -12,6 +13,9 @@ import { PositionList } from '../components/PositionList';
 import { PositionSheet } from '../components/PositionSheet';
 import { RiskMatrix } from '../components/RiskMatrix';
 import { SimulationPanel } from '../components/SimulationPanel';
+import { AnalyticsScreen } from '../components/AnalyticsScreen';
+import { VolArbScreen } from '../components/VolArbScreen';
+import { BottomTabBar } from '../components/BottomTabBar';
 import { StrategyLibrary } from '../components/StrategyLibrary';
 import { TestingEngine } from '../components/TestingEngine';
 import { theme } from '../theme';
@@ -28,21 +32,27 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const logo = require('../../assets/icon.png');
 
-type Tab = 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'STRATEGY' | 'BACKTEST' | 'BROKERS';
+type Tab = 'PAPER' | 'PAYOFF' | 'PNL' | 'GREEKS' | 'POSITIONS' | 'STRATEGY' | 'BACKTEST' | 'BROKERS' | 'ANALYTICS' | 'VOLARB';
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'PAYOFF', label: 'PNL Chart' },
-  { key: 'PNL', label: 'PNL Table' },
-  { key: 'GREEKS', label: 'Greeks' },
-  { key: 'POSITIONS', label: 'Positions' },
-  { key: 'STRATEGY', label: 'Strategies' },
-  { key: 'BROKERS', label: 'Brokers' },
-  { key: 'BACKTEST', label: 'Backtest' },
+// Kite/Dhan-style bottom nav: 4 primary slots + a "More" sheet for the rest.
+const PRIMARY_TABS: { key: Tab; label: string; icon: string }[] = [
+  { key: 'PAPER', label: 'Paper', icon: '📝' },
+  { key: 'PAYOFF', label: 'Payoff', icon: '📉' },
+  { key: 'POSITIONS', label: 'Positions', icon: '📂' },
+  { key: 'STRATEGY', label: 'Strategy', icon: '🎯' },
+];
+const MORE_TABS: { key: Tab; label: string; icon: string }[] = [
+  { key: 'ANALYTICS', label: 'Analytics', icon: '📊' },
+  { key: 'VOLARB', label: 'Vol / Arb', icon: '📐' },
+  { key: 'BROKERS', label: 'Brokers', icon: '🔗' },
+  { key: 'GREEKS', label: 'Greeks', icon: 'Δ' },
+  { key: 'PNL', label: 'PNL Table', icon: '🧮' },
+  { key: 'BACKTEST', label: 'Backtest', icon: '⏮️' },
 ];
 
 export function AnalyzerScreen() {
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<Tab>('PAYOFF');
+  const [tab, setTab] = useState<Tab>('PAPER');
   const [sheetOpen, setSheetOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editing, setEditing] = useState<OptionPosition | null>(null);
@@ -60,6 +70,10 @@ export function AnalyzerScreen() {
   const refreshMarket = usePortfolioStore((s) => s.refreshMarket);
 
   const currency = asset.currency;
+  // The classic analyzer views (payoff/pnl/greeks/positions) share the risk
+  // matrix + Add-Contract FAB; the full-screen sections (Paper, Analytics,
+  // Brokers, Strategy, Backtest) don't.
+  const analyzerTab = tab === 'PAYOFF' || tab === 'PNL' || tab === 'GREEKS' || tab === 'POSITIONS';
 
   useEffect(() => {
     refreshMarket().catch(() => {});
@@ -112,9 +126,9 @@ export function AnalyzerScreen() {
         </TouchableOpacity>
       </View>
 
-      <RiskMatrix risk={risk} currency={currency} />
+      {analyzerTab ? <RiskMatrix risk={risk} currency={currency} /> : null}
 
-      {mixedUnderlyings ? (
+      {analyzerTab && mixedUnderlyings ? (
         <View style={styles.warn}>
           <Text style={styles.warnTxt}>
             ⚠ Legs span multiple underlyings — the payoff plots them on one price axis, so combined
@@ -123,19 +137,13 @@ export function AnalyzerScreen() {
         </View>
       ) : null}
 
-      {/* Tabs (scrollable) */}
-      <View style={styles.tabBarWrap}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabBar}>
-          {TABS.map((t) => (
-            <TouchableOpacity key={t.key} style={styles.tab} onPress={() => setTab(t.key)}>
-              <Text style={[styles.tabTxt, tab === t.key && styles.tabTxtActive]}>{t.label}</Text>
-              {tab === t.key ? <View style={styles.tabUnderline} /> : null}
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-
-      {tab === 'BACKTEST' ? (
+      {tab === 'PAPER' ? (
+        <PaperTradingScreen />
+      ) : tab === 'ANALYTICS' ? (
+        <AnalyticsScreen />
+      ) : tab === 'VOLARB' ? (
+        <VolArbScreen />
+      ) : tab === 'BACKTEST' ? (
         <TestingEngine />
       ) : tab === 'BROKERS' ? (
         <BrokersScreen />
@@ -177,11 +185,13 @@ export function AnalyzerScreen() {
         </ScrollView>
       )}
 
-      {tab !== 'BACKTEST' && tab !== 'STRATEGY' && tab !== 'BROKERS' ? (
-        <TouchableOpacity style={[styles.fab, { bottom: insets.bottom + 16 }]} onPress={openAdd} activeOpacity={0.85}>
+      {analyzerTab ? (
+        <TouchableOpacity style={[styles.fab, { bottom: insets.bottom + 74 }]} onPress={openAdd} activeOpacity={0.85}>
           <Text style={styles.fabTxt}>＋ Add Contract</Text>
         </TouchableOpacity>
       ) : null}
+
+      <BottomTabBar primary={PRIMARY_TABS} more={MORE_TABS} active={tab} onSelect={(k) => setTab(k as Tab)} />
 
       <PositionSheet visible={sheetOpen} editing={editing} onClose={() => setSheetOpen(false)} />
       <InstrumentPicker visible={pickerOpen} onClose={() => setPickerOpen(false)} />

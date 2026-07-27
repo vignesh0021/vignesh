@@ -42,6 +42,26 @@ export function buildAuthUrl(appId: string, redirectUri: string, state = 'tlh'):
   return `${AUTH}/generate-authcode?${q.toString()}`;
 }
 
+/**
+ * Extract the auth_code from whatever the user pastes back after login — either
+ * the full redirected URL (`https://…?auth_code=XXX&state=…`) or the bare code.
+ */
+export function parseAuthCode(input: string): string | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  // Prefer the real auth_code — the Fyers redirect ALSO carries `code=200`
+  // (an HTTP-ish status), so a naive `code=` match would grab "200".
+  const authMatch = raw.match(/[?&]auth_code=([^&#\s]+)/i);
+  if (authMatch) return decodeURIComponent(authMatch[1]);
+  // A bare `code=` only counts when there's no auth_code and it isn't the
+  // numeric status code (guard against `code=200`).
+  const codeMatch = raw.match(/[?&]code=([^&#\s]+)/i);
+  if (codeMatch && !/^\d{1,3}$/.test(codeMatch[1])) return decodeURIComponent(codeMatch[1]);
+  // Otherwise treat the whole thing as the code, unless it's clearly a URL.
+  if (/^https?:\/\//i.test(raw)) return null;
+  return raw;
+}
+
 /** Step 2 — exchange the returned auth_code for an access token. */
 export async function exchangeCode(
   appId: string,
@@ -80,6 +100,155 @@ export async function getPositions(appId: string, accessToken: string): Promise<
       currency: 'INR',
       productType: r?.productType,
     }));
+}
+
+export interface FyersExpiry {
+  /** ISO yyyy-mm-dd derived from the expiry epoch. */
+  iso: string;
+  /** Epoch (seconds) used as the `timestamp` param to pick this expiry. */
+  epoch: string;
+  /** Human label as returned by Fyers (e.g. "25-07-2024"). */
+  label: string;
+}
+
+export interface FyersChainQuote {
+  symbol: string;
+  strike: number;
+  optType: 'CE' | 'PE';
+  ltp: number;
+  chg: number; // absolute change vs previous close
+  oi: number; // open interest (contracts)
+  bid: number;
+  ask: number;
+  volume: number;
+  oiChg: number; // change in open interest vs previous snapshot (contracts)
+}
+
+export interface FyersOptionChain {
+  underlyingLtp: number;
+  /** Underlying previous close (LTP − change), for an accurate day-change %. */
+  underlyingPrevClose: number;
+  expiries: FyersExpiry[];
+  rows: { strike: number; call?: FyersChainQuote; put?: FyersChainQuote }[];
+}
+
+function epochToIso(epoch: number): string {
+  return new Date(epoch * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * Live option chain from Fyers API v3 (`/data/options-chain-v3`). Returns the
+ * expiry list, the underlying LTP, and call/put quotes grouped by strike.
+ * Pass `timestamp` (an expiry epoch from a prior call) to select an expiry.
+ * Docs: https://myapi.fyers.in/docsv3#tag/Data-Api/Option-Chain
+ */
+export async function getOptionChain(
+  appId: string,
+  accessToken: string,
+  symbol: string,
+  strikeCount = 12,
+  timestamp?: string,
+): Promise<FyersOptionChain> {
+  // Fyers expects the timestamp param present (empty = nearest expiry).
+  const q = new URLSearchParams({ symbol, strikecount: String(strikeCount), timestamp: timestamp ?? '' });
+  const json = await req(`${DATA}/data/options-chain-v3?${q.toString()}`, {
+    headers: authHeader(appId, accessToken),
+  });
+  if (json?.s !== 'ok' && json?.code !== 200) {
+    // Surface the real broker reason (e.g. missing "Quotes & Market data" permission, invalid token).
+    throw new Error(json?.message || json?.s || `Fyers option chain failed (${symbol})`);
+  }
+  const d = json?.data ?? {};
+  const expiries: FyersExpiry[] = (Array.isArray(d.expiryData) ? d.expiryData : []).map((e: any) => {
+    const epoch = Number(e?.expiry ?? e?.date);
+    return { iso: epochToIso(epoch), epoch: String(e?.expiry ?? ''), label: String(e?.date ?? '') };
+  });
+
+  const chain: any[] = Array.isArray(d.optionsChain) ? d.optionsChain : [];
+  let underlyingLtp = 0; // set from the underlying row (blank option_type) below
+  let underlyingPrevClose = 0;
+  const byStrike = new Map<number, { strike: number; call?: FyersChainQuote; put?: FyersChainQuote }>();
+  for (const it of chain) {
+    const ot = it?.option_type;
+    if (ot !== 'CE' && ot !== 'PE') {
+      // The underlying itself is included with a blank option_type.
+      const lp = Number(it?.ltp);
+      if (lp > 0) {
+        underlyingLtp = lp;
+        underlyingPrevClose = lp - (Number(it?.ltpch) || 0);
+      }
+      continue;
+    }
+    const strike = Number(it?.strike_price);
+    if (!(strike > 0)) continue;
+    const quote: FyersChainQuote = {
+      symbol: String(it?.symbol ?? ''),
+      strike,
+      optType: ot,
+      ltp: Number(it?.ltp) || 0,
+      chg: Number(it?.ltpch) || 0,
+      oi: Number(it?.oi) || 0,
+      bid: Number(it?.bid) || 0,
+      ask: Number(it?.ask) || 0,
+      volume: Number(it?.volume) || 0,
+      oiChg: Number(it?.oich) || 0,
+    };
+    const row = byStrike.get(strike) ?? { strike };
+    if (ot === 'CE') row.call = quote;
+    else row.put = quote;
+    byStrike.set(strike, row);
+  }
+  const rows = [...byStrike.values()].sort((a, b) => a.strike - b.strike);
+  return { underlyingLtp, underlyingPrevClose, expiries, rows };
+}
+
+export interface FyersCandle {
+  t: number; // epoch seconds
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+/**
+ * Historical OHLCV candles from Fyers API v3 (`/data/history`).
+ * `resolution`: '1' | '5' | '15' | '60' | 'D' etc.
+ * Docs: https://myapi.fyers.in/docsv3#tag/Data-Api/History
+ */
+export async function getHistory(
+  appId: string,
+  accessToken: string,
+  symbol: string,
+  resolution: string,
+  fromIso: string,
+  toIso: string,
+): Promise<FyersCandle[]> {
+  const q = new URLSearchParams({
+    symbol,
+    resolution,
+    date_format: '1',
+    range_from: fromIso,
+    range_to: toIso,
+    cont_flag: '1',
+  });
+  const json = await req(`${DATA}/data/history?${q.toString()}`, {
+    headers: authHeader(appId, accessToken),
+  });
+  if (json?.s !== 'ok' && json?.code !== 200) {
+    throw new Error(json?.message || 'Fyers history failed');
+  }
+  const rows: any[] = Array.isArray(json?.candles) ? json.candles : [];
+  return rows
+    .map((r) => ({
+      t: Number(r?.[0]),
+      o: Number(r?.[1]),
+      h: Number(r?.[2]),
+      l: Number(r?.[3]),
+      c: Number(r?.[4]),
+      v: Number(r?.[5]) || 0,
+    }))
+    .filter((c) => c.t > 0 && c.c > 0);
 }
 
 /** Optional: live quotes for a set of Fyers symbols (e.g. "NSE:SBIN-EQ"). */
