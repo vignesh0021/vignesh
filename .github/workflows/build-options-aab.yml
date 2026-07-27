@@ -1,0 +1,60 @@
+name: Build Options Analyzer AAB (Play Store)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/options-paper-trading-mode-sywt0f
+    paths:
+      - "options-analyzer/**"
+      - ".github/workflows/build-options-aab.yml"
+
+jobs:
+  build:
+    name: Prebuild + Gradle AAB
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: options-analyzer
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install JS dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Expo prebuild (generate native android project)
+        run: npx expo prebuild --platform android --clean
+
+      # NOTE: this produces a *debug-signed* .aab for inspection/testing only.
+      # A Play Store upload needs an upload keystore (see options-analyzer/PLAY_STORE.md);
+      # the recommended path is `eas build -p android --profile production`.
+      - name: Build release AAB (debug keystore — for testing)
+        working-directory: options-analyzer/android
+        run: ./gradlew bundleRelease --no-daemon
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: options-analyzer-aab
+          path: options-analyzer/android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error

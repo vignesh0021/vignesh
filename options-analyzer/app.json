@@ -2,7 +2,7 @@
   "expo": {
     "name": "TradeLikeHunter",
     "slug": "tradelikehunter",
-    "version": "1.11.0",
+    "version": "1.12.0",
     "scheme": "tradelikehunter",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -13,7 +13,7 @@
     ],
     "android": {
       "package": "com.tradelikehunter.app",
-      "versionCode": 14,
+      "versionCode": 15,
       "backgroundColor": "#0A0A0C",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

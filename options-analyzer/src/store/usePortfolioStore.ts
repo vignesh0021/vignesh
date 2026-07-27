@@ -84,15 +84,11 @@ interface PortfolioState {
   resetTargetDate: () => void;
 }
 
-const SEED_ASSET = PRESET_ASSETS[0]; // BTC
-const SEED_EXPIRY = addDaysIso(todayIso(), 55);
-const SEED_SPOT = 62847;
+const SEED_ASSET = PRESET_ASSETS[0]; // NIFTY
+const SEED_SPOT = 24000;
 
-const seedOpen: OptionPosition[] = [
-  { id: genId(), instrument: 'BTC', type: 'CALL', action: 'SELL', strike: 68000, expiry: SEED_EXPIRY, entryPremium: 890, lots: 1, lotSize: 0.1, iv: 0.55, status: 'OPEN' },
-  { id: genId(), instrument: 'BTC', type: 'PUT', action: 'SELL', strike: 49000, expiry: SEED_EXPIRY, entryPremium: 783.5, lots: 1, lotSize: 0.2, iv: 0.62, status: 'OPEN' },
-  { id: genId(), instrument: 'BTC', type: 'PUT', action: 'SELL', strike: 55000, expiry: SEED_EXPIRY, entryPremium: 1154.9, lots: 1, lotSize: 0.1, iv: 0.6, status: 'OPEN' },
-];
+// Start with an empty book — the user builds positions on NIFTY/BSE/F&O stocks.
+const seedOpen: OptionPosition[] = [];
 
 export const usePortfolioStore = create<PortfolioState>()(
   persist(

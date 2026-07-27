@@ -101,6 +101,7 @@ export function fyersUnderlyingSymbol(asset: MarketAsset): string {
   const map: Record<string, string> = {
     NIFTY: 'NSE:NIFTY50-INDEX',
     BANKNIFTY: 'NSE:NIFTYBANK-INDEX',
+    FINNIFTY: 'NSE:FINNIFTY-INDEX',
     SENSEX: 'BSE:SENSEX-INDEX',
   };
   if (map[asset.symbol]) return map[asset.symbol];

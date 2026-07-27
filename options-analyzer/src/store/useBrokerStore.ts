@@ -69,7 +69,7 @@ export const useBrokerStore = create<BrokerState>()(
       clearDelta: () => set({ delta: { apiKey: '', apiSecret: '' } }),
 
       refresh: async () => {
-        const { fyers: f, delta: d } = get();
+        const { fyers: f } = get();
         set({ loading: true, error: null });
         const errors: string[] = [];
         const all: BrokerPosition[] = [];
@@ -79,13 +79,6 @@ export const useBrokerStore = create<BrokerState>()(
             all.push(...(await fyers.getPositions(f.appId, f.accessToken)));
           } catch (e) {
             errors.push(`Fyers: ${(e as Error).message}`);
-          }
-        }
-        if (d.apiKey && d.apiSecret) {
-          try {
-            all.push(...(await delta.getPositions(d.apiKey, d.apiSecret)));
-          } catch (e) {
-            errors.push(`Delta: ${(e as Error).message}`);
           }
         }
 

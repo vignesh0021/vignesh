@@ -5,7 +5,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
 import { buildAuthUrl, exchangeCode, parseAuthCode } from '../services/brokers/fyers';
-import { verify as deltaVerify } from '../services/brokers/delta';
 import type { BrokerPosition } from '../services/brokers/types';
 import { theme } from '../theme';
 import { DEFAULT_FYERS_REDIRECT, useBrokerStore } from '../store/useBrokerStore';
@@ -19,7 +18,6 @@ WebBrowser.maybeCompleteAuthSession();
  */
 export function BrokersScreen() {
   const fyers = useBrokerStore((s) => s.fyers);
-  const delta = useBrokerStore((s) => s.delta);
   const positions = useBrokerStore((s) => s.positions);
   const loading = useBrokerStore((s) => s.loading);
   const error = useBrokerStore((s) => s.error);
@@ -29,21 +27,16 @@ export function BrokersScreen() {
   const setFyersRedirect = useBrokerStore((s) => s.setFyersRedirect);
   const setFyersToken = useBrokerStore((s) => s.setFyersToken);
   const clearFyers = useBrokerStore((s) => s.clearFyers);
-  const setDelta = useBrokerStore((s) => s.setDelta);
-  const clearDelta = useBrokerStore((s) => s.clearDelta);
   const refresh = useBrokerStore((s) => s.refresh);
 
   const [appId, setAppId] = useState(fyers.appId);
   const [secret, setSecret] = useState(fyers.secret);
   const [redirectUri, setRedirectUri] = useState(fyers.redirectUri || DEFAULT_FYERS_REDIRECT);
   const [pastedCode, setPastedCode] = useState('');
-  const [dKey, setDKey] = useState(delta.apiKey);
-  const [dSecret, setDSecret] = useState(delta.apiSecret);
   const [busy, setBusy] = useState<string | null>(null);
   const [localErr, setLocalErr] = useState<string | null>(null);
 
   const fyersConnected = !!fyers.accessToken;
-  const deltaConnected = !!delta.apiKey && !!delta.apiSecret;
   const [authOpen, setAuthOpen] = useState(false);
   const handledRef = useRef(false);
   const insets = useSafeAreaInsets();
@@ -136,24 +129,6 @@ export function BrokersScreen() {
       return;
     }
     await finishLogin(code);
-  };
-
-  const onDeltaConnect = async () => {
-    setLocalErr(null);
-    if (!dKey || !dSecret) {
-      setLocalErr('Enter your Delta API key and secret.');
-      return;
-    }
-    setBusy('delta');
-    try {
-      await deltaVerify(dKey, dSecret);
-      setDelta(dKey, dSecret);
-      await refresh();
-    } catch (e) {
-      setLocalErr(`Delta connect failed: ${(e as Error).message}`);
-    } finally {
-      setBusy(null);
-    }
   };
 
   const totalPnl = positions.reduce((a, p) => a + p.pnl, 0);
@@ -266,36 +241,11 @@ export function BrokersScreen() {
         </View>
       </Modal>
 
-      {/* Delta */}
-      <View style={styles.card}>
-        <View style={styles.cardHead}>
-          <Text style={styles.brokerName}>Delta Exchange India <Text style={styles.market}>· Crypto</Text></Text>
-          <Text style={[styles.badge, deltaConnected ? styles.badgeOn : styles.badgeOff]}>
-            {deltaConnected ? 'Connected' : 'Not connected'}
-          </Text>
-        </View>
-        <Text style={styles.fieldLabel}>API Key</Text>
-        <TextInput style={styles.input} value={dKey} onChangeText={setDKey} autoCapitalize="none" placeholder="api key" placeholderTextColor={theme.colors.textFaint} />
-        <Text style={styles.fieldLabel}>API Secret</Text>
-        <TextInput style={styles.input} value={dSecret} onChangeText={setDSecret} autoCapitalize="none" secureTextEntry placeholder="api secret" placeholderTextColor={theme.colors.textFaint} />
-        <Text style={styles.redirectNote}>Create a read-only API key at Delta → Settings → API Keys.</Text>
-        <View style={styles.btnRow}>
-          <TouchableOpacity style={[styles.btn, styles.btnPrimary]} onPress={onDeltaConnect} disabled={busy === 'delta'}>
-            {busy === 'delta' ? <ActivityIndicator color="#0B0E11" /> : <Text style={styles.btnPrimaryTxt}>{deltaConnected ? 'Reconnect' : 'Connect Delta'}</Text>}
-          </TouchableOpacity>
-          {deltaConnected ? (
-            <TouchableOpacity style={[styles.btn, styles.btnOutline]} onPress={clearDelta}>
-              <Text style={styles.btnOutlineTxt}>Disconnect</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      </View>
-
       {localErr ? <Text style={styles.err}>{localErr}</Text> : null}
       {error ? <Text style={styles.err}>{error}</Text> : null}
 
       {/* Live positions */}
-      {fyersConnected || deltaConnected ? (
+      {fyersConnected ? (
         <View style={styles.posBlock}>
           <View style={styles.posHead}>
             <Text style={styles.posTitle}>Live Positions ({positions.length})</Text>
