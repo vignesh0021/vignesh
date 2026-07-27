@@ -1,4 +1,4 @@
-export type BrokerId = 'fyers' | 'delta';
+export type BrokerId = 'fyers' | 'dhan' | 'upstox' | 'zerodha' | 'angel';
 
 /** A position normalised across brokers for the monitor UI. */
 export interface BrokerPosition {

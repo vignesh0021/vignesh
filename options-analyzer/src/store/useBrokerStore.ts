@@ -2,15 +2,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
-import * as delta from '../services/brokers/delta';
 import * as fyers from '../services/brokers/fyers';
+import * as extra from '../services/brokers/indianBrokers';
+import type { ExtraBrokerId } from '../services/brokers/indianBrokers';
 import type { BrokerPosition } from '../services/brokers/types';
 
 /**
  * Broker connections (read-only). Credentials and tokens are stored on-device
  * only (AsyncStorage) and never leave the phone except in calls to the broker's
  * own API. Fyers uses OAuth (the interactive step runs in the Brokers screen,
- * which then hands the token here); Delta India uses an API key/secret pair.
+ * which then hands the token here). The additional Indian brokers (Dhan,
+ * Upstox, Zerodha, Angel One) each store their own creds + session token in the
+ * generic `accounts` map and are refreshed alongside Fyers.
  */
 
 interface FyersCreds {
@@ -25,14 +28,18 @@ interface FyersCreds {
 /** Default redirect URI — a valid https URL Fyers accepts; the auth_code is read back from it. */
 export const DEFAULT_FYERS_REDIRECT = 'https://127.0.0.1/';
 
-interface DeltaCreds {
-  apiKey: string;
-  apiSecret: string;
+/** A connected extra broker: the creds the user entered plus its session token. */
+export interface BrokerAccount {
+  creds: Record<string, string>;
+  token?: string;
+  connectedAt?: number;
 }
+
+type Accounts = Partial<Record<ExtraBrokerId, BrokerAccount>>;
 
 interface BrokerState {
   fyers: FyersCreds;
-  delta: DeltaCreds;
+  accounts: Accounts;
   positions: BrokerPosition[];
   loading: boolean;
   error: string | null;
@@ -42,8 +49,8 @@ interface BrokerState {
   setFyersRedirect: (redirectUri: string) => void;
   setFyersToken: (accessToken: string, refreshToken?: string) => void;
   clearFyers: () => void;
-  setDelta: (apiKey: string, apiSecret: string) => void;
-  clearDelta: () => void;
+  setBrokerAccount: (id: ExtraBrokerId, account: BrokerAccount) => void;
+  clearBrokerAccount: (id: ExtraBrokerId) => void;
   refresh: () => Promise<void>;
 }
 
@@ -51,7 +58,7 @@ export const useBrokerStore = create<BrokerState>()(
   persist(
     (set, get) => ({
       fyers: { appId: '', secret: '', redirectUri: DEFAULT_FYERS_REDIRECT },
-      delta: { apiKey: '', apiSecret: '' },
+      accounts: {},
       positions: [],
       loading: false,
       error: null,
@@ -65,11 +72,17 @@ export const useBrokerStore = create<BrokerState>()(
         set((s) => ({
           fyers: { appId: s.fyers.appId, secret: s.fyers.secret, redirectUri: s.fyers.redirectUri },
         })),
-      setDelta: (apiKey, apiSecret) => set({ delta: { apiKey, apiSecret } }),
-      clearDelta: () => set({ delta: { apiKey: '', apiSecret: '' } }),
+      setBrokerAccount: (id, account) =>
+        set((s) => ({ accounts: { ...s.accounts, [id]: account } })),
+      clearBrokerAccount: (id) =>
+        set((s) => {
+          const next = { ...s.accounts };
+          delete next[id];
+          return { accounts: next };
+        }),
 
       refresh: async () => {
-        const { fyers: f } = get();
+        const { fyers: f, accounts } = get();
         set({ loading: true, error: null });
         const errors: string[] = [];
         const all: BrokerPosition[] = [];
@@ -79,6 +92,16 @@ export const useBrokerStore = create<BrokerState>()(
             all.push(...(await fyers.getPositions(f.appId, f.accessToken)));
           } catch (e) {
             errors.push(`Fyers: ${(e as Error).message}`);
+          }
+        }
+
+        for (const id of Object.keys(accounts) as ExtraBrokerId[]) {
+          const acct = accounts[id];
+          if (!acct?.token) continue;
+          try {
+            all.push(...(await extra.fetchPositions(id, acct.creds, acct.token)));
+          } catch (e) {
+            errors.push(`${extra.brokerMeta(id).name}: ${(e as Error).message}`);
           }
         }
 
@@ -93,7 +116,7 @@ export const useBrokerStore = create<BrokerState>()(
     {
       name: 'tlh-brokers-v1',
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (s) => ({ fyers: s.fyers, delta: s.delta }),
+      partialize: (s) => ({ fyers: s.fyers, accounts: s.accounts }),
     },
   ),
 );

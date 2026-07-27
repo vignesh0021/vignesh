@@ -5,6 +5,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
 import { buildAuthUrl, exchangeCode, parseAuthCode } from '../services/brokers/fyers';
+import {
+  EXTRA_BROKERS,
+  connectBroker,
+  type BrokerMeta,
+} from '../services/brokers/indianBrokers';
 import type { BrokerPosition } from '../services/brokers/types';
 import { theme } from '../theme';
 import { DEFAULT_FYERS_REDIRECT, useBrokerStore } from '../store/useBrokerStore';
@@ -13,8 +18,9 @@ import { fmtNum } from '../utils/format';
 WebBrowser.maybeCompleteAuthSession();
 
 /**
- * Brokers: connect Fyers (OAuth2) and Delta India (API key/secret) read-only
- * to monitor your real positions & live PnL. Credentials stay on-device.
+ * Brokers: connect Fyers (OAuth2, fully verified) plus the other Indian
+ * brokers (Dhan, Upstox, Zerodha Kite, Angel One — beta) read-only to monitor
+ * your real positions & live PnL. Credentials stay on-device.
  */
 export function BrokersScreen() {
   const fyers = useBrokerStore((s) => s.fyers);
@@ -36,7 +42,9 @@ export function BrokersScreen() {
   const [busy, setBusy] = useState<string | null>(null);
   const [localErr, setLocalErr] = useState<string | null>(null);
 
+  const accounts = useBrokerStore((s) => s.accounts);
   const fyersConnected = !!fyers.accessToken;
+  const anyConnected = fyersConnected || Object.values(accounts).some((a) => !!a?.token);
   const [authOpen, setAuthOpen] = useState(false);
   const handledRef = useRef(false);
   const insets = useSafeAreaInsets();
@@ -205,6 +213,16 @@ export function BrokersScreen() {
         </View>
       </View>
 
+      {/* Other Indian brokers (BETA) */}
+      <Text style={styles.sectionTitle}>More Indian brokers</Text>
+      <Text style={styles.sectionNote}>
+        Beta — position monitoring only. Fyers stays the fully-verified data provider; these connect
+        to each broker's own API and are best verified on your live account.
+      </Text>
+      {EXTRA_BROKERS.map((meta) => (
+        <ExtraBrokerCard key={meta.id} meta={meta} />
+      ))}
+
       {/* In-app Fyers login — captures the auth_code redirect automatically. */}
       <Modal visible={authOpen} animationType="slide" onRequestClose={() => setAuthOpen(false)}>
         <View style={[styles.authWrap, { paddingTop: insets.top }]}>
@@ -245,7 +263,7 @@ export function BrokersScreen() {
       {error ? <Text style={styles.err}>{error}</Text> : null}
 
       {/* Live positions */}
-      {fyersConnected ? (
+      {anyConnected ? (
         <View style={styles.posBlock}>
           <View style={styles.posHead}>
             <Text style={styles.posTitle}>Live Positions ({positions.length})</Text>
@@ -269,6 +287,119 @@ export function BrokersScreen() {
         </View>
       ) : null}
     </ScrollView>
+  );
+}
+
+function ExtraBrokerCard({ meta }: { meta: BrokerMeta }) {
+  const account = useBrokerStore((s) => s.accounts[meta.id]);
+  const setBrokerAccount = useBrokerStore((s) => s.setBrokerAccount);
+  const clearBrokerAccount = useBrokerStore((s) => s.clearBrokerAccount);
+  const refresh = useBrokerStore((s) => s.refresh);
+
+  const [creds, setCreds] = useState<Record<string, string>>(account?.creds ?? {});
+  const [pasted, setPasted] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const connected = !!account?.token;
+  const setField = (k: string, v: string) => setCreds((c) => ({ ...c, [k]: v }));
+
+  const onOpenLogin = async () => {
+    if (!meta.loginUrl) return;
+    setErr(null);
+    const missing = meta.fields.find((f) => f.key !== 'redirectUri' && !creds[f.key]);
+    if (missing) {
+      setErr(`Enter your ${missing.label} first.`);
+      return;
+    }
+    try {
+      await WebBrowser.openBrowserAsync(meta.loginUrl(creds));
+    } catch (e) {
+      setErr(`Couldn't open the login page: ${(e as Error).message}`);
+    }
+  };
+
+  const onConnect = async () => {
+    setErr(null);
+    const missing = meta.fields.find((f) => f.key !== 'redirectUri' && !creds[f.key]);
+    if (missing) {
+      setErr(`Enter your ${missing.label} first.`);
+      return;
+    }
+    setBusy(true);
+    try {
+      const token = await connectBroker(meta.id, creds, pasted);
+      setBrokerAccount(meta.id, { creds, token, connectedAt: Date.now() });
+      setPasted('');
+      await refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDisconnect = () => {
+    clearBrokerAccount(meta.id);
+    setPasted('');
+  };
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHead}>
+        <Text style={styles.brokerName}>{meta.name} <Text style={styles.market}>· BETA</Text></Text>
+        <Text style={[styles.badge, connected ? styles.badgeOn : styles.badgeOff]}>
+          {connected ? 'Connected' : 'Not connected'}
+        </Text>
+      </View>
+
+      {meta.fields.map((f) => (
+        <View key={f.key}>
+          <Text style={styles.fieldLabel}>{f.label}</Text>
+          <TextInput
+            style={styles.input}
+            value={creds[f.key] ?? ''}
+            onChangeText={(v) => setField(f.key, v)}
+            autoCapitalize="none"
+            secureTextEntry={f.secure}
+            placeholder={f.placeholder}
+            placeholderTextColor={theme.colors.textFaint}
+          />
+        </View>
+      ))}
+
+      {meta.authKind === 'oauth_paste' ? (
+        <>
+          <TouchableOpacity onPress={onOpenLogin}>
+            <Text style={styles.altLink}>Open {meta.name} login in browser ↗</Text>
+          </TouchableOpacity>
+          <Text style={styles.fieldLabel}>{meta.captureLabel}</Text>
+          <TextInput
+            style={styles.input}
+            value={pasted}
+            onChangeText={setPasted}
+            autoCapitalize="none"
+            placeholder="Paste the redirected URL here"
+            placeholderTextColor={theme.colors.textFaint}
+          />
+        </>
+      ) : null}
+
+      <Text style={styles.autoNote}>{meta.note}</Text>
+
+      <View style={styles.btnRow}>
+        <TouchableOpacity style={[styles.btn, styles.btnPrimary]} onPress={onConnect} disabled={busy}>
+          {busy ? <ActivityIndicator color="#0B0E11" /> : <Text style={styles.btnPrimaryTxt}>{connected ? 'Reconnect' : 'Connect'}</Text>}
+        </TouchableOpacity>
+        {connected ? (
+          <TouchableOpacity style={[styles.btn, styles.btnOutline]} onPress={onDisconnect}>
+            <Text style={styles.btnOutlineTxt}>Disconnect</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {err ? <Text style={styles.err}>{err}</Text> : null}
+    </View>
   );
 }
 
@@ -303,6 +434,8 @@ function Metric({ label, value, color, center, right }: { label: string; value: 
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: theme.colors.bg },
   intro: { color: theme.colors.textDim, fontSize: 12, lineHeight: 18, margin: 12 },
+  sectionTitle: { color: theme.colors.text, fontSize: 15, fontWeight: '800', marginHorizontal: 12, marginTop: 6, marginBottom: 4 },
+  sectionNote: { color: theme.colors.textFaint, fontSize: 11, lineHeight: 16, marginHorizontal: 12, marginBottom: 10 },
   card: { backgroundColor: theme.colors.surface, marginHorizontal: 12, marginBottom: 12, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, padding: 14 },
   cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   brokerName: { color: theme.colors.text, fontSize: 16, fontWeight: '700' },

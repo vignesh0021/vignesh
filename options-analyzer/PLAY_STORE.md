@@ -84,6 +84,9 @@ cd android && ./gradlew bundleRelease
 
   • Market-Pulse-style option chain with live prices (connect your own Fyers
     account for real data).
+  • Connect your Indian broker to monitor real positions & live PnL — Fyers,
+    plus Dhan, Upstox, Zerodha Kite and Angel One (beta). Read-only; keys stay
+    on your device.
   • Paper trading with real fill mechanics — market/limit orders, partial exits,
     stop-loss, target and trailing SL, MIS auto-square-off — and a virtual
     balance. No real money, no real orders.
@@ -106,9 +109,10 @@ cd android && ./gradlew bundleRelease
 ## 5. Play Console setup checklist
 
 - [ ] Create app → default language English (India), app type **App**, **Free**.
-- [ ] **Data safety** form: declare that Fyers credentials/tokens are stored
-      **on-device only** and not shared; the app makes network calls only to
-      Fyers/market-data endpoints.
+- [ ] **Data safety** form: declare that broker credentials/tokens (Fyers,
+      Dhan, Upstox, Zerodha, Angel One) are stored **on-device only** and not
+      shared; the app makes network calls only to those brokers' own API
+      endpoints and market-data endpoints.
 - [ ] **Content rating** questionnaire (finance, no gambling — it's simulated).
 - [ ] **Target audience:** 18+.
 - [ ] **Privacy policy URL** (section 6).
