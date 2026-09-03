@@ -190,3 +190,66 @@ bar. They are public members passed by reference into the pure functions.
 Polling compares the world against our record on every tick, so a missed or out-of-order
 trade event cannot leave the two permanently out of step — which also makes restart
 recovery and the tester behave identically. `OnTradeTransaction` is not used.
+
+---
+
+## 20. Session-filter diagnosis (added after the first year-long tester run)
+
+A user run produced only a handful of trades in a year. I reproduced the funnel by
+running the real pipeline over a synthetic year of gold-like M5 bars
+(`tests/funnel.cpp`) and counting rejections by reason.
+
+**The binding constraint is the spread, and it behaves as a cliff.** Distinct setups per
+year, synthetic gold, active-hour M5 ATR ≈ 1.3–2.2:
+
+| spread | bars passing gates | distinct setups / year |
+|---|---|---|
+| 0.10 | 33.1% | 144 (~0.55/day) |
+| 0.18 | 21.7% | 70 (~0.27/day) |
+| 0.25 | 7.6% | 18 (~0.07/day) |
+| 0.30 | 0.0% | **0** |
+
+Removing the session filter entirely at spread 0.30 does *not* help — `SPREAD_TOO_HIGH`
+then rejects 93.4% of bars and yields 2 setups a year. So on an expensive account the
+strategy is refusing to trade for the right reason; this is Phase 1 §13.2 arriving in real
+data, not a settings fault.
+
+Three defects this exposed, all fixed:
+
+1. **No visibility.** The EA never showed the per-hour reference profile, so a silent EA
+   was undiagnosable — `SESSION` rejections do not distinguish "wrong hours" from "this
+   account is too expensive". The profile table is now logged at startup at INFO, with an
+   explicit ERROR naming the cause when zero hours are tradeable.
+2. **Missing rule.** Phase 1 §7.4 specifies "in the best 50% **and** below an absolute
+   ceiling of 0.15"; only the ceiling was implemented. The relative half is now in
+   `IprHourProfile::HourTradeable`. Effect is small (144 → 144 setups at spread 0.10).
+3. **No end-of-run funnel.** A year-long run at debug level is unreadable. Rejections are
+   now tallied and printed in `OnDeinit`, sorted by count, so the top line names the
+   limiting rule.
+
+### Open question for the user
+
+Phase 1 §7.4 applies the **same 0.15 ceiling** to the hourly *median* spread/ATR that gate
+G3 applies to the *live* spread. Applying a per-bar cap to a central tendency is materially
+stricter: it requires the hour to beat the cap *on average*, whereas the live gate only
+needs individual bars to pass. An hour whose median S/A is 0.16 is banned outright even
+though roughly half its bars would clear G3.
+
+Options, in order of my preference:
+- **(a) Leave it.** Faithful to Phase 1. On a wide-spread account the EA correctly does
+  nothing, which is the honest answer.
+- **(b) Loosen the session ceiling only** (e.g. median S/A ≤ 0.25) and let the live G3 gate
+  keep the per-bar 0.15. Session selection stays relative; cost control stays per bar.
+- **(c) Drop the absolute ceiling from the session rule**, keeping best-50% only, and rely
+  entirely on G3. Maximum diagnostic clarity — the log would then say `SPREAD_TOO_HIGH`
+  rather than `SESSION`.
+
+This is a strategy parameter change and needs sign-off; nothing has been changed.
+
+### Frequency estimate correction
+
+Even at a 0.10 spread the synthetic run yields ~0.55 setups/day, against the Phase 1
+estimate of 2–5/day. Synthetic data understates real impulse-pullback structure, so the
+real figure should be higher — but the Phase 1 frequency estimate now looks optimistic and
+should be treated as unvalidated. The stage-2 funnel at spread 0.10 is dominated by the
+pullback rules: `NO_PULLBACK` 24.7%, `PULLBACK_TOO_DEEP` 24.4%, `PULLBACK_TOO_FAST` 11.5%.

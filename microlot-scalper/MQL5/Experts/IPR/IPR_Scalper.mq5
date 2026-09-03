@@ -80,6 +80,23 @@ bool             g_feasible      = false;   // TargetNet reachable at current vo
 double           g_measuredCommRT= 0.0;     // per-lot round turn, learned from deal history
 long             g_lastSyncedBar = 0;
 
+//--- Rejection tally. A year-long tester run at debug level produces an
+//--- unreadable log, so every rejection is counted here and the totals
+//--- are printed once at the end. This summary is the fastest way to see
+//--- WHICH rule is holding the strategy back.
+long             g_rejCount[64];
+long             g_acceptedSetups = 0;
+long             g_barsEvaluated  = 0;
+
+//--- Log a rejection and add it to the end-of-run tally.
+void Reject(const IprReject r, const string extra)
+  {
+   const int idx = (int)r;
+   if(idx >= 0 && idx < 64)
+      g_rejCount[idx]++;
+   g_log.Reject(r, extra);
+  }
+
 //+------------------------------------------------------------------+
 //| Clock helpers. All derived from broker server time; nothing here |
 //| assumes the server runs on UTC.                                  |
@@ -411,6 +428,7 @@ int OnInit()
       g_log.Info(StringFormat("Correlation group active: %d token(s) block concurrent entries.",
                               ArraySize(g_corrTokens)));
 
+   ArrayInitialize(g_rejCount, 0);
    g_machine.Init(IprHashString(g_symbol));
    g_risk.Init();
    g_broker.Init(g_symbol, g_cfg.magic, GetPointer(g_log));
@@ -426,6 +444,11 @@ int OnInit()
       return INIT_SUCCEEDED;
      }
    g_feasible = IprLogFeasibility(g_symbol, g_spec, g_cfg, costs, g_md.Atr(), g_log);
+
+   //--- Always print the session profile. When the EA takes few or no
+   //--- trades this table is the diagnosis, so it is logged at INFO
+   //--- rather than hidden behind debug level.
+   g_md.LogProfile(g_log);
 
    //--- Restore EA-only state, then reconcile against broker truth.
    if(g_state.Load(g_machine, g_risk, g_trade))
@@ -783,6 +806,7 @@ void EvaluateNewSetup()
   {
    if(!g_feasible)
       return;                    // startup feasibility already said no
+   g_barsEvaluated++;
 
    const double spread = LiveSpreadPrice();
    if(spread <= 0.0)
@@ -797,7 +821,7 @@ void EvaluateNewSetup()
 
    if(TooCloseToRollover(TimeCurrent()) || InWeekendCloseWindow(TimeCurrent()))
      {
-      g_log.Reject(IPR_REJ_ROLLOVER_WINDOW, "");
+      Reject(IPR_REJ_ROLLOVER_WINDOW, "");
       return;
      }
 
@@ -808,13 +832,13 @@ void EvaluateNewSetup()
                                           CountOurPositionsAccountWide());
    if(risk != IPR_OK)
      {
-      g_log.Reject(risk, "");
+      Reject(risk, "");
       return;
      }
 
    if(HasCorrelatedPosition())
      {
-      g_log.Reject(IPR_REJ_CORRELATION, "a correlated instrument already holds a position");
+      Reject(IPR_REJ_CORRELATION, "a correlated instrument already holds a position");
       return;
      }
 
@@ -825,7 +849,7 @@ void EvaluateNewSetup()
    const IprReject gate = IprCheckMarketGates(g_md.m_bars, g_cfg, ctx, g_md.m_profile, diag);
    if(gate != IPR_OK)
      {
-      g_log.Reject(gate, StringFormat("volRatio=%.2f spreadAtr=%.3f", diag.volRatio, diag.spreadAtr));
+      Reject(gate, StringFormat("volRatio=%.2f spreadAtr=%.3f", diag.volRatio, diag.spreadAtr));
       return;
      }
 
@@ -839,7 +863,7 @@ void EvaluateNewSetup()
                                           g_machine, diag.regimeDir, setup, plan, diag);
    if(res != IPR_OK)
      {
-      g_log.Reject(res, StringFormat("dir=%s leg=%.*f er=%.2f depth=%.2f",
+      Reject(res, StringFormat("dir=%s leg=%.*f er=%.2f depth=%.2f",
                                      IprDirName(diag.regimeDir), g_spec.digits,
                                      diag.legSize, diag.er, diag.depth));
       return;
@@ -851,17 +875,18 @@ void EvaluateNewSetup()
    if(!g_risk.RiskWithinCap(plan.dSl, costs.moneyPerPriceUnit,
                             AccountInfoDouble(ACCOUNT_EQUITY), g_cfg, riskMoney))
      {
-      g_log.Reject(IPR_REJ_RISK_LIMIT,
-                   StringFormat("risk=%.2f exceeds cap at minimum volume", riskMoney));
+      Reject(IPR_REJ_RISK_LIMIT,
+             StringFormat("risk=%.2f exceeds cap at minimum volume", riskMoney));
       return;
      }
 
    if(!g_broker.HasMargin(setup.dir, g_volume, setup.triggerPrice))
      {
-      g_log.Reject(IPR_REJ_RISK_LIMIT, "insufficient free margin");
+      Reject(IPR_REJ_RISK_LIMIT, "insufficient free margin");
       return;
      }
 
+   g_acceptedSetups++;
    ArmSetup(setup, plan, costs, ctx);
   }
 
@@ -959,9 +984,52 @@ void ManageOpenPosition()
   }
 
 //+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//| End-of-run rejection funnel.                                      |
+//|                                                                   |
+//| Read this from the top: the largest count is the rule that is      |
+//| actually limiting the strategy. A run dominated by SESSION or      |
+//| SPREAD_TOO_HIGH is a COST problem (wrong account), not a settings  |
+//| problem - see the hourly profile logged at startup.                |
+//+------------------------------------------------------------------+
+void LogRejectionSummary()
+  {
+   g_log.Info("------------- REJECTION SUMMARY -------------");
+   g_log.Info(StringFormat("bars that reached setup evaluation : %I64d", g_barsEvaluated));
+
+   long total = 0;
+   for(int i = 0; i < 64; i++)
+      total += g_rejCount[i];
+
+   //--- Print in descending order of count; the top line is the answer.
+   for(int rank = 0; rank < 64; rank++)
+     {
+      int best = -1;
+      long bestN = 0;
+      for(int i = 1; i < 64; i++)
+        {
+         if(g_rejCount[i] > bestN)
+           { bestN = g_rejCount[i]; best = i; }
+        }
+      if(best < 0)
+         break;
+      g_log.Info(StringFormat("  %-24s %8I64d  (%5.1f%%)",
+                              IprRejectName((IprReject)best), bestN,
+                              total > 0 ? 100.0 * bestN / total : 0.0));
+      g_rejCount[best] = 0;                 // consume so the next rank is found
+     }
+
+   g_log.Info(StringFormat("ACCEPTED SETUPS: %I64d", g_acceptedSetups));
+   if(g_acceptedSetups == 0)
+      g_log.Error("No setup was ever accepted. Read the top rejection reason above "
+                  "and the HOURLY SESSION PROFILE printed at startup.");
+   g_log.Info("--------------------------------------------");
+  }
+
 void OnDeinit(const int reason)
   {
    g_state.Save(g_machine, g_risk, g_trade);
+   LogRejectionSummary();
    g_log.Info(StringFormat("=== IPR Scalper stopped (reason %d) ===", reason));
   }
 //+------------------------------------------------------------------+

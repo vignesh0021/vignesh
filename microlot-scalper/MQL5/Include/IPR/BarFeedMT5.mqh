@@ -215,6 +215,51 @@ public:
       ctx.shockStandDownBars = m_shockStandDown;
      }
 
+   //+---------------------------------------------------------------+
+   //| Print the per-hour reference profile the session filter acts on.|
+   //| This is the first thing to read when the EA is not trading: it  |
+   //| separates "wrong hours" from "this account is too expensive",   |
+   //| which are the two very different causes of a silent EA.         |
+   //+---------------------------------------------------------------+
+   void              LogProfile(CIprLogger &log)
+     {
+      const int digits = (int)SymbolInfoInteger(m_symbol, SYMBOL_DIGITS);
+      const int tradeable = m_profile.TradeableHours(IPR_SPREAD_ATR_MAX);
+
+      log.Info("------------- HOURLY SESSION PROFILE -------------");
+      log.Info("hour  medATR     medSPREAD   S/A     tradeable");
+      for(int h = 0; h < IPR_PROFILE_HOURS; h++)
+        {
+         double ma = 0.0, ms = 0.0, r = 0.0;
+         if(!m_profile.Ready(h) || !m_profile.HourRatio(h, r))
+           {
+            log.Info(StringFormat(" %02d   (no reference yet)", h));
+            continue;
+           }
+         m_profile.MedianAtr(h, ma);
+         m_profile.MedianSpread(h, ms);
+         log.Info(StringFormat(" %02d   %-10.*f %-11.*f %-7.3f %s", h,
+                               digits, ma, digits, ms, r,
+                               m_profile.HourTradeable(h, IPR_SPREAD_ATR_MAX)
+                               ? "YES" : "no"));
+        }
+      log.Info(StringFormat("TRADEABLE HOURS: %d of %d with a formed reference "
+                            "(ceiling S/A <= %.2f, and in the best 50%%)",
+                            tradeable, m_profile.FormedHours(), IPR_SPREAD_ATR_MAX));
+
+      if(tradeable == 0)
+        {
+         log.Error("NO TRADEABLE HOURS. Every hour's median spread exceeds "
+                   "15% of its median ATR, so the session filter rejects all of them "
+                   "and the EA will take NO trades.");
+         log.Error("This is a COST problem, not a settings problem: this account's "
+                   "spread is too wide for micro-lot scalping on this symbol. "
+                   "Compare the S/A column above against 0.15 - a raw-spread/ECN "
+                   "account is required (Phase 1 section 13.2).");
+        }
+      log.Info("-------------------------------------------------");
+     }
+
    double            EmaFast() const { return m_emaFast.Value(); }
    double            LastClose() const
      {

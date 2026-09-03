@@ -98,18 +98,76 @@ struct IprHourProfile
       return IprMedian(s, out);
      }
 
-   //--- Session quality for the derived session filter (Phase 1 7.4):
-   //--- an hour is tradeable when its typical spread/ATR ratio is under
-   //--- the same ceiling the live gate uses. Discovering sessions this
-   //--- way is what keeps XAU and BTC on identical code.
-   bool              HourTradeable(const int hour, const double ceiling) const
+   //--- The hour's typical cost-to-volatility ratio, median(S)/median(A).
+   //--- This single number is what the session filter ranks hours by.
+   bool              HourRatio(const int hour, double &out) const
      {
+      out = 0.0;
       double ma = 0.0, ms = 0.0;
       if(!MedianAtr(hour, ma) || !MedianSpread(hour, ms))
          return false;
       if(ma <= 0.0)
          return false;
-      return ((ms / ma) <= ceiling);
+      out = ms / ma;
+      return true;
+     }
+
+   //--- How many hours currently have a formed reference.
+   int               FormedHours() const
+     {
+      int n = 0;
+      for(int h = 0; h < IPR_PROFILE_HOURS; h++)
+        {
+         if(Ready(h))
+            n++;
+        }
+      return n;
+     }
+
+   //+---------------------------------------------------------------+
+   //| Derived session filter (Phase 1 7.4): permit trading only in    |
+   //| hours whose median spread/ATR is BOTH in the best 50% for this  |
+   //| instrument AND below an absolute ceiling.                       |
+   //|                                                                 |
+   //| The relative half is the discovery mechanism - it is what finds  |
+   //| London/NY on gold and the liquid hours on BTC from the           |
+   //| instrument's own history, with no session constants. The         |
+   //| absolute ceiling is the backstop that refuses an instrument      |
+   //| which is expensive in every hour.                                |
+   //+---------------------------------------------------------------+
+   bool              HourTradeable(const int hour, const double ceiling) const
+     {
+      double r = 0.0;
+      if(!HourRatio(hour, r))
+         return false;
+      if(r > ceiling)
+         return false;
+
+      //--- Rank against the other hours that have a formed reference.
+      int formed = 0, better = 0;
+      for(int h = 0; h < IPR_PROFILE_HOURS; h++)
+        {
+         double rh = 0.0;
+         if(!HourRatio(h, rh))
+            continue;
+         formed++;
+         if(rh < r)
+            better++;
+        }
+      if(formed <= 1)
+         return true;
+      return (better * 2 < formed);      // strictly in the better half
+     }
+
+   int               TradeableHours(const double ceiling) const
+     {
+      int n = 0;
+      for(int h = 0; h < IPR_PROFILE_HOURS; h++)
+        {
+         if(HourTradeable(h, ceiling))
+            n++;
+        }
+      return n;
      }
   };
 
