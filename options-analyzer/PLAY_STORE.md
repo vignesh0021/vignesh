@@ -82,8 +82,8 @@ cd android && ./gradlew bundleRelease
   TradeLikeHunter is a paper-trading and options-analytics app for the Indian
   market (NIFTY, BANKNIFTY, FINNIFTY, SENSEX and F&O stocks).
 
-  • Market-Pulse-style option chain with live prices (connect your own Fyers
-    account for real data).
+  • Market-Pulse-style option chain with live prices — connect Fyers, or
+    Upstox / Dhan for live index chains (NIFTY, BANKNIFTY, FINNIFTY, SENSEX).
   • Connect your Indian broker to monitor real positions & live PnL — Fyers,
     plus Dhan, Upstox, Zerodha Kite and Angel One (beta). Read-only; keys stay
     on your device.

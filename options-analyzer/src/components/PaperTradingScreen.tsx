@@ -4,6 +4,12 @@ import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View
 import { niceStrikeStep } from '../constants/instruments';
 import type { Strategy } from '../constants/strategies';
 import { getOptionChain, getQuotes, type FyersExpiry } from '../services/brokers/fyers';
+import {
+  brokerMeta,
+  extraChainSupported,
+  getExtraOptionChain,
+  type ExtraBrokerId,
+} from '../services/brokers/indianBrokers';
 import { liveFeed, type FeedSource } from '../services/liveFeed';
 import { atmStrikeFor, fyersChainToRows, priceContract, type ChainQuote, type ChainRow } from '../services/optionChain';
 import { theme } from '../theme';
@@ -42,6 +48,7 @@ export function PaperTradingScreen() {
   const defaultIv = usePortfolioStore((s) => s.defaultIv);
   const rate = usePortfolioStore((s) => s.rate);
   const fyers = useBrokerStore((s) => s.fyers);
+  const accounts = useBrokerStore((s) => s.accounts);
 
   const positions = usePaperStore((s) => s.positions);
   const realizedPnl = usePaperStore((s) => s.realizedPnl);
@@ -68,7 +75,30 @@ export function PaperTradingScreen() {
   const expiriesRef = useRef<FyersExpiry[]>([]);
 
   const fyersConnected = !!(fyers.appId && fyers.accessToken);
-  const useFyers = fyersConnected && asset.assetClass === 'india_equity';
+  const isIndia = asset.assetClass === 'india_equity';
+
+  // Pick the live-chain provider: Fyers first (fully verified), then any
+  // connected extra broker (Upstox/Dhan) that serves this underlying's chain.
+  const chainProvider = useMemo<
+    | { kind: 'fyers' }
+    | { kind: 'extra'; id: ExtraBrokerId; creds: Record<string, string>; token: string }
+    | null
+  >(() => {
+    if (!isIndia) return null;
+    if (fyersConnected) return { kind: 'fyers' };
+    const underlying = asset.symbol;
+    for (const id of Object.keys(accounts) as ExtraBrokerId[]) {
+      const acct = accounts[id];
+      if (acct?.token && extraChainSupported(id, underlying)) {
+        return { kind: 'extra', id, creds: acct.creds, token: acct.token };
+      }
+    }
+    return null;
+  }, [isIndia, fyersConnected, accounts, asset.symbol]);
+
+  const useFyers = chainProvider != null;
+  const chainBrokerName =
+    chainProvider?.kind === 'extra' ? brokerMeta(chainProvider.id).name : 'Fyers';
 
   const [expiryIso, setExpiryIso] = useState(upcomingExpiries(asset, 6)[0]);
   const step = asset.strikeStep > 0 ? asset.strikeStep : niceStrikeStep(spot || spotPrice || 1);
@@ -108,9 +138,10 @@ export function PaperTradingScreen() {
     };
   }, []);
 
-  // Poll the real Fyers option chain when connected to the Indian market.
+  // Poll the real option chain when a live provider (Fyers / Upstox / Dhan) is
+  // connected for the Indian market.
   useEffect(() => {
-    if (!useFyers) {
+    if (!chainProvider) {
       setFyersRows(null);
       return;
     }
@@ -119,8 +150,18 @@ export function PaperTradingScreen() {
 
     const tick = async () => {
       try {
-        const epoch = expiriesRef.current.find((e) => e.iso === expiryIso)?.epoch;
-        const chain = await getOptionChain(fyers.appId, fyers.accessToken!, symbol, 12, epoch);
+        const sel = expiriesRef.current.find((e) => e.iso === expiryIso)?.epoch;
+        const chain =
+          chainProvider.kind === 'fyers'
+            ? await getOptionChain(fyers.appId, fyers.accessToken!, symbol, 12, sel)
+            : await getExtraOptionChain(
+                chainProvider.id,
+                chainProvider.creds,
+                chainProvider.token,
+                asset.symbol,
+                12,
+                sel,
+              );
         if (cancelled) return;
         if (chain.expiries.length) {
           expiriesRef.current = chain.expiries;
@@ -151,7 +192,7 @@ export function PaperTradingScreen() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [useFyers, fyers.appId, fyers.accessToken, asset.symbol, expiryIso, defaultIv, rate]);
+  }, [chainProvider, asset.symbol, expiryIso, defaultIv, rate]);
 
   // Poll real broker LTPs for open positions + resting orders so they mark to
   // the live market (not the Black-Scholes tape) when Fyers is connected.
@@ -270,7 +311,7 @@ export function PaperTradingScreen() {
   const live = source === 'live';
   const realChain = useFyers && !!fyersRows && fyersRows.length > 0;
 
-  // Expiry chips: real Fyers expiries when connected, else synthetic weeklies.
+  // Expiry chips: real broker expiries when connected, else synthetic weeklies.
   const expiryList: { iso: string; label: string }[] =
     useFyers && fyersExpiries.length > 0
       ? fyersExpiries.map((e) => ({ iso: e.iso, label: e.label || expiryTag(e.iso) }))
@@ -285,7 +326,7 @@ export function PaperTradingScreen() {
             <Text style={styles.paperTxt}>PAPER</Text>
           </View>
           <View style={[styles.liveDot, { backgroundColor: realChain ? theme.colors.profit : live ? theme.colors.profit : theme.colors.primary }]} />
-          <Text style={styles.modeTxt}>{realChain ? 'LIVE · Fyers chain' : live ? 'LIVE · Fyers' : 'SIM feed'}</Text>
+          <Text style={styles.modeTxt}>{realChain ? `LIVE · ${chainBrokerName} chain` : live ? 'LIVE feed' : 'SIM feed'}</Text>
         </View>
         <TouchableOpacity onPress={resetPaper} hitSlop={8}>
           <Text style={styles.reset}>↺ Reset</Text>
@@ -330,21 +371,21 @@ export function PaperTradingScreen() {
           </TouchableOpacity>
         ))}
       </ScrollView>
-      {/* Fyers chain diagnostics */}
+      {/* Live chain diagnostics */}
       {fyersConnected && !useFyers ? (
         <Text style={styles.chainHint}>
           Live Fyers chain is available for NIFTY · BANKNIFTY · SENSEX. {asset.symbol} shows a simulated chain.
         </Text>
       ) : useFyers && chainState === 'error' ? (
         <Text style={styles.chainErr}>
-          ⚠ Fyers: {chainErr}. Ensure your Fyers app has the “Quotes & Market data” permission enabled.
+          ⚠ {chainBrokerName}: {chainErr}. Check the broker connection and its market-data permission.
         </Text>
       ) : useFyers && realChain ? (
         <Text style={styles.chainLive}>
-          ● Fyers LIVE · {fyersRows!.length} strikes{chainAt ? ` · ${new Date(chainAt).toLocaleTimeString()}` : ''}
+          ● {chainBrokerName} LIVE · {fyersRows!.length} strikes{chainAt ? ` · ${new Date(chainAt).toLocaleTimeString()}` : ''}
         </Text>
       ) : useFyers ? (
-        <Text style={styles.chainHint}>Connecting to Fyers option chain…</Text>
+        <Text style={styles.chainHint}>Connecting to {chainBrokerName} option chain…</Text>
       ) : null}
 
       {/* Collapsible sub-nav — the selected view runs full-screen below */}

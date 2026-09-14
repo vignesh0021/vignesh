@@ -1,5 +1,6 @@
 import SHA256 from 'crypto-js/sha256';
 
+import type { FyersChainQuote, FyersExpiry, FyersOptionChain } from './fyers';
 import type { BrokerId, BrokerPosition } from './types';
 
 /**
@@ -283,4 +284,184 @@ export async function fetchPositions(
       }));
     }
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Live option chain (Upstox / Dhan) for non-Fyers users.
+ *
+ * Index chains only — the common case — because stock chains need an
+ * instrument master (ISIN / security id per symbol) we don't ship. The
+ * result is normalised to the same FyersOptionChain shape the UI already
+ * renders, so the Market-Pulse chain works whichever broker is connected.
+ * BETA, coded to each broker's published API; verify on a live account.
+ * ------------------------------------------------------------------ */
+
+interface UnderlyingRef {
+  /** Upstox instrument_key for the index. */
+  upstoxKey?: string;
+  /** Dhan underlying security id + segment. */
+  dhanScrip?: number;
+  dhanSeg?: string;
+}
+
+/** Internal underlying symbol (as used across the app) → broker identifiers. */
+const UNDERLYING_REF: Record<string, UnderlyingRef> = {
+  NIFTY: { upstoxKey: 'NSE_INDEX|Nifty 50', dhanScrip: 13, dhanSeg: 'IDX_I' },
+  BANKNIFTY: { upstoxKey: 'NSE_INDEX|Nifty Bank', dhanScrip: 25, dhanSeg: 'IDX_I' },
+  FINNIFTY: { upstoxKey: 'NSE_INDEX|Nifty Fin Service', dhanScrip: 27, dhanSeg: 'IDX_I' },
+  SENSEX: { upstoxKey: 'BSE_INDEX|SENSEX', dhanScrip: 51, dhanSeg: 'IDX_I' },
+};
+
+/** Can this broker serve a live chain for this underlying (index-only)? */
+export function extraChainSupported(id: ExtraBrokerId, underlyingSymbol: string): boolean {
+  const ref = UNDERLYING_REF[underlyingSymbol];
+  if (!ref) return false;
+  if (id === 'upstox') return !!ref.upstoxKey;
+  if (id === 'dhan') return !!ref.dhanScrip;
+  return false;
+}
+
+/** Trim a strike-sorted chain to ±count strikes around the ATM. */
+function trimAroundAtm(
+  rows: FyersOptionChain['rows'],
+  spot: number,
+  count: number,
+): FyersOptionChain['rows'] {
+  if (rows.length <= count * 2 + 1) return rows;
+  let atmIdx = 0;
+  let best = Infinity;
+  rows.forEach((r, i) => {
+    const d = Math.abs(r.strike - spot);
+    if (d < best) {
+      best = d;
+      atmIdx = i;
+    }
+  });
+  const lo = Math.max(0, atmIdx - count);
+  return rows.slice(lo, lo + count * 2 + 1);
+}
+
+const mkQuote = (
+  strike: number,
+  optType: 'CE' | 'PE',
+  o: { symbol?: string; ltp: number; chg: number; oi: number; bid: number; ask: number; volume: number; oiChg: number },
+): FyersChainQuote => ({
+  symbol: o.symbol ?? '',
+  strike,
+  optType,
+  ltp: o.ltp,
+  chg: o.chg,
+  oi: o.oi,
+  bid: o.bid,
+  ask: o.ask,
+  volume: o.volume,
+  oiChg: o.oiChg,
+});
+
+/**
+ * Fetch a live index option chain from Upstox or Dhan, normalised to the
+ * FyersOptionChain shape. `expirySel` is an ISO date (yyyy-mm-dd) from a prior
+ * call's `expiries[].epoch`; omit for the nearest expiry.
+ */
+export async function getExtraOptionChain(
+  id: ExtraBrokerId,
+  creds: Record<string, string>,
+  token: string,
+  underlyingSymbol: string,
+  strikeCount = 12,
+  expirySel?: string,
+): Promise<FyersOptionChain> {
+  const ref = UNDERLYING_REF[underlyingSymbol];
+  if (!ref) throw new Error(`${underlyingSymbol}: live chain via this broker supports indices only.`);
+
+  if (id === 'upstox') {
+    if (!ref.upstoxKey) throw new Error(`${underlyingSymbol} not available on Upstox.`);
+    const authH = { Authorization: `Bearer ${token}` };
+    // Expiries from the contract list (dedupe — one row per contract).
+    const cj = await req(
+      `https://api.upstox.com/v2/option/contract?instrument_key=${encodeURIComponent(ref.upstoxKey)}`,
+      { headers: authH },
+    );
+    const cRows: any[] = Array.isArray(cj?.data) ? cj.data : [];
+    const isoSet = Array.from(new Set(cRows.map((r) => String(r?.expiry)).filter(Boolean))).sort();
+    if (!isoSet.length) throw new Error(cj?.message || cj?.errors?.[0]?.message || 'Upstox: no expiries returned.');
+    const expiries: FyersExpiry[] = isoSet.map((iso) => ({ iso, epoch: iso, label: iso }));
+    const chosen = (expirySel && isoSet.includes(expirySel)) ? expirySel : isoSet[0];
+
+    const j = await req(
+      `https://api.upstox.com/v2/option/chain?instrument_key=${encodeURIComponent(ref.upstoxKey)}&expiry_date=${chosen}`,
+      { headers: authH },
+    );
+    const data: any[] = Array.isArray(j?.data) ? j.data : [];
+    if (!data.length) throw new Error(j?.message || j?.errors?.[0]?.message || 'Upstox chain empty.');
+    const underlyingLtp = num(data[0]?.underlying_spot_price);
+    const rows = data
+      .map((d) => {
+        const strike = num(d?.strike_price);
+        const side = (leg: any, ot: 'CE' | 'PE') => {
+          if (!leg?.market_data) return undefined;
+          const m = leg.market_data;
+          const ltp = num(m.ltp);
+          return mkQuote(strike, ot, {
+            symbol: String(leg.instrument_key ?? ''),
+            ltp,
+            chg: ltp - num(m.close_price),
+            oi: num(m.oi),
+            bid: num(m.bid_price),
+            ask: num(m.ask_price),
+            volume: num(m.volume),
+            oiChg: num(m.oi) - num(m.prev_oi),
+          });
+        };
+        return { strike, call: side(d?.call_options, 'CE'), put: side(d?.put_options, 'PE') };
+      })
+      .filter((r) => r.strike > 0)
+      .sort((a, b) => a.strike - b.strike);
+    return { underlyingLtp, underlyingPrevClose: 0, expiries, rows: trimAroundAtm(rows, underlyingLtp, strikeCount) };
+  }
+
+  // Dhan
+  if (!ref.dhanScrip) throw new Error(`${underlyingSymbol} not available on Dhan.`);
+  const dhanH = { 'access-token': token, 'client-id': creds.clientId ?? '', 'Content-Type': 'application/json' };
+  const base = { UnderlyingScrip: ref.dhanScrip, UnderlyingSeg: ref.dhanSeg };
+  const ej = await req('https://api.dhan.co/v2/optionchain/expirylist', {
+    method: 'POST',
+    headers: dhanH,
+    body: JSON.stringify(base),
+  });
+  const isoList: string[] = Array.isArray(ej?.data) ? ej.data.map((x: any) => String(x)) : [];
+  if (!isoList.length) throw new Error(ej?.errorMessage || ej?.message || 'Dhan: no expiries (check subscription).');
+  const expiries: FyersExpiry[] = isoList.map((iso) => ({ iso, epoch: iso, label: iso }));
+  const chosen = (expirySel && isoList.includes(expirySel)) ? expirySel : isoList[0];
+
+  const j = await req('https://api.dhan.co/v2/optionchain', {
+    method: 'POST',
+    headers: dhanH,
+    body: JSON.stringify({ ...base, Expiry: chosen }),
+  });
+  const oc = j?.data?.oc;
+  if (!oc || typeof oc !== 'object') throw new Error(j?.errorMessage || j?.message || 'Dhan chain unavailable.');
+  const underlyingLtp = num(j?.data?.last_price);
+  const rows = Object.keys(oc)
+    .map((k) => {
+      const strike = num(k);
+      const entry = oc[k] ?? {};
+      const side = (leg: any, ot: 'CE' | 'PE') => {
+        if (!leg) return undefined;
+        const ltp = num(leg.last_price);
+        return mkQuote(strike, ot, {
+          ltp,
+          chg: ltp - num(leg.previous_close_price),
+          oi: num(leg.oi),
+          bid: num(leg.top_bid_price),
+          ask: num(leg.top_ask_price),
+          volume: num(leg.volume),
+          oiChg: num(leg.oi) - num(leg.previous_oi),
+        });
+      };
+      return { strike, call: side(entry.ce, 'CE'), put: side(entry.pe, 'PE') };
+    })
+    .filter((r) => r.strike > 0 && (r.call || r.put))
+    .sort((a, b) => a.strike - b.strike);
+  return { underlyingLtp, underlyingPrevClose: 0, expiries, rows: trimAroundAtm(rows, underlyingLtp, strikeCount) };
 }
