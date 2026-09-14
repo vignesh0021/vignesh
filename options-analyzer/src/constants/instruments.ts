@@ -70,13 +70,25 @@ export function makeAsset(symbol: string, name: string, quoteType?: string, curr
   };
 }
 
-/** Quick-select chips shown at the top of the market panel. */
+/**
+ * Quick-select presets — NSE/BSE indices + liquid F&O stocks only (this build
+ * targets the Indian market via Fyers). Any other NSE/BSE symbol is still
+ * reachable through search. Lot sizes are current-ish defaults and remain
+ * editable per order.
+ */
 export const PRESET_ASSETS: MarketAsset[] = [
-  { symbol: 'BTC', yahoo: 'BTC-USD', label: 'Bitcoin', currency: 'USD', assetClass: 'crypto', lotSize: 0.001, strikeStep: 1000, vixLabel: 'DVOL' },
-  { symbol: 'ETH', yahoo: 'ETH-USD', label: 'Ethereum', currency: 'USD', assetClass: 'crypto', lotSize: 0.01, strikeStep: 50, vixLabel: 'DVOL' },
+  // Indices
   { symbol: 'NIFTY', yahoo: '^NSEI', label: 'Nifty 50', currency: 'INR', assetClass: 'india_equity', lotSize: 75, strikeStep: 50, vixLabel: 'India VIX' },
-  { symbol: 'BANKNIFTY', yahoo: '^NSEBANK', label: 'Bank Nifty', currency: 'INR', assetClass: 'india_equity', lotSize: 30, strikeStep: 100, vixLabel: 'India VIX' },
+  { symbol: 'BANKNIFTY', yahoo: '^NSEBANK', label: 'Bank Nifty', currency: 'INR', assetClass: 'india_equity', lotSize: 35, strikeStep: 100, vixLabel: 'India VIX' },
+  { symbol: 'FINNIFTY', yahoo: 'NIFTY_FIN_SERVICE.NS', label: 'Fin Nifty', currency: 'INR', assetClass: 'india_equity', lotSize: 65, strikeStep: 50, vixLabel: 'India VIX' },
   { symbol: 'SENSEX', yahoo: '^BSESN', label: 'BSE Sensex', currency: 'INR', assetClass: 'india_equity', lotSize: 20, strikeStep: 100, vixLabel: 'India VIX' },
+  // Liquid F&O stocks
+  { symbol: 'RELIANCE', yahoo: 'RELIANCE.NS', label: 'Reliance', currency: 'INR', assetClass: 'india_equity', lotSize: 500, strikeStep: 0, vixLabel: 'India VIX' },
+  { symbol: 'HDFCBANK', yahoo: 'HDFCBANK.NS', label: 'HDFC Bank', currency: 'INR', assetClass: 'india_equity', lotSize: 550, strikeStep: 0, vixLabel: 'India VIX' },
+  { symbol: 'ICICIBANK', yahoo: 'ICICIBANK.NS', label: 'ICICI Bank', currency: 'INR', assetClass: 'india_equity', lotSize: 700, strikeStep: 0, vixLabel: 'India VIX' },
+  { symbol: 'SBIN', yahoo: 'SBIN.NS', label: 'SBI', currency: 'INR', assetClass: 'india_equity', lotSize: 750, strikeStep: 0, vixLabel: 'India VIX' },
+  { symbol: 'INFY', yahoo: 'INFY.NS', label: 'Infosys', currency: 'INR', assetClass: 'india_equity', lotSize: 400, strikeStep: 0, vixLabel: 'India VIX' },
+  { symbol: 'TCS', yahoo: 'TCS.NS', label: 'TCS', currency: 'INR', assetClass: 'india_equity', lotSize: 175, strikeStep: 0, vixLabel: 'India VIX' },
 ];
 
 /** Fallback IV (decimal) if the volatility index can't be fetched. */

@@ -1,18 +1,17 @@
-name: Build Options Analyzer APK
+name: Build Options Analyzer AAB (Play Store)
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - claude/options-payoff-analyzer-app-9jsuls
       - claude/options-paper-trading-mode-sywt0f
     paths:
       - "options-analyzer/**"
-      - ".github/workflows/build-options-apk.yml"
+      - ".github/workflows/build-options-aab.yml"
 
 jobs:
   build:
-    name: Prebuild + Gradle APK
+    name: Prebuild + Gradle AAB
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:
@@ -41,22 +40,21 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Type check
-        run: npm run typecheck
+        run: npx tsc --noEmit
 
       - name: Expo prebuild (generate native android project)
-        run: npx expo prebuild --platform android --no-install
-        env:
-          CI: "1"
+        run: npx expo prebuild --platform android --clean
 
-      - name: Build release APK (signed with default debug keystore)
+      # NOTE: this produces a *debug-signed* .aab for inspection/testing only.
+      # A Play Store upload needs an upload keystore (see options-analyzer/PLAY_STORE.md);
+      # the recommended path is `eas build -p android --profile production`.
+      - name: Build release AAB (debug keystore — for testing)
         working-directory: options-analyzer/android
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
-        env:
-          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.daemon=false"
+        run: ./gradlew bundleRelease --no-daemon
 
-      - name: Upload APK artifact
+      - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: options-analyzer-apk
-          path: options-analyzer/android/app/build/outputs/apk/release/app-release.apk
-          retention-days: 30
+          name: options-analyzer-aab
+          path: options-analyzer/android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
