@@ -40,11 +40,12 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
-      - name: Setup Android SDK
+      # Explicit packages: the action's default ("tools") was removed from
+      # Google's SDK repository and now fails the step.
+      - name: Setup Android SDK (API 36)
         uses: android-actions/setup-android@v3
-
-      - name: Install Android 36 platform + build-tools
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        with:
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
 
       - name: Install JS dependencies
         run: npm install --no-audit --no-fund
