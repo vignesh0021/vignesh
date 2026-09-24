@@ -2,6 +2,7 @@ package ai.opencode.mobile.di
 
 import android.content.Context
 import ai.opencode.mobile.data.local.AppDatabase
+import ai.opencode.mobile.data.local.LocalModelManager
 import ai.opencode.mobile.data.remote.ChatClientFactory
 import ai.opencode.mobile.data.repository.ChatRepository
 import ai.opencode.mobile.data.repository.SessionRepository
@@ -22,7 +23,8 @@ class AppContainer(context: Context) {
 
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(appContext) }
     val apiKeyStore: ApiKeyStore by lazy { ApiKeyStore(appContext) }
-    private val chatClientFactory: ChatClientFactory by lazy { ChatClientFactory() }
+    val localModelManager: LocalModelManager by lazy { LocalModelManager(appContext) }
+    private val chatClientFactory: ChatClientFactory by lazy { ChatClientFactory(appContext) }
 
     val sessionRepository: SessionRepository by lazy {
         SessionRepository(database.sessionDao(), settingsRepository)

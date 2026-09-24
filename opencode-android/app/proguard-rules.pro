@@ -23,3 +23,11 @@
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn javax.annotation.**
 -dontwarn com.google.crypto.tink.**
+
+# MediaPipe GenAI (on-device LLM inference) — JNI + protobuf backed. Keep its
+# classes and silence compile-only annotation references so R8 shrinking succeeds.
+-keep class com.google.mediapipe.** { *; }
+-keep class com.google.protobuf.** { *; }
+-dontwarn com.google.mediapipe.**
+-dontwarn com.google.protobuf.**
+-dontwarn com.google.auto.value.**

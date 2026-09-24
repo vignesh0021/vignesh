@@ -163,6 +163,20 @@ catalog entry. This is the same free-model pool opencode.ai users tap into (Open
 so you can point OmniCode at any OpenAI-compatible endpoint and run any model the provider
 exposes — not just the ones in the catalog.
 
+### On-device (offline) models
+
+OmniCode can also run **fully offline** with no API key, using compressed (quantized) models
+via Google's **MediaPipe GenAI** (LiteRT) runtime — the same tech behind Google AI Edge Gallery.
+
+- **Settings → On-device (offline) → Manage on-device models.**
+- **Download** a curated quantized model (Gemma 3 1B, Qwen2.5 0.5B) from Hugging Face's
+  `litert-community` repos, **paste a direct `.task` URL**, or **import** a `.task` file from
+  your device. Gated Hugging Face repos accept a free access token.
+- Tap **Use** and chats run locally — no network, no key. Models are large (0.5–1.5 GB) and
+  run best on newer phones with ample free RAM. First reply may take a few seconds while the
+  model loads into memory.
+
+
 > Robustness: the OpenAI-compatible client reads the stream by hand and falls back to parsing
 > a plain-JSON body, so free gateways that answer HTTP 200 with a non-SSE body (or an inline
 > `{"error":…}`) surface their real message instead of a confusing "Request failed (HTTP 200)".

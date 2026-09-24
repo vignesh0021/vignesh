@@ -45,6 +45,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
+    onOpenLocalModels: () -> Unit = {},
     viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.Factory),
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
@@ -87,6 +88,25 @@ fun SettingsScreen(
                             label = { Text(provider.displayName) },
                         )
                     }
+                }
+            }
+
+            SectionCard(title = "On-device (offline)") {
+                Text(
+                    "Run a compressed model locally — no API key, no internet. Download or " +
+                        "import a model, then tap Use.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(onClick = onOpenLocalModels, modifier = Modifier.fillMaxWidth()) {
+                    Text("Manage on-device models")
+                }
+                if (settings.provider == ProviderType.LOCAL) {
+                    Text(
+                        "Active on-device model: ${settings.modelId.substringAfterLast('/').ifBlank { "none selected" }}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                 }
             }
 

@@ -11,6 +11,7 @@ import androidx.navigation.navArgument
 import ai.opencode.mobile.ui.chat.ChatScreen
 import ai.opencode.mobile.ui.files.CodeViewerScreen
 import ai.opencode.mobile.ui.files.FilesScreen
+import ai.opencode.mobile.ui.local.LocalModelsScreen
 import ai.opencode.mobile.ui.sessions.SessionsScreen
 import ai.opencode.mobile.ui.settings.SettingsScreen
 
@@ -20,6 +21,7 @@ object Routes {
     const val FILES = "files"
     const val VIEWER = "viewer/{path}"
     const val SETTINGS = "settings"
+    const val LOCAL_MODELS = "local_models"
 
     fun chat(sessionId: String) = "chat/$sessionId"
     fun viewer(path: String) = "viewer/${Uri.encode(path)}"
@@ -60,7 +62,13 @@ fun AppNavHost(navController: NavHostController = rememberNavController()) {
             CodeViewerScreen(path = path, onBack = { navController.popBackStack() })
         }
         composable(Routes.SETTINGS) {
-            SettingsScreen(onBack = { navController.popBackStack() })
+            SettingsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenLocalModels = { navController.navigate(Routes.LOCAL_MODELS) },
+            )
+        }
+        composable(Routes.LOCAL_MODELS) {
+            LocalModelsScreen(onBack = { navController.popBackStack() })
         }
     }
 }

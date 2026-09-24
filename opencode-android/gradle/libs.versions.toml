@@ -18,6 +18,7 @@ androidxJunit = "1.2.1"
 espresso = "3.6.1"
 coreTesting = "2.2.0"
 mockk = "1.13.13"
+mediapipeGenai = "0.10.24"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -56,6 +57,7 @@ androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-co
 androidx-core-testing = { group = "androidx.arch.core", name = "core-testing", version.ref = "coreTesting" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
+mediapipe-tasks-genai = { group = "com.google.mediapipe", name = "tasks-genai", version.ref = "mediapipeGenai" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

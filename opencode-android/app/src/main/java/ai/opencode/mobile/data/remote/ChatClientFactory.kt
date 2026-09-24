@@ -1,12 +1,15 @@
 package ai.opencode.mobile.data.remote
 
+import android.content.Context
 import ai.opencode.mobile.domain.model.ProviderType
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
 /** Builds the correct [ChatClient] for a provider, reusing a single tuned OkHttp stack. */
-class ChatClientFactory {
+class ChatClientFactory(context: Context) {
+
+    private val appContext = context.applicationContext
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -22,11 +25,14 @@ class ChatClientFactory {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    // The on-device engine caches a loaded model, so keep a single instance.
+    private val localClient: LocalLlmClient by lazy { LocalLlmClient(appContext) }
+
     fun create(provider: ProviderType): ChatClient =
-        if (provider == ProviderType.ANTHROPIC) {
-            AnthropicChatClient(http, json)
-        } else {
+        when {
+            provider.isLocal -> localClient
+            provider == ProviderType.ANTHROPIC -> AnthropicChatClient(http, json)
             // OpenRouter, Groq, OpenAI and any OpenAI-compatible endpoint share one client.
-            OpenAiChatClient(http, json)
+            else -> OpenAiChatClient(http, json)
         }
 }

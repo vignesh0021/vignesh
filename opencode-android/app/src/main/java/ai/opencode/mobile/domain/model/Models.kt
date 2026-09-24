@@ -13,10 +13,15 @@ enum class ProviderType(val displayName: String, val defaultBaseUrl: String, val
     GROQ("Groq (free)", "https://api.groq.com/openai", "https://console.groq.com/keys"),
     ANTHROPIC("Anthropic", "https://api.anthropic.com", "https://console.anthropic.com/settings/keys"),
     OPENAI("OpenAI", "https://api.openai.com", "https://platform.openai.com/api-keys"),
-    OPENAI_COMPATIBLE("OpenAI-compatible", "https://api.openai.com", null);
+    OPENAI_COMPATIBLE("OpenAI-compatible", "https://api.openai.com", null),
+    LOCAL("On-device (offline)", "", null);
 
     val isOpenAiCompatible: Boolean
-        get() = this != ANTHROPIC
+        get() = this != ANTHROPIC && this != LOCAL
+
+    /** On-device inference needs no API key or network. */
+    val isLocal: Boolean
+        get() = this == LOCAL
 
     companion object {
         fun fromName(name: String?): ProviderType =

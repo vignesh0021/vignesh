@@ -38,7 +38,8 @@ class ChatRepository(
      */
     suspend fun sendMessage(sessionId: String, userText: String) {
         val settings = settingsRepository.settings.first()
-        val apiKey = apiKeyStore.getKey(settings.provider) ?: throw MissingApiKeyException()
+        val apiKey = if (settings.provider.isLocal) "" else
+            apiKeyStore.getKey(settings.provider) ?: throw MissingApiKeyException()
 
         val userMessage = ChatMessage(
             sessionId = sessionId,
@@ -59,7 +60,8 @@ class ChatRepository(
      */
     suspend fun regenerate(sessionId: String) {
         val settings = settingsRepository.settings.first()
-        val apiKey = apiKeyStore.getKey(settings.provider) ?: throw MissingApiKeyException()
+        val apiKey = if (settings.provider.isLocal) "" else
+            apiKeyStore.getKey(settings.provider) ?: throw MissingApiKeyException()
 
         val existing = messageDao.listForSession(sessionId).map { it.toDomain() }
         existing.lastOrNull { it.role == Role.ASSISTANT }?.let { messageDao.delete(it.id) }

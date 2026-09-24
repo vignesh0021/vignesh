@@ -132,6 +132,9 @@ dependencies {
     implementation(libs.okhttp.sse)
     implementation(libs.okhttp.logging)
 
+    // On-device (offline) LLM inference via Google AI Edge / MediaPipe GenAI.
+    implementation(libs.mediapipe.tasks.genai)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.androidx.core.testing)

@@ -45,13 +45,28 @@ class SettingsRepository(private val context: Context) {
     suspend fun setProvider(provider: ProviderType) {
         context.dataStore.edit { prefs ->
             prefs[Keys.PROVIDER] = provider.name
-            prefs[Keys.MODEL] = ModelCatalog.defaultModel(provider)
-            prefs[Keys.BASE_URL] = provider.defaultBaseUrl
+            if (provider.isLocal) {
+                // On-device has no catalog default; the user picks a downloaded model file.
+                prefs[Keys.MODEL] = ""
+                prefs[Keys.BASE_URL] = ""
+            } else {
+                prefs[Keys.MODEL] = ModelCatalog.defaultModel(provider)
+                prefs[Keys.BASE_URL] = provider.defaultBaseUrl
+            }
         }
     }
 
     suspend fun setModel(modelId: String) {
         context.dataStore.edit { it[Keys.MODEL] = modelId }
+    }
+
+    /** Switches to on-device inference with the given model file path. */
+    suspend fun selectLocalModel(path: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.PROVIDER] = ProviderType.LOCAL.name
+            prefs[Keys.MODEL] = path
+            prefs[Keys.BASE_URL] = ""
+        }
     }
 
     suspend fun setBaseUrl(baseUrl: String) {
