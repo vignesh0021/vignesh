@@ -50,7 +50,7 @@ jobs:
 
       - name: Build release APK (signed with default debug keystore)
         working-directory: options-analyzer/android
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
+        run: ./gradlew assembleRelease --no-daemon --stacktrace -Pandroid.suppressUnsupportedCompileSdk=36
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.daemon=false"
 

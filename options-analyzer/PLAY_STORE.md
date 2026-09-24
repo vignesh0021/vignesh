@@ -30,7 +30,7 @@ placed. Keep that framing in the store listing; it matters for review.
 ## 2. Versioning (bump every upload)
 
 In `app.json`:
-- `expo.version` — user-facing (e.g. `1.11.0`).
+- `expo.version` — user-facing (currently `1.13.0`).
 - `expo.android.versionCode` — integer, **must increase for every upload**.
 - Package id: `com.tradelikehunter.app` (final — cannot change after first upload).
 
@@ -38,7 +38,42 @@ In `app.json`:
 
 ## 3. Build the AAB
 
-### Option A — EAS Build (recommended: EAS manages the signing key)
+> **Target API:** since 31 Aug 2026 Play requires new apps/updates to target
+> **API 36 (Android 16)**. `app.json` sets compile/target SDK 36 via
+> `expo-build-properties`, so both build paths below already comply.
+
+### Option 0 — GitHub Actions with your own upload key (no Expo account)
+
+One-time, on your PC (needs Java — `keytool` ships with any JDK):
+
+```bash
+keytool -genkeypair -v -keystore upload.keystore -alias upload \
+  -keyalg RSA -keysize 2048 -validity 10000
+# Windows PowerShell:  [Convert]::ToBase64String([IO.File]::ReadAllBytes("upload.keystore")) > upload.b64
+# macOS / Linux:       base64 -w0 upload.keystore > upload.b64     (macOS: base64 -i upload.keystore)
+```
+
+**Back up `upload.keystore` and both passwords somewhere safe** (password
+manager + an offline copy). Lose them and you'll need Google support to reset
+the upload key.
+
+Then in GitHub → repo **Settings → Secrets and variables → Actions → New
+repository secret**, add:
+
+| Secret | Value |
+|---|---|
+| `ANDROID_UPLOAD_KEYSTORE_BASE64` | contents of `upload.b64` |
+| `ANDROID_UPLOAD_KEYSTORE_PASSWORD` | keystore password |
+| `ANDROID_UPLOAD_KEY_ALIAS` | `upload` |
+| `ANDROID_UPLOAD_KEY_PASSWORD` | key password (same as keystore password if you pressed Enter) |
+
+Run **Actions → Build Options Analyzer AAB → Run workflow** (or just push).
+Download the `options-analyzer-aab` artifact → `app-release.aab`. The log's
+"Show signing certificate" step should show **your** name, not
+`CN=Android Debug`. If it says Android Debug, the secrets aren't set and Play
+will reject the file.
+
+### Option A — EAS Build (EAS manages the signing key)
 
 ```bash
 cd options-analyzer
@@ -65,7 +100,7 @@ cd android && ./gradlew bundleRelease
 # → android/app/build/outputs/bundle/release/app-release.aab
 ```
 
-> The CI workflow `build-options-aab.yml` produces a **debug-signed** `.aab`
+> Without the upload-key secrets, `build-options-aab.yml` produces a **debug-signed** `.aab`
 > artifact for inspection only — Play will reject it for release. Use A or B for
 > a real upload, and enable **Play App Signing** (Google holds the app key; you
 > keep the upload key).
