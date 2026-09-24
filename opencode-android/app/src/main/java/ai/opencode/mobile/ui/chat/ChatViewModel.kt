@@ -57,6 +57,23 @@ class ChatViewModel(
         }
     }
 
+    /** Re-runs the last turn — used by the Retry action on an error and Regenerate on a reply. */
+    fun regenerate() {
+        if (_isSending.value) return
+        _isSending.value = true
+        viewModelScope.launch {
+            try {
+                chatRepository.regenerate(sessionId)
+            } catch (e: ChatRepository.MissingApiKeyException) {
+                errors.tryEmit(e.message ?: "No API key configured.")
+            } catch (t: Throwable) {
+                errors.tryEmit(t.message ?: "Failed to regenerate.")
+            } finally {
+                _isSending.value = false
+            }
+        }
+    }
+
     /** Names an untitled-looking session after its first user prompt. */
     private suspend fun maybeAutoTitle(firstPrompt: String) {
         val session = sessionRepository.getSession(sessionId) ?: return

@@ -49,12 +49,45 @@ class ChatRepository(
         messageDao.upsert(userMessage.toEntity())
         sessionDao.touch(sessionId, System.currentTimeMillis())
 
+        streamAssistantReply(sessionId, settings.modelId, settings.systemPrompt, settings.provider, settings.baseUrl, apiKey)
+    }
+
+    /**
+     * Regenerates the reply: drops the most recent assistant message and streams a fresh one
+     * from the existing history. Used for the "Retry" action on an errored/empty reply and the
+     * "Regenerate" action on the last answer.
+     */
+    suspend fun regenerate(sessionId: String) {
+        val settings = settingsRepository.settings.first()
+        val apiKey = apiKeyStore.getKey(settings.provider) ?: throw MissingApiKeyException()
+
+        val existing = messageDao.listForSession(sessionId).map { it.toDomain() }
+        existing.lastOrNull { it.role == Role.ASSISTANT }?.let { messageDao.delete(it.id) }
+        // Nothing to answer if there is no user turn yet.
+        if (existing.none { it.role == Role.USER }) return
+
+        streamAssistantReply(sessionId, settings.modelId, settings.systemPrompt, settings.provider, settings.baseUrl, apiKey)
+    }
+
+    /**
+     * Streams the assistant reply for the current history, writing tokens into a fresh
+     * assistant row as they arrive. The UI observes the message table, so it updates live.
+     * Throttled DB writes keep the token loop cheap.
+     */
+    private suspend fun streamAssistantReply(
+        sessionId: String,
+        modelId: String,
+        systemPrompt: String,
+        provider: ai.opencode.mobile.domain.model.ProviderType,
+        baseUrl: String,
+        apiKey: String,
+    ) {
         val assistant = ChatMessage(
             sessionId = sessionId,
             role = Role.ASSISTANT,
             content = "",
             status = MessageStatus.STREAMING,
-            model = settings.modelId,
+            model = modelId,
         )
         messageDao.upsert(assistant.toEntity())
 
@@ -64,17 +97,17 @@ class ChatRepository(
             .map { WireMessage(it.role, it.content) }
 
         val request = ChatRequest(
-            model = settings.modelId,
-            systemPrompt = settings.systemPrompt,
+            model = modelId,
+            systemPrompt = systemPrompt,
             messages = history,
             apiKey = apiKey,
-            baseUrl = settings.baseUrl,
+            baseUrl = baseUrl,
         )
 
         val builder = StringBuilder()
         var lastFlush = 0L
         var terminalWritten = false
-        val client = clientFactory.create(settings.provider)
+        val client = clientFactory.create(provider)
 
         try {
             client.streamChat(request).collect { event ->
