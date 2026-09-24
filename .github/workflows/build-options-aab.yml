@@ -1,0 +1,96 @@
+name: Build Options Analyzer AAB (Play Store)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/options-paper-trading-mode-sywt0f
+    paths:
+      - "options-analyzer/**"
+      - ".github/workflows/build-options-aab.yml"
+
+jobs:
+  build:
+    name: Prebuild + Gradle AAB
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: options-analyzer
+    env:
+      # Upload key for Play (see options-analyzer/PLAY_STORE.md §3). When these
+      # secrets are absent the bundle is debug-signed and NOT uploadable.
+      KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      # Explicit packages: the action's default ("tools") was removed from
+      # Google's SDK repository and now fails the step.
+      - name: Setup Android SDK (API 36)
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
+
+      - name: Install JS dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Expo prebuild (generate native android project)
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Show Play target settings
+        run: grep -E "SdkVersion|buildToolsVersion" android/gradle.properties
+
+      - name: Decode upload keystore
+        if: env.KEYSTORE_B64 != ''
+        run: echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.keystore"
+
+      - name: Build release AAB (signed with upload key)
+        if: env.KEYSTORE_B64 != ''
+        working-directory: options-analyzer/android
+        run: |
+          ./gradlew bundleRelease --no-daemon \
+            -Pandroid.suppressUnsupportedCompileSdk=36 \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/upload.keystore" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+
+      - name: Build release AAB (debug keystore — NOT uploadable)
+        if: env.KEYSTORE_B64 == ''
+        working-directory: options-analyzer/android
+        run: |
+          echo "::warning::Upload-key secrets not set — this AAB is debug-signed and Play will reject it. See PLAY_STORE.md §3."
+          ./gradlew bundleRelease --no-daemon -Pandroid.suppressUnsupportedCompileSdk=36
+
+      - name: Show signing certificate
+        run: keytool -printcert -jarfile android/app/build/outputs/bundle/release/app-release.aab | head -12
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.keystore"
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: options-analyzer-aab
+          path: options-analyzer/android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error

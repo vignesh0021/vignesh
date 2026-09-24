@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - claude/options-payoff-analyzer-app-9jsuls
+      - claude/options-paper-trading-mode-sywt0f
     paths:
       - "options-analyzer/**"
       - ".github/workflows/build-options-apk.yml"
@@ -33,8 +34,10 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
-      - name: Setup Android SDK
+      - name: Setup Android SDK (API 36)
         uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
 
       - name: Install JS dependencies
         run: npm install --no-audit --no-fund
@@ -49,7 +52,7 @@ jobs:
 
       - name: Build release APK (signed with default debug keystore)
         working-directory: options-analyzer/android
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
+        run: ./gradlew assembleRelease --no-daemon --stacktrace -Pandroid.suppressUnsupportedCompileSdk=36
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.daemon=false"
 

@@ -28,8 +28,6 @@ export function InstrumentPicker({ visible, onClose }: Props) {
   const lastFetched = usePortfolioStore((s) => s.lastFetched);
 
   const rate = usePortfolioStore((s) => s.rate);
-  const deltaRegion = usePortfolioStore((s) => s.deltaRegion);
-  const setDeltaRegion = usePortfolioStore((s) => s.setDeltaRegion);
   const selectAsset = usePortfolioStore((s) => s.selectAsset);
   const refreshMarket = usePortfolioStore((s) => s.refreshMarket);
   const setSpotPrice = usePortfolioStore((s) => s.setSpotPrice);
@@ -163,25 +161,6 @@ export function InstrumentPicker({ visible, onClose }: Props) {
               </TouchableOpacity>
             </View>
             {marketError ? <Text style={styles.error}>{marketError}</Text> : null}
-
-            {asset.assetClass === 'crypto' ? (
-              <View style={styles.deltaRow}>
-                <Text style={styles.deltaLabel}>Delta Exchange venue (live crypto spot)</Text>
-                <View style={styles.deltaToggle}>
-                  {(['india', 'global'] as const).map((r) => (
-                    <TouchableOpacity
-                      key={r}
-                      style={[styles.deltaBtn, deltaRegion === r && styles.deltaBtnActive]}
-                      onPress={() => setDeltaRegion(r)}
-                    >
-                      <Text style={[styles.deltaBtnTxt, deltaRegion === r && styles.deltaBtnTxtActive]}>
-                        {r === 'india' ? 'India' : 'Global'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            ) : null}
 
             {/* manual overrides */}
             <View style={styles.fieldRow}>
